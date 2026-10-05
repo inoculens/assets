@@ -37,12 +37,12 @@
         <button type="button" id="tb-avg" aria-pressed="true">Average</button>
         <button type="button" id="tb-fifo" aria-pressed="false">FIFO</button>
         <button type="button" id="tb-add">+ Add trade</button>
+        <button type="button" id="tb-account">+ Account</button>
         <button type="button" id="tb-settings">Settings</button>
       </div>
       <p id="tb-totals"></p>
       <section id="overview" aria-label="Summary"><div class="cards" id="summary-cards"></div></section>
-      <section id="positions" aria-label="Positions"></section>
-      <section id="trades" aria-label="Trades"></section>
+      <section id="accounts" aria-label="Accounts"></section>
       <dialog id="trade-dialog" aria-labelledby="trade-dialog-title">
         <div class="dialog-head"><h2 id="trade-dialog-title">Add trade</h2></div>
         <div id="trade-dialog-body"></div>
@@ -732,11 +732,14 @@
     function seedForUi() {
       var L = window.Inoculens;
       L.saveState({
-        settings: { mainCurrency: 'EUR', costMethod: 'average' },
+        settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'ui-acct' },
+        accounts: [
+          { id: 'ui-acct', name: 'Test BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+        ],
         trades: [
-          { id: 'ui-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' },
-          { id: 'ui-b', type: 'buy', symbol: 'BTC', qty: 1, total: 70000, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-02-01T00:00:00.000Z' },
-          { id: 'ui-c', type: 'sell', symbol: 'BTC', qty: 1, total: 80000, currency: 'EUR', date: '2026-03-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-03-01T00:00:00.000Z' }
+          { id: 'ui-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'ui-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' },
+          { id: 'ui-b', type: 'buy', symbol: 'BTC', qty: 1, total: 70000, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'ui-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-02-01T00:00:00.000Z' },
+          { id: 'ui-c', type: 'sell', symbol: 'BTC', qty: 1, total: 80000, currency: 'EUR', date: '2026-03-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'ui-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-03-01T00:00:00.000Z' }
         ],
         priceOverrides: {}
       });
@@ -744,7 +747,7 @@
     function setCostMethod(m) {
       var L = window.Inoculens;
       var s = L.loadState();
-      s.settings = { mainCurrency: s.settings.mainCurrency, costMethod: m };
+      s.settings = { mainCurrency: s.settings.mainCurrency, costMethod: m, defaultAccountId: s.settings.defaultAccountId };
       L.saveState(s);
       render();
     }
@@ -761,18 +764,18 @@
         } catch (e) { /* ignore */ }
       }
       try {
-        test('ui positions checklist (Task 6)', function () {
+        test('ui positions checklist (Task 6, accounts cards)', function () {
           seedForUi();
           init();
-          assert(document.querySelector('#positions tbody tr') !== null, 'positions table shows no rows after seed');
+          assert(document.querySelector('#accounts .account-card tbody tr') !== null, 'account card shows no rows after seed');
           setCostMethod('fifo');
           assert(uiShows('30'), 'fifo realized 30k not visible');
-          var cell = document.querySelector('#positions td[data-label="Realized"]');
+          var cell = document.querySelector('#accounts td[data-label="Realized"]');
           assert(cell && cell.getAttribute('data-value') === '30000',
             'fifo realized cell should carry data-value 30000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
           setCostMethod('average');
           assert(uiShows('20'), 'average realized 20k not visible');
-          cell = document.querySelector('#positions td[data-label="Realized"]');
+          cell = document.querySelector('#accounts td[data-label="Realized"]');
           assert(cell && cell.getAttribute('data-value') === '20000',
             'average realized cell should carry data-value 20000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
         });
@@ -889,9 +892,12 @@
 
       test('positions show unknowns, not a fictitious loss, when live price missing', function () {
         L.saveState({
-          settings: { mainCurrency: 'EUR', costMethod: 'average' },
+          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'dbg-acct' },
+          accounts: [
+            { id: 'dbg-acct', name: 'Dbg BTC', ticker: 'BTC', createdAt: '2026-10-05T00:00:00.000Z' }
+          ],
           trades: [
-            { id: 'dbg-a', type: 'buy', symbol: 'BTC', qty: 0.00039164, total: 30, currency: 'EUR', date: '2026-10-05', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-05T00:00:00.000Z' }
+            { id: 'dbg-a', type: 'buy', symbol: 'BTC', qty: 0.00039164, total: 30, currency: 'EUR', date: '2026-10-05', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'dbg-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-05T00:00:00.000Z' }
           ],
           priceOverrides: {}
         });
@@ -900,7 +906,7 @@
         Object.keys(lp).forEach(function (k) { delete lp[k]; });
         if (typeof init === 'function') init();
         render();
-        function cell(label) { return document.querySelector('#positions td[data-label="' + label + '"]'); }
+        function cell(label) { return document.querySelector('#accounts td[data-label="' + label + '"]'); }
         var live = cell('Live'), val = cell('Value'), un = cell('Unrealized'), ret = cell('Return %'), tot = cell('Total P&L');
         assert(live && live.textContent === '—', 'Live should be —, got ' + (live && live.textContent));
         assert(val && val.textContent === '—', 'Value should be —, got ' + (val && val.textContent));
@@ -912,10 +918,13 @@
 
       test('closed positions labelled Closed, data kept', function () {
         L.saveState({
-          settings: { mainCurrency: 'EUR', costMethod: 'average' },
+          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'cl-acct' },
+          accounts: [
+            { id: 'cl-acct', name: 'Closed BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+          ],
           trades: [
-            { id: 'cl-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' },
-            { id: 'cl-b', type: 'sell', symbol: 'BTC', qty: 1, total: 80000, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-02-01T00:00:00.000Z' }
+            { id: 'cl-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'cl-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' },
+            { id: 'cl-b', type: 'sell', symbol: 'BTC', qty: 1, total: 80000, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'cl-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-02-01T00:00:00.000Z' }
           ],
           priceOverrides: {}
         });
@@ -923,10 +932,72 @@
         render();
         var rows = L.computePositions(L.loadState().trades, {}, 'average');
         assert(rows.length === 1 && rows[0].qtyHeld === 0, 'qty-0 row must be kept, got ' + JSON.stringify(rows));
-        var txt = document.getElementById('positions').textContent;
+        var txt = document.getElementById('accounts').textContent;
         assert(txt.indexOf('Closed') !== -1, 'closed position should be labelled Closed: ' + txt);
         restoreState();
       });
+    })();
+
+    // === Accounts UI tests (Task 2: stacked cards + CRUD + empty state) ===
+    (function accountsUiTests() {
+      var L = window.Inoculens || {};
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+      function restoreState() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
+        } catch (e) { /* ignore */ }
+        try { render(); } catch (e) { /* ignore */ }
+      }
+      function seedTwoAccounts() {
+        try {
+          var lp = (L.getLivePrices && L.getLivePrices()) || {};
+          Object.keys(lp).forEach(function (k) { delete lp[k]; });
+        } catch (e) { /* ignore */ }
+        L.saveState({
+          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a1-default-id' },
+          accounts: [
+            { id: 'a1-default-id', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
+            { id: 'a2', name: 'Hot', ticker: 'BTC', createdAt: '2026-10-06T00:00:01.000Z' }
+          ],
+          trades: [
+            { id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 30, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'a1-default-id', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-06T00:00:00.000Z' },
+            { id: 't2', type: 'buy', symbol: 'BTC', qty: 1, total: 70, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'a2', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-06T00:00:00.000Z' }
+          ],
+          priceOverrides: {}
+        });
+      }
+      try {
+        test('accounts two cards with separated P&L', function () {
+          seedTwoAccounts(); init(); render();
+          assert(document.querySelectorAll('#accounts .account-card').length === 2, 'two cards expected');
+          assert(document.querySelector('#accounts').textContent.indexOf('Cold') !== -1, 'account name missing');
+          var cards = document.querySelectorAll('#accounts .account-card');
+          assert(cards[0].textContent.indexOf('30') !== -1 && cards[1].textContent.indexOf('70') !== -1, 'per-card P&L mixed');
+        });
+
+        test('accounts per-card Trade button renders account binding (Task 3 wires it)', function () {
+          seedTwoAccounts(); init(); render();
+          var btns = document.querySelectorAll('#accounts [data-account-trade]');
+          assert(btns.length === 2, 'expected per-card + Trade buttons, got ' + btns.length);
+          var ids = Array.prototype.map.call(btns, function (b) { return b.getAttribute('data-account-trade'); });
+          assert(ids.indexOf('a1-default-id') !== -1 && ids.indexOf('a2') !== -1, 'per-card Trade buttons must carry data-account-trade="<id>", got ' + JSON.stringify(ids));
+        });
+
+        test('accounts default fallback + empty state', function () {
+          seedTwoAccounts(); init(); render();
+          var realConfirm = window.confirm; window.confirm = function () { return true; };
+          deleteAccount('a1-default-id');
+          window.confirm = realConfirm;
+          assert(defaultAccount(loadState()) !== null, 'default should fall back to remaining account');
+          assert(document.querySelector('#accounts .account-card') !== null, 'remaining card missing');
+          saveState(defaultState()); render();
+          assert(document.getElementById('accounts').textContent.indexOf('Create your first account') !== -1, 'empty-state prompt missing');
+        });
+      } finally {
+        restoreState();
+      }
     })();
 
     renderResults();

@@ -424,3 +424,93 @@ dialog::backdrop {
     order: 3;
   }
 }
+
+/* Account cards (stacked, per-account P&L) */
+#accounts {
+  display: grid;
+  gap: 1rem;
+}
+
+.account-card {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1rem;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.account-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.account-name {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.account-ticker {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.account-default-badge {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+.account-subtotal {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  margin: 0 0 0.75rem;
+}
+
+.account-subtotal .muted {
+  font-family: var(--font-ui);
+}
+
+.account-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.account-actions button {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.account-empty {
+  text-align: left;
+}
+
+.account-create-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: end;
+  margin-top: 0.75rem;
+}
+
+.account-create-row .fld {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 10rem;
+  flex: 1;
+}
+
+.account-create-row .fld label {
+  margin: 0;
+}

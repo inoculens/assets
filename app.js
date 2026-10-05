@@ -1190,6 +1190,415 @@ function deleteTrade(id) {
   render(); // cached live prices stay; no refetch needed on delete
 }
 
+function deleteTrade(id) {
+  if (!id) return;
+  var st = loadState();
+  var kept = (st.trades || []).filter(function (t) { return !t || t.id !== id; });
+  if (kept.length === (st.trades || []).length) return; // unknown id: no write
+  st.trades = kept;
+  if (!saveStateGuarded(st)) return;
+  render(); // cached live prices stay; no refetch needed on delete
+}
+
+// --- Accounts UI (Task 2: stacked cards + CRUD + empty state) ---
+// Per-card + Trade button renders ONLY data-account-trade="<id>" here.
+// Task 3 owns wiring it to openPrefillTrade; this task leaves it unwired.
+
+function accountTrades(st, accountId) {
+  return ((st && st.trades) || []).filter(function (t) { return t && t.accountId === accountId; });
+}
+
+function createAccount(name, ticker) {
+  var st = loadState();
+  var tk = String(ticker || '').trim().toUpperCase();
+  var nm = String(name || '').trim();
+  if (!tk) { showBanner('Ticker is required (e.g. BTC).'); return null; }
+  if (!/^[A-Z0-9._-]{1,12}$/.test(tk)) { showBanner('Ticker looks invalid — letters/numbers, up to 12 chars.'); return null; }
+  if (!nm) nm = tk; // name defaults to ticker
+  var first = !Array.isArray(st.accounts) || st.accounts.length === 0;
+  var acc = { id: uid(), name: nm, ticker: tk, createdAt: new Date().toISOString() };
+  st.accounts.push(acc);
+  if (first) st.settings.defaultAccountId = acc.id; // set default if first
+  if (!saveStateGuarded(st)) return null;
+  clearBanner();
+  render();
+  return acc;
+}
+
+function openAccountDialog() {
+  var nameEl = document.getElementById('acct-name');
+  var tickEl = document.getElementById('acct-ticker');
+  var host = document.getElementById('accounts');
+  if (host && host.scrollIntoView) {
+    try { host.scrollIntoView(); } catch (e) { /* ignore */ }
+  }
+  if (nameEl && tickEl) {
+    // Creation form is rendered inline (empty + non-empty states share
+    // #acct-name/#acct-ticker). Focus for the user; the Create button
+    // (or this fn when values are filled) submits via createAccount.
+    if (String(tickEl.value || '').trim().length > 0 || String(nameEl.value || '').trim().length > 0) {
+      return createAccount(nameEl.value, tickEl.value);
+    }
+    try { nameEl.focus(); } catch (e) { /* ignore */ }
+    return;
+  }
+}
+
+function renameAccount(id, name) {
+  if (!id) return;
+  var st = loadState();
+  var acc = accountById(st, id);
+  if (!acc) return;
+  var nm = String(name === undefined || name === null ? '' : name).trim();
+  if (!nm) { showBanner('Account name cannot be empty.'); return; }
+  acc.name = nm;
+  if (!saveStateGuarded(st)) return;
+  clearBanner();
+  render();
+}
+
+function setDefaultAccount(id) {
+  if (!id) return;
+  var st = loadState();
+  if (!accountById(st, id)) return;
+  st.settings.defaultAccountId = id;
+  if (!saveStateGuarded(st)) return;
+  render();
+}
+
+function deleteAccount(id) {
+  if (!id) return;
+  var st = loadState();
+  var acc = accountById(st, id);
+  if (!acc) return; // unknown id: no write, no dialog
+  if (typeof window.confirm === 'function' &&
+      !window.confirm('Delete account "' + acc.name + '" (' + acc.ticker + ')? This cannot be undone.')) {
+    return;
+  }
+  var remaining = accountTrades(st, id);
+  if (remaining.length) {
+    showBanner('Delete its trades first — an account with trades cannot be deleted.');
+    render();
+    return;
+  }
+  st.accounts = (st.accounts || []).filter(function (a) { return !a || a.id !== id; });
+  if (st.settings.defaultAccountId === id) {
+    st.settings.defaultAccountId = st.accounts.length ? st.accounts[0].id : null;
+  }
+  if (!saveStateGuarded(st)) return;
+  clearBanner();
+  render();
+}
+
+function buildAccountCreateRow() {
+  var row = document.createElement('div');
+  row.className = 'account-create-row';
+  var fn = document.createElement('div');
+  fn.className = 'fld';
+  var ln = document.createElement('label');
+  ln.setAttribute('for', 'acct-name');
+  ln.textContent = 'Account name';
+  var inName = document.createElement('input');
+  inName.id = 'acct-name';
+  inName.setAttribute('autocomplete', 'off');
+  inName.setAttribute('spellcheck', 'false');
+  inName.setAttribute('placeholder', 'e.g. Cold wallet');
+  fn.appendChild(ln);
+  fn.appendChild(inName);
+  var ft = document.createElement('div');
+  ft.className = 'fld';
+  var lt = document.createElement('label');
+  lt.setAttribute('for', 'acct-ticker');
+  lt.textContent = 'Ticker';
+  var inTick = document.createElement('input');
+  inTick.id = 'acct-ticker';
+  inTick.setAttribute('autocomplete', 'off');
+  inTick.setAttribute('spellcheck', 'false');
+  inTick.setAttribute('placeholder', 'BTC');
+  ft.appendChild(lt);
+  ft.appendChild(inTick);
+  var create = document.createElement('button');
+  create.type = 'button';
+  create.id = 'acct-create';
+  create.className = 'primary';
+  create.textContent = 'Create account';
+  var demo = document.createElement('button');
+  demo.type = 'button';
+  demo.id = 'acct-demo';
+  demo.textContent = 'Load demo';
+  row.appendChild(fn);
+  row.appendChild(ft);
+  row.appendChild(create);
+  row.appendChild(demo);
+  return row;
+}
+
+function renderAccounts(st) {
+  var host = document.getElementById('accounts');
+  if (!host) return;
+  var method = st.settings.costMethod;
+  var main = st.settings.mainCurrency;
+  renderSummaryCards(st, computePositions(st.trades || [], livePrices, method));
+  host.innerHTML = '';
+  var accounts = Array.isArray(st.accounts) ? st.accounts : [];
+  if (!accounts.length) {
+    var empty = document.createElement('div');
+    empty.className = 'account-empty';
+    var h = document.createElement('h2');
+    h.textContent = 'Accounts';
+    empty.appendChild(h);
+    var p = document.createElement('p');
+    p.textContent = 'Create your first account to get started.';
+    empty.appendChild(p);
+    empty.appendChild(buildAccountCreateRow());
+    var hint = document.createElement('p');
+    hint.className = 'muted';
+    hint.textContent = 'Trades belong to an account — create one to enable Add trade.';
+    empty.appendChild(hint);
+    host.appendChild(empty);
+    return;
+  }
+  var h2 = document.createElement('h2');
+  h2.textContent = 'Accounts';
+  host.appendChild(h2);
+  host.appendChild(buildAccountCreateRow());
+  var def = defaultAccount(st);
+  accounts.forEach(function (acc) {
+    var card = document.createElement('article');
+    card.className = 'account-card';
+    card.setAttribute('data-account', acc.id);
+    var head = document.createElement('div');
+    head.className = 'account-head';
+    var nameEl = document.createElement('span');
+    nameEl.className = 'account-name';
+    nameEl.textContent = acc.name;
+    head.appendChild(nameEl);
+    if (def && def.id === acc.id) {
+      var badge = document.createElement('span');
+      badge.className = 'account-default-badge';
+      badge.textContent = 'Default';
+      head.appendChild(badge);
+    }
+    var tickEl = document.createElement('span');
+    tickEl.className = 'account-ticker';
+    var lv = livePrices[String(acc.ticker || '').toUpperCase()];
+    var lvNum = Number(lv);
+    tickEl.textContent = acc.ticker + ((isFinite(lvNum) && lvNum > 0) ? ' · ' + fmtMoney(lvNum, main) : '');
+    head.appendChild(tickEl);
+    var actions = document.createElement('div');
+    actions.className = 'account-actions';
+    var tradeBtn = document.createElement('button');
+    tradeBtn.type = 'button';
+    tradeBtn.textContent = '+ Trade';
+    tradeBtn.setAttribute('data-account-trade', acc.id);
+    tradeBtn.setAttribute('aria-label', 'Add trade to ' + acc.name);
+    actions.appendChild(tradeBtn);
+    if (!def || def.id !== acc.id) {
+      var defBtn = document.createElement('button');
+      defBtn.type = 'button';
+      defBtn.textContent = 'Make default';
+      defBtn.setAttribute('data-account-default', acc.id);
+      defBtn.setAttribute('aria-label', 'Make ' + acc.name + ' the default account');
+      actions.appendChild(defBtn);
+    }
+    var renBtn = document.createElement('button');
+    renBtn.type = 'button';
+    renBtn.textContent = 'Rename';
+    renBtn.setAttribute('data-account-rename', acc.id);
+    renBtn.setAttribute('aria-label', 'Rename ' + acc.name);
+    actions.appendChild(renBtn);
+    var delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.textContent = 'Delete';
+    delBtn.setAttribute('data-account-delete', acc.id);
+    delBtn.setAttribute('aria-label', 'Delete ' + acc.name);
+    actions.appendChild(delBtn);
+    head.appendChild(actions);
+    card.appendChild(head);
+    var atrades = accountTrades(st, acc.id);
+    var rows = computePositions(atrades, livePrices, method);
+    var sub = document.createElement('div');
+    sub.className = 'account-subtotal';
+    if (!rows.length) {
+      sub.textContent = '';
+    } else {
+      var mv = 0;
+      var pl = 0;
+      var mvKnown = false;
+      rows.forEach(function (r) {
+        pl += r.totalPL;
+        if (r.marketValue !== null) { mv += r.marketValue; mvKnown = true; }
+      });
+      sub.textContent = 'Value ' + (mvKnown ? fmtMoney(mv, main) : '—') + ' · P&L ' + fmtMoney(pl, main);
+      if (mvKnown) sub.setAttribute('data-value', String(mv));
+    }
+    card.appendChild(sub);
+    if (!atrades.length) {
+      var muted = document.createElement('p');
+      muted.className = 'muted';
+      muted.textContent = 'No trades yet — add one to see P&L.';
+      card.appendChild(muted);
+      host.appendChild(card);
+      return;
+    }
+    var ptable = document.createElement('table');
+    var pthead = document.createElement('thead');
+    var phr = document.createElement('tr');
+    POSITION_COLUMNS.forEach(function (c, i) {
+      var th = document.createElement('th');
+      th.textContent = c;
+      if (i > 0) th.className = 'num';
+      th.setAttribute('scope', 'col');
+      phr.appendChild(th);
+    });
+    pthead.appendChild(phr);
+    ptable.appendChild(pthead);
+    var ptbody = document.createElement('tbody');
+    rows.forEach(function (p) {
+      var tr = document.createElement('tr');
+      var symLabel = (p.qtyHeld === 0) ? (p.symbol + ' (Closed)') : p.symbol;
+      tr.appendChild(posCell('Symbol', symLabel, false, null));
+      tr.appendChild(posCell('Qty', fmtQty(p.qtyHeld), true, p.qtyHeld));
+      tr.appendChild(posCell('Avg entry', fmtMoney(p.avgEntry, main), true, p.avgEntry));
+      tr.appendChild(posCell('Live', (p.livePrice !== null) ? fmtMoney(p.livePrice, main) : '—', true, p.livePrice));
+      tr.appendChild(posCell('Value', (p.marketValue !== null) ? fmtMoney(p.marketValue, main) : '—', true, p.marketValue));
+      tr.appendChild(posCell('Unrealized', (p.unrealized !== null) ? fmtMoney(p.unrealized, main) : '—', true, p.unrealized));
+      tr.appendChild(posCell('Realized', fmtMoney(p.realized, main), true, p.realized));
+      tr.appendChild(posCell('Total P&L', fmtMoney(p.totalPL, main), true, p.totalPL));
+      tr.appendChild(posCell('Return %', (p.returnPct !== null) ? fmtPct(p.returnPct) : '—', true, p.returnPct));
+      ptbody.appendChild(tr);
+    });
+    ptable.appendChild(ptbody);
+    card.appendChild(ptable);
+    var ttable = document.createElement('table');
+    var tthead = document.createElement('thead');
+    var thtr = document.createElement('tr');
+    ['Date', 'Side', 'Qty', 'Native total', 'Normalized total', 'Fee', 'Note', ''].forEach(function (c, i) {
+      var th = document.createElement('th');
+      th.textContent = c;
+      if (i >= 2 && i <= 5) th.className = 'num';
+      th.setAttribute('scope', 'col');
+      thtr.appendChild(th);
+    });
+    tthead.appendChild(thtr);
+    ttable.appendChild(tthead);
+    var ttbody = document.createElement('tbody');
+    ledgerSortByDate(atrades).reverse().forEach(function (t) {
+      var n = normalizeTrade(t);
+      var tr = document.createElement('tr');
+      tr.appendChild(posCell('Date', t.date || '', false, null));
+      tr.appendChild(posCell('Side', t.type === 'sell' ? 'Sell' : 'Buy', false, null));
+      tr.appendChild(posCell('Qty', fmtQty(t.qty), true, t.qty));
+      tr.appendChild(posCell('Native total', fmtQty(t.total) + ' ' + String(t.currency || '').toUpperCase(), true, t.total));
+      var normTd = posCell('Normalized total', '', true, n.totalMain + n.feeMain);
+      normTd.textContent = fmtMoney(n.totalMain + n.feeMain, main);
+      var badgeEl = document.createElement('small');
+      badgeEl.className = 'muted';
+      badgeEl.textContent = ' ' + fxBadgeText(t);
+      normTd.appendChild(badgeEl);
+      tr.appendChild(normTd);
+      var feeTxt = (Number(t.fee) > 0)
+        ? (fmtQty(t.fee) + ' ' + String(t.feeCurrency || t.currency || '').toUpperCase())
+        : '—';
+      if (n.feeFxAssumedSameRate) feeTxt += ' *';
+      var feeTd = posCell('Fee', feeTxt, true, t.fee);
+      if (n.feeFxAssumedSameRate) feeTd.title = 'Fee converted at the trade FX rate (*)';
+      tr.appendChild(feeTd);
+      tr.appendChild(posCell('Note', t.note ? String(t.note) : '—', false, null));
+      var actTd = document.createElement('td');
+      actTd.setAttribute('data-label', 'Action');
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.textContent = 'Delete';
+      del.setAttribute('data-del', t.id || '');
+      del.setAttribute('aria-label', 'Delete trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
+      actTd.appendChild(del);
+      tr.appendChild(actTd);
+      ttbody.appendChild(tr);
+    });
+    ttable.appendChild(ttbody);
+    card.appendChild(ttable);
+    host.appendChild(card);
+  });
+}
+
+function startInlineRename(accId, headEl, nameEl) {
+  var st = loadState();
+  var acc = accountById(st, accId);
+  if (!acc || !headEl || !nameEl) return;
+  if (headEl.querySelector('[data-rename-input]')) return;
+  var input = document.createElement('input');
+  input.setAttribute('data-rename-input', '1');
+  input.value = acc.name;
+  input.setAttribute('aria-label', 'New name for ' + acc.name);
+  headEl.insertBefore(input, nameEl);
+  headEl.removeChild(nameEl);
+  try { input.focus(); input.select(); } catch (e) { /* ignore */ }
+  var done = false;
+  function commit() {
+    if (done) return;
+    done = true;
+    renameAccount(accId, input.value);
+  }
+  function cancel() {
+    if (done) return;
+    done = true;
+    render();
+  }
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') commit();
+    else if (e.key === 'Escape') cancel();
+  });
+  input.addEventListener('blur', commit);
+}
+
+function buildAccounts() {
+  var host = document.getElementById('accounts');
+  if (host && !host.getAttribute('data-wired')) {
+    host.setAttribute('data-wired', '1');
+    host.addEventListener('click', function (e) {
+      var t = e && e.target && e.target.closest ? e.target.closest('button') : null;
+      if (!t) return;
+      if (t.id === 'acct-create') {
+        createAccount(uiVal('acct-name', ''), uiVal('acct-ticker', ''));
+        return;
+      }
+      if (t.id === 'acct-demo') {
+        addDemoTrade();
+        return;
+      }
+      // NOTE: [data-account-trade] intentionally unwired here.
+      // Task 3 wires it to openPrefillTrade.
+      if (t.hasAttribute('data-account-rename')) {
+        var rid = t.getAttribute('data-account-rename');
+        var card = t.closest ? t.closest('[data-account]') : null;
+        var headEl = t.closest ? t.closest('.account-head') : null;
+        var nameEl = card ? card.querySelector('.account-name') : null;
+        startInlineRename(rid, headEl, nameEl);
+        return;
+      }
+      if (t.hasAttribute('data-account-delete')) {
+        deleteAccount(t.getAttribute('data-account-delete'));
+        return;
+      }
+      if (t.hasAttribute('data-account-default')) {
+        setDefaultAccount(t.getAttribute('data-account-default'));
+        return;
+      }
+      var del = e.target && e.target.closest ? e.target.closest('[data-del]') : null;
+      if (del) {
+        deleteTrade(del.getAttribute('data-del'));
+        return;
+      }
+    });
+  }
+  var add = document.getElementById('tb-account');
+  if (add && !add.getAttribute('data-wired')) {
+    add.setAttribute('data-wired', '1');
+    add.addEventListener('click', function () { openAccountDialog(); });
+  }
+}
+
 // --- Trade form ---
 var TRADE_CCY_OPTIONS = ['EUR', 'USD', 'GBP', 'CHF', 'USDC', 'USDT', 'DAI'];
 
@@ -1450,7 +1859,18 @@ function buildTopbar() {
   var add = document.getElementById('tb-add');
   if (add && !add.getAttribute('data-wired')) {
     add.setAttribute('data-wired', '1');
-    add.addEventListener('click', function () { openDialog('trade-dialog'); });
+    add.addEventListener('click', function () {
+      var cur = loadState();
+      if (!Array.isArray(cur.accounts) || cur.accounts.length === 0) {
+        showBanner('Create your first account to enable Add trade.');
+        var host = document.getElementById('accounts');
+        if (host && host.scrollIntoView) {
+          try { host.scrollIntoView(); } catch (e) { /* ignore */ }
+        }
+        return;
+      }
+      openDialog('trade-dialog');
+    });
   }
   var gear = document.getElementById('tb-settings');
   if (gear && !gear.getAttribute('data-wired')) {
@@ -1592,10 +2012,16 @@ function addDemoTrade() {
     return;
   }
   var m = st.settings.mainCurrency;
+  var acc = defaultAccount(st);
+  if (!acc) {
+    acc = { id: uid(), name: 'Demo BTC', ticker: 'BTC', createdAt: new Date().toISOString() };
+    st.accounts.push(acc);
+    st.settings.defaultAccountId = acc.id;
+  }
   st.trades.push({
     id: uid(),
     type: 'buy',
-    symbol: 'BTC',
+    symbol: acc.ticker,
     qty: 1,
     total: 50000,
     currency: m,
@@ -1604,6 +2030,7 @@ function addDemoTrade() {
     feeCurrency: m,
     note: 'demo trade — remove with “Clear all data”',
     fxLock: { pair: m + '/' + m, rate: 1, source: '1:1', interpolated: false },
+    accountId: acc.id,
     createdAt: new Date().toISOString()
   });
   if (!saveStateGuarded(st)) return;
@@ -1627,6 +2054,9 @@ function clearAllData() {
 function refreshPrices() {
   var st = loadState();
   var syms = uniqueSymbols(st.trades);
+  (st.accounts || []).forEach(function (a) {
+    if (a && a.ticker) syms.push(String(a.ticker).toUpperCase());
+  });
   if (!syms.length) {
     render();
     return Promise.resolve({});
@@ -1652,8 +2082,7 @@ function render() {
     st = defaultState();
   }
   if (!st || !st.settings) st = defaultState();
-  renderPositions(st);
-  renderTrades(st);
+  renderAccounts(st);
   syncTopbar(st);
 }
 
@@ -1662,11 +2091,10 @@ function init() {
     render();
     return;
   }
-  if (!document.getElementById('positions') || !document.getElementById('trades')) return;
+  if (!document.getElementById('accounts')) return;
   buildTopbar();
-  buildPositions();
+  buildAccounts();
   buildTradeForm();
-  buildTradesTable();
   buildSettings();
   var d = document.getElementById('t-date');
   if (d && !d.value) d.value = todayStr();
@@ -1688,6 +2116,12 @@ if (typeof window !== 'undefined') {
   window.Inoculens.ensureCustomFeeOption = ensureCustomFeeOption;
   window.Inoculens.saveStateGuarded = saveStateGuarded;
   window.Inoculens.isValidImportTrade = isValidImportTrade;
+  window.Inoculens.renderAccounts = renderAccounts;
+  window.Inoculens.openAccountDialog = openAccountDialog;
+  window.Inoculens.createAccount = createAccount;
+  window.Inoculens.renameAccount = renameAccount;
+  window.Inoculens.deleteAccount = deleteAccount;
+  window.Inoculens.setDefaultAccount = setDefaultAccount;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
     document.addEventListener('DOMContentLoaded', init);
   }
