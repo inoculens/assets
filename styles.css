@@ -619,6 +619,9 @@ footer .muted {
   border: none;
   padding: 0;
 }
+#summary-cards > p {
+  grid-column: 1 / -1;
+}
 
 /* Folder cards: avatar + name + figures + chevron */
 #accounts {
