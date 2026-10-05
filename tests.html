@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>INOCULENS ASSETS — Tests</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="./styles.css">
+  <style>
+    body { max-width: 60rem; margin: 2rem auto; padding: 0 1rem; }
+    #summary { font-weight: 600; margin: 1rem 0; }
+    #results { list-style: none; padding: 0; }
+    #results li { padding: 0.4rem 0.6rem; margin: 0.25rem 0; border-radius: 0.4rem; }
+    #results li.pass { background: rgba(0, 200, 0, 0.12); }
+    #results li.fail { background: rgba(255, 0, 51, 0.14); }
+    #results .err { display: block; font-size: 0.85em; opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>INOCULENS ASSETS — Test Harness</h1>
+    <p>Browser-native tests for pure functions exposed on <code>window.Inoculens</code>. Later tasks append sections below the Store section.</p>
+  </header>
+
+  <main>
+    <div id="summary" role="status" aria-live="polite">running…</div>
+    <ul id="results"></ul>
+  </main>
+
+  <noscript>
+    <p>Tests need JavaScript.</p>
+  </noscript>
+
+  <script src="./app.js"></script>
+  <script>
+    'use strict';
+    // Minimal harness: test(name, fn), assert(cond, msg). Results render into #results.
+    var results = [];
+    function assert(cond, msg) {
+      if (!cond) throw new Error(msg || 'assertion failed');
+    }
+    function test(name, fn) {
+      try {
+        fn();
+        results.push({ name: name, ok: true });
+      } catch (e) {
+        results.push({ name: name, ok: false, error: String((e && e.message) || e) });
+      }
+    }
+    function renderResults() {
+      var passed = results.filter(function (r) { return r.ok; }).length;
+      var failed = results.length - passed;
+      var summary = document.getElementById('summary');
+      summary.textContent = passed + ' passed, ' + failed + ' failed (' + results.length + ' tests)';
+      summary.dataset.status = failed === 0 ? 'PASS' : 'FAIL';
+      var ul = document.getElementById('results');
+      ul.innerHTML = '';
+      results.forEach(function (r) {
+        var li = document.createElement('li');
+        li.className = r.ok ? 'pass' : 'fail';
+        li.textContent = (r.ok ? 'PASS ' : 'FAIL ') + r.name;
+        if (!r.ok) {
+          var s = document.createElement('span');
+          s.className = 'err';
+          s.textContent = r.error;
+          li.appendChild(s);
+        }
+        ul.appendChild(li);
+      });
+    }
+
+    // === Store tests ===
+    (function storeTests() {
+      var Store = window.Inoculens || {};
+      var loadState = Store.loadState;
+      var saveState = Store.saveState;
+      var exportState = Store.exportState;
+      var importState = Store.importState;
+
+      // Preserve any real user data across the test run; restore afterwards.
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v1'); } catch (e) { backup = null; }
+      function restore() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v1');
+          else localStorage.setItem('inoculens.v1', backup);
+        } catch (e) { /* ignore */ }
+      }
+
+      try {
+        test('store round-trip', function () {
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} };
+          saveState(s);
+          assert(JSON.stringify(loadState()) === JSON.stringify(s), 'loadState did not return saved state');
+        });
+
+        test('export shape', function () {
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} };
+          var out = JSON.parse(exportState(s));
+          assert(out.app === 'inoculens-assets' && out.version === 1 && Array.isArray(out.trades), 'bad envelope: ' + JSON.stringify(out));
+          assert(out.settings && out.settings.mainCurrency === 'EUR', 'envelope missing settings');
+          assert(typeof out.exportedAt === 'string', 'envelope missing exportedAt');
+        });
+
+        test('corrupt import rejects, state untouched', function () {
+          var before = loadState();
+          try { importState('not-json'); assert(false, 'should have thrown on non-JSON'); }
+          catch (e) { assert(true); }
+          assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
+          try { importState(JSON.stringify({ app: 'x', version: 99 })); assert(false, 'should have thrown on bad envelope'); }
+          catch (e) { assert(true); }
+          assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
+        });
+
+        test('loadState falls back to defaults', function () {
+          try { localStorage.removeItem('inoculens.v1'); } catch (e) { /* ignore */ }
+          var d = loadState();
+          assert(d.settings.mainCurrency === 'EUR' && d.settings.costMethod === 'average', 'bad default settings');
+          assert(Array.isArray(d.trades) && d.trades.length === 0, 'default trades not empty');
+          try { localStorage.setItem('inoculens.v1', '###corrupt###'); } catch (e) { /* ignore */ }
+          var d2 = loadState();
+          assert(d2.settings.mainCurrency === 'EUR' && Array.isArray(d2.trades), 'corrupt storage did not fall back');
+        });
+
+        test('export/import round-trip identity', function () {
+          var s = { settings: { mainCurrency: 'USD', costMethod: 'fifo' }, trades: [], priceOverrides: {} };
+          var json = exportState(s);
+          try { localStorage.removeItem('inoculens.v1'); } catch (e) { /* ignore */ }
+          var back = importState(json);
+          assert(back.settings.mainCurrency === 'USD' && back.settings.costMethod === 'fifo', 'imported settings mismatch');
+          assert(Array.isArray(back.trades) && back.trades.length === 0, 'imported trades mismatch');
+          assert(JSON.stringify(loadState()) === JSON.stringify(back), 'imported state was not persisted');
+        });
+      } finally {
+        restore();
+      }
+    })();
+
+    // Later tasks (Ledger, Prices/Fx, Ui) append new section IIFEs here.
+
+    renderResults();
+  </script>
+</body>
+</html>
