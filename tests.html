@@ -1125,6 +1125,24 @@
           assert(document.getElementById('view-home').hidden === false, 'home should show after back');
           assert(document.getElementById('view-account').hidden === true, 'detail should hide after back');
         });
+
+        test('header Trade on detail locks to the open account', function () {
+          seedSplit(); init(); go('r2');
+          document.getElementById('tb-add').click();
+          assert(document.getElementById('t-account').value === 'r2', 'trade should target open account r2');
+          assert(document.getElementById('t-account-row').style.display === 'none', 'account select should hide on detail');
+          assert(document.getElementById('t-symbol-locked').textContent === 'BTC', 'symbol should lock to ticker');
+        });
+
+        test('header Trade on home keeps the account selectable', function () {
+          seedSplit(); init();
+          location.hash = '#/';
+          route();
+          render();
+          document.getElementById('tb-add').click();
+          assert(document.getElementById('t-account').value === 'r1', 'trade should default to default account r1');
+          assert(document.getElementById('t-account-row').style.display !== 'none', 'account select should show on home');
+        });
       } finally {
         restoreState();
       }

@@ -1551,7 +1551,7 @@ function renderAccountDetail(st, id) {
     mbox.appendChild(b);
     return b;
   }
-  menuBtn('+ Trade', 'Add trade to', function () { openPrefillTrade(acc.id); });
+  menuBtn('+ Trade', 'Add trade to', function () { openPrefillTrade(acc.id, true); });
   if (!def || def.id !== acc.id) {
     menuBtn('Make default', 'Make default account', function () { setDefaultAccount(acc.id); });
   }
@@ -1767,8 +1767,8 @@ function buildTradeForm() {
     '<form id="trade-form">' +
     '<label for="t-side">Side</label>' +
     '<select id="t-side"><option value="buy">Buy</option><option value="sell">Sell</option></select>' +
-    '<label for="t-account">Account</label>' +
-    '<select id="t-account"></select>' +
+    '<div id="t-account-row"><label for="t-account">Account</label>' +
+    '<select id="t-account"></select></div>' +
     '<div class="fld-locked"><span class="fld-label">Symbol (locked to account)</span> <span id="t-symbol-locked" role="status"></span></div>' +
     '<label for="t-qty">Quantity</label>' +
     '<input id="t-qty" inputmode="decimal" placeholder="1">' +
@@ -1834,7 +1834,7 @@ function syncLockedSymbol() {
   locked.textContent = acc ? String(acc.ticker).toUpperCase() : '';
 }
 
-function openPrefillTrade(accountId) {
+function openPrefillTrade(accountId, lockIt) {
   var st = loadState();
   var accounts = Array.isArray(st.accounts) ? st.accounts : [];
   if (!accounts.length) {
@@ -1859,6 +1859,10 @@ function openPrefillTrade(accountId) {
     });
     sel.value = target.id;
   }
+  // Locked context (e.g. opened from an account page): the account is fixed,
+  // so the select is hidden. From home the select stays visible.
+  var row = document.getElementById('t-account-row');
+  if (row) row.style.display = (lockIt && target) ? 'none' : '';
   syncLockedSymbol();
   var d = document.getElementById('t-date');
   if (d && !d.value) d.value = todayStr();
@@ -2055,7 +2059,12 @@ function buildTopbar() {
         }
         return;
       }
-      openPrefillTrade(null); // default account
+      // On an open account page the trade belongs to that account (locked);
+      // on home the account stays selectable (defaults to the default).
+      var rid = accountDetailId();
+      var open = (typeof rid === 'string' && rid) ? accountById(cur, rid) : null;
+      if (open) openPrefillTrade(open.id, true);
+      else openPrefillTrade(null);
     });
   }
   var gear = document.getElementById('tb-settings');
