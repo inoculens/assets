@@ -855,10 +855,11 @@
 
       test('feeCurrency CUSTOM literal falls back to trade currency', function () {
         if (typeof init === 'function') init();
-        L.saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        L.saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'fee-acct' }, accounts: [{ id: 'fee-acct', name: 'Fee BTC', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [], priceOverrides: {} });
         render();
+        openPrefillTrade('fee-acct');
+        assert(document.getElementById('t-symbol-locked').textContent === 'BTC', 'symbol should lock to account ticker');
         document.getElementById('t-side').value = 'buy';
-        document.getElementById('t-symbol').value = 'BTC';
         document.getElementById('t-qty').value = '1';
         document.getElementById('t-total').value = '10';
         document.getElementById('t-currency').value = 'EUR';
@@ -878,6 +879,7 @@
         var st = L.loadState();
         assert(st.trades.length === 1, 'trade should save via 1:1 sync path, got ' + st.trades.length);
         assert(st.trades[0].feeCurrency === 'EUR', 'CUSTOM fee literal should fall back to EUR, got ' + st.trades[0].feeCurrency);
+        assert(st.trades[0].accountId === 'fee-acct' && st.trades[0].symbol === 'BTC', 'trade must bind accountId + locked symbol, got ' + JSON.stringify({ accountId: st.trades[0].accountId, symbol: st.trades[0].symbol }));
         try { if (stale && stale.parentNode) stale.parentNode.removeChild(stale); } catch (e) { /* ignore */ }
         restoreState();
       });
@@ -1014,6 +1016,109 @@
           var cards = document.querySelectorAll('#accounts .account-card');
           assert(cards.length === 1, 'only survivor card should render, got ' + cards.length);
           assert(cards[0].getAttribute('data-account') === 'survivor', 'survivor card missing');
+        });
+      } finally {
+        restoreState();
+      }
+    })();
+
+    // === Trade dialog tests (Task 3: account select + locked symbol) ===
+    (function tradeDialogTests() {
+      var L = window.Inoculens || {};
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+      function restoreState() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
+        } catch (e) { /* ignore */ }
+        try { render(); } catch (e) { /* ignore */ }
+      }
+      // Task-2-style seed, reshaped for the per-account oversell check:
+      // 1 BTC held in a1, 0 in a2 (both BTC accounts).
+      function seedTradeDialog() {
+        try {
+          var lp = (L.getLivePrices && L.getLivePrices()) || {};
+          Object.keys(lp).forEach(function (k) { delete lp[k]; });
+        } catch (e) { /* ignore */ }
+        L.saveState({
+          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a1' },
+          accounts: [
+            { id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
+            { id: 'a2', name: 'Hot', ticker: 'BTC', createdAt: '2026-10-06T00:00:01.000Z' }
+          ],
+          trades: [
+            { id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'a1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-06T00:00:00.000Z' }
+          ],
+          priceOverrides: {}
+        });
+      }
+      function fillTradeForm(side, qty) {
+        document.getElementById('t-side').value = side;
+        document.getElementById('t-qty').value = qty;
+        document.getElementById('t-total').value = '25000';
+        document.getElementById('t-currency').value = 'EUR';
+        document.getElementById('t-currency').dispatchEvent(new Event('change', { bubbles: true }));
+        document.getElementById('t-date').value = '2026-03-01';
+        document.getElementById('t-fee').value = '0';
+        document.getElementById('t-note').value = '';
+        document.getElementById('t-manual-rate').value = '';
+        document.getElementById('t-manual-price').value = '';
+      }
+      try {
+        test('trade dialog opens with account preselected + symbol locked', function () {
+          seedTradeDialog();
+          init();
+          openPrefillTrade('a2'); // originating card account
+          assert(document.getElementById('t-account').value==='a2', 'account not preselected');
+          assert(document.getElementById('t-symbol-locked').textContent==='BTC', 'symbol not locked to ticker');
+          // oversell is per-account: 1 BTC held in a1, 0 in a2 → sell 1 from a2 blocked
+          assert(validateTrade({type:'sell',symbol:'BTC',qty:1}, heldQtyFor(accountTrades('a2'),'BTC'))!==null, 'cross-account oversell not blocked');
+        });
+
+        test('trade dialog null opens on default account', function () {
+          seedTradeDialog();
+          init();
+          openPrefillTrade(null);
+          assert(document.getElementById('t-account').value==='a1', 'null should open default account, got ' + document.getElementById('t-account').value);
+          assert(document.getElementById('t-symbol-locked').textContent==='BTC', 'symbol not locked to default ticker');
+        });
+
+        test('trade dialog changing account relocks symbol', function () {
+          L.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a1' },
+            accounts: [
+              { id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
+              { id: 'a3', name: 'Staking', ticker: 'ETH', createdAt: '2026-10-06T00:00:01.000Z' }
+            ],
+            trades: [],
+            priceOverrides: {}
+          });
+          init();
+          openPrefillTrade('a1');
+          var sel = document.getElementById('t-account');
+          sel.value = 'a3';
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          assert(document.getElementById('t-symbol-locked').textContent==='ETH', 'symbol not relocked after account change');
+        });
+
+        test('trade submit writes symbol+accountId, oversell per-account', function () {
+          seedTradeDialog();
+          init();
+          openPrefillTrade('a2');
+          fillTradeForm('buy', '0.5');
+          onTradeSubmit({ preventDefault: function () {} });
+          var st = L.loadState();
+          assert(st.trades.length === 2, 'buy should save, got ' + st.trades.length);
+          var last = st.trades[st.trades.length - 1];
+          assert(last.accountId === 'a2' && last.symbol === 'BTC', 'submit must write accountId + locked symbol, got ' + JSON.stringify({ accountId: last.accountId, symbol: last.symbol }));
+          // a2 now holds 0.5 → selling 1 from a2 is blocked, nothing saved
+          openPrefillTrade('a2');
+          fillTradeForm('sell', '1');
+          onTradeSubmit({ preventDefault: function () {} });
+          assert(L.loadState().trades.length === 2, 'oversell sell must not save');
+          var err = document.getElementById('t-error');
+          assert(err && err.hidden === false, 'oversell must surface a form error');
         });
       } finally {
         restoreState();

@@ -1081,11 +1081,6 @@ function renderPositions(st) {
   renderSummaryCards(st, rows);
 }
 
-// --- Trades table ---
-// Columns: date, side, symbol, qty, native total, normalized total + rate
-// badge, fee, note, delete.
-var TRADE_COLUMNS = ['Date', 'Side', 'Symbol', 'Qty', 'Native total', 'Normalized total', 'Fee', 'Note', ''];
-
 function fxBadgeText(t) {
   var lock = t ? t.fxLock : null;
   if (!lock) return 'legacy rate';
@@ -1099,87 +1094,6 @@ function fxBadgeText(t) {
   return bits;
 }
 
-function buildTradesTable() {
-  var host = document.getElementById('trades');
-  if (!host || host.querySelector('table')) return;
-  var table = document.createElement('table');
-  var thead = document.createElement('thead');
-  var hr = document.createElement('tr');
-  TRADE_COLUMNS.forEach(function (c, i) {
-    var th = document.createElement('th');
-    th.textContent = c;
-    if (i >= 3 && i <= 6) th.className = 'num';
-    th.setAttribute('scope', 'col');
-    hr.appendChild(th);
-  });
-  thead.appendChild(hr);
-  table.appendChild(thead);
-  var tbody = document.createElement('tbody');
-  tbody.addEventListener('click', function (e) {
-    var btn = e && e.target && e.target.closest ? e.target.closest('[data-del]') : null;
-    if (!btn) return;
-    deleteTrade(btn.getAttribute('data-del'));
-  });
-  table.appendChild(tbody);
-  host.appendChild(table);
-}
-
-function renderTrades(st) {
-  var host = document.getElementById('trades');
-  if (!host) return;
-  var tbody = host.querySelector('table tbody');
-  if (!tbody) return;
-  var main = st.settings.mainCurrency;
-  var list = ledgerSortByDate(st.trades).reverse(); // newest first
-  tbody.innerHTML = '';
-  if (!list.length) {
-    var er = document.createElement('tr');
-    var ec = document.createElement('td');
-    ec.colSpan = TRADE_COLUMNS.length;
-    ec.className = 'muted';
-    ec.setAttribute('data-label', 'Info');
-    ec.textContent = 'No trades yet.';
-    er.appendChild(ec);
-    tbody.appendChild(er);
-    return;
-  }
-  list.forEach(function (t) {
-    var n = normalizeTrade(t);
-    var tr = document.createElement('tr');
-    tr.appendChild(posCell('Date', t.date || '', false, null));
-    tr.appendChild(posCell('Side', t.type === 'sell' ? 'Sell' : 'Buy', false, null));
-    tr.appendChild(posCell('Symbol', String(t.symbol || '').toUpperCase(), false, null));
-    tr.appendChild(posCell('Qty', fmtQty(t.qty), true, t.qty));
-    tr.appendChild(posCell('Native total',
-      fmtQty(t.total) + ' ' + String(t.currency || '').toUpperCase(), true, t.total));
-    var normTd = posCell('Normalized total', '', true, n.totalMain + n.feeMain);
-    normTd.textContent = fmtMoney(n.totalMain + n.feeMain, main);
-    var badge = document.createElement('small');
-    badge.className = 'muted';
-    badge.textContent = ' ' + fxBadgeText(t);
-    normTd.appendChild(badge);
-    tr.appendChild(normTd);
-    var feeTxt = (Number(t.fee) > 0)
-      ? (fmtQty(t.fee) + ' ' + String(t.feeCurrency || t.currency || '').toUpperCase())
-      : '—';
-    if (n.feeFxAssumedSameRate) feeTxt += ' *';
-    var feeTd = posCell('Fee', feeTxt, true, t.fee);
-    if (n.feeFxAssumedSameRate) feeTd.title = 'Fee converted at the trade FX rate (*)';
-    tr.appendChild(feeTd);
-    tr.appendChild(posCell('Note', t.note ? String(t.note) : '—', false, null));
-    var actTd = document.createElement('td');
-    actTd.setAttribute('data-label', 'Action');
-    var del = document.createElement('button');
-    del.type = 'button';
-    del.textContent = 'Delete';
-    del.setAttribute('data-del', t.id || '');
-    del.setAttribute('aria-label', 'Delete trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
-    actTd.appendChild(del);
-    tr.appendChild(actTd);
-    tbody.appendChild(tr);
-  });
-}
-
 function deleteTrade(id) {
   if (!id) return;
   var st = loadState();
@@ -1191,10 +1105,14 @@ function deleteTrade(id) {
 }
 
 // --- Accounts UI (Task 2: stacked cards + CRUD + empty state) ---
-// Per-card + Trade button renders ONLY data-account-trade="<id>" here.
-// Task 3 owns wiring it to openPrefillTrade; this task leaves it unwired.
+// Per-card + Trade buttons carry data-account-trade="<id>", wired below to
+// openPrefillTrade (Task 3).
 
 function accountTrades(st, accountId) {
+  // Single-arg form accountTrades(accountId) reads live state (test helper).
+  if (typeof st === 'string' && accountId === undefined) {
+    return accountTrades(loadState(), st);
+  }
   return ((st && st.trades) || []).filter(function (t) { return t && t.accountId === accountId; });
 }
 
@@ -1557,8 +1475,10 @@ function buildAccounts() {
         addDemoTrade();
         return;
       }
-      // NOTE: [data-account-trade] intentionally unwired here.
-      // Task 3 wires it to openPrefillTrade.
+      if (t.hasAttribute('data-account-trade')) {
+        openPrefillTrade(t.getAttribute('data-account-trade'));
+        return;
+      }
       if (t.hasAttribute('data-account-rename')) {
         var rid = t.getAttribute('data-account-rename');
         var card = t.closest ? t.closest('[data-account]') : null;
@@ -1623,8 +1543,9 @@ function buildTradeForm() {
     '<form id="trade-form">' +
     '<label for="t-side">Side</label>' +
     '<select id="t-side"><option value="buy">Buy</option><option value="sell">Sell</option></select>' +
-    '<label for="t-symbol">Symbol</label>' +
-    '<input id="t-symbol" autocomplete="off" spellcheck="false" placeholder="BTC">' +
+    '<label for="t-account">Account</label>' +
+    '<select id="t-account"></select>' +
+    '<div class="fld-locked"><span class="fld-label">Symbol (locked to account)</span> <span id="t-symbol-locked" role="status"></span></div>' +
     '<label for="t-qty">Quantity</label>' +
     '<input id="t-qty" inputmode="decimal" placeholder="1">' +
     '<label for="t-total">Total (native currency)</label>' +
@@ -1655,6 +1576,8 @@ function buildTradeForm() {
   host.appendChild(wrap);
   var form = document.getElementById('trade-form');
   form.addEventListener('submit', onTradeSubmit);
+  var acctSel = document.getElementById('t-account');
+  if (acctSel) acctSel.addEventListener('change', syncLockedSymbol);
   var ccy = document.getElementById('t-currency');
   var custom = document.getElementById('t-custom-ccy');
   var feeccy = document.getElementById('t-feeccy');
@@ -1675,6 +1598,53 @@ function buildTradeForm() {
   });
 }
 
+// --- Account-bound trade dialog (Task 3) ---
+// First field is the Account select (options rebuilt on every open);
+// the symbol is shown locked read-only to that account's ticker.
+// openPrefillTrade(accountId|null) preselects the originating card's
+// account (or the default for null/unknown) and opens the dialog.
+
+function syncLockedSymbol() {
+  var sel = document.getElementById('t-account');
+  var locked = document.getElementById('t-symbol-locked');
+  if (!sel || !locked) return;
+  var acc = accountById(loadState(), sel.value);
+  locked.textContent = acc ? String(acc.ticker).toUpperCase() : '';
+}
+
+function openPrefillTrade(accountId) {
+  var st = loadState();
+  var accounts = Array.isArray(st.accounts) ? st.accounts : [];
+  if (!accounts.length) {
+    showBanner('Create your first account to enable Add trade.');
+    var host = document.getElementById('accounts');
+    if (host && host.scrollIntoView) {
+      try { host.scrollIntoView(); } catch (e) { /* ignore */ }
+    }
+    return null;
+  }
+  var target = ((typeof accountId === 'string' && accountId.length > 0) && accountById(st, accountId)) ||
+    defaultAccount(st) || accounts[0];
+  buildTradeForm(); // ensure the form exists (init normally builds it)
+  var sel = document.getElementById('t-account');
+  if (sel) {
+    sel.innerHTML = '';
+    accounts.forEach(function (a) {
+      var opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name + ' · ' + String(a.ticker).toUpperCase();
+      sel.appendChild(opt);
+    });
+    sel.value = target.id;
+  }
+  syncLockedSymbol();
+  var d = document.getElementById('t-date');
+  if (d && !d.value) d.value = todayStr();
+  tradeFormError(null);
+  openDialog('trade-dialog');
+  return target;
+}
+
 function tradeFormError(msg) {
   var p = document.getElementById('t-error');
   if (!p) return;
@@ -1690,9 +1660,13 @@ function tradeFormError(msg) {
 function onTradeSubmit(ev) {
   if (ev && ev.preventDefault) ev.preventDefault();
   tradeFormError(null);
-  var main = loadState().settings.mainCurrency;
+  var st0 = loadState();
+  var main = st0.settings.mainCurrency;
   var side = uiVal('t-side', 'buy') === 'sell' ? 'sell' : 'buy';
-  var symbol = uiVal('t-symbol', '').trim().toUpperCase();
+  var acc = accountById(st0, uiVal('t-account', '')) || defaultAccount(st0);
+  if (!acc) { tradeFormError('Create your first account to enable Add trade.'); return; }
+  var symbol = String(acc.ticker).toUpperCase();
+  var accountId = acc.id;
   var qty = Number(uiVal('t-qty', ''));
   var total = Number(uiVal('t-total', ''));
   var ccySel = uiVal('t-currency', 'EUR');
@@ -1706,8 +1680,7 @@ function onTradeSubmit(ev) {
   var note = uiVal('t-note', '').trim();
   var manualRateRaw = uiVal('t-manual-rate', '').trim();
   var manualPriceRaw = uiVal('t-manual-price', '').trim();
-  if (!symbol) { tradeFormError('Symbol is required (e.g. BTC).'); return; }
-  if (!/^[A-Z0-9._-]{1,12}$/.test(symbol)) { tradeFormError('Symbol looks invalid — letters/numbers, up to 12 chars.'); return; }
+  if (!symbol || !/^[A-Z0-9._-]{1,12}$/.test(symbol)) { tradeFormError('Account ticker looks invalid.'); return; }
   if (!isFinite(qty) || qty <= 0) { tradeFormError('Quantity must be > 0.'); return; }
   if (!isFinite(total) || total < 0) { tradeFormError('Total must be >= 0.'); return; }
   if (!/^[A-Z]{2,10}$/.test(currency)) { tradeFormError('Currency code invalid — pick one or enter a 2–10 letter code.'); return; }
@@ -1737,9 +1710,10 @@ function onTradeSubmit(ev) {
       feeCurrency: feeCurrency,
       note: note,
       fxLock: lock,
+      accountId: accountId,
       createdAt: new Date().toISOString()
     };
-    var err = validateTrade(trade, heldQtyFor(st.trades, symbol));
+    var err = validateTrade(trade, heldQtyFor(accountTrades(st, accountId), symbol));
     if (err) { tradeFormError(err); return; }
     st.trades.push(trade);
     if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); return; }
@@ -1859,7 +1833,7 @@ function buildTopbar() {
         }
         return;
       }
-      openDialog('trade-dialog');
+      openPrefillTrade(null); // default account
     });
   }
   var gear = document.getElementById('tb-settings');
@@ -2112,6 +2086,10 @@ if (typeof window !== 'undefined') {
   window.Inoculens.renameAccount = renameAccount;
   window.Inoculens.deleteAccount = deleteAccount;
   window.Inoculens.setDefaultAccount = setDefaultAccount;
+  window.Inoculens.accountTrades = accountTrades;
+  window.Inoculens.heldQtyFor = heldQtyFor;
+  window.Inoculens.openPrefillTrade = openPrefillTrade;
+  window.Inoculens.syncLockedSymbol = syncLockedSymbol;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
     document.addEventListener('DOMContentLoaded', init);
   }
