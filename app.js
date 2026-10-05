@@ -1952,7 +1952,8 @@ function onTradeSubmit(ev) {
     if (d) d.value = todayStr();
     tradeFormError(null);
     refreshPrices(); // recompute + render when fresh prices land (renders sync too)
-    render();
+    if (typeof location !== 'undefined') location.hash = '#/account/' + encodeURIComponent(accountId);
+    render(); // route() picks up the hash: the trade's account page shows the new rows
     closeDialog('trade-dialog');
   }
   if (from === String(main).toUpperCase()) {

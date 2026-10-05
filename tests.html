@@ -1143,6 +1143,30 @@
           assert(document.getElementById('t-account').value === 'r1', 'trade should default to default account r1');
           assert(document.getElementById('t-account-row').style.display !== 'none', 'account select should show on home');
         });
+
+        test('submit navigates to the trade account so rows show', function () {
+          seedSplit(); init();
+          location.hash = '#/';
+          route();
+          openPrefillTrade(null);
+          document.getElementById('t-side').value = 'buy';
+          document.getElementById('t-qty').value = '2';
+          document.getElementById('t-total').value = '20';
+          document.getElementById('t-currency').value = 'EUR';
+          document.getElementById('t-currency').dispatchEvent(new Event('change', { bubbles: true }));
+          document.getElementById('t-date').value = '2026-03-01';
+          document.getElementById('t-fee').value = '';
+          document.getElementById('t-note').value = '';
+          document.getElementById('t-manual-rate').value = '';
+          document.getElementById('t-manual-price').value = '';
+          onTradeSubmit({ preventDefault: function () {} });
+          var st = L.loadState();
+          assert(st.trades.length === 4, 'trade should save, got ' + st.trades.length);
+          assert(location.hash === '#/account/r1', 'should land on the trade account, got ' + location.hash);
+          route();
+          var det = document.getElementById('account-detail');
+          assert(det.querySelector('tbody tr') !== null, 'new trade rows should render in the account');
+        });
       } finally {
         restoreState();
       }
