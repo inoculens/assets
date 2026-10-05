@@ -24,8 +24,9 @@ subtotals, and trade list.
 - Create account (name + ticker) → it appears as a card; set default.
 - Add trade from topbar (default account) or card (that account); symbol
   locked to the account ticker.
-- Each card shows correct P&L for its trades; grand totals equal the
-  all-trades computation.
+- Each card shows correct P&L for its trades; grand totals equal the sum of
+  the per-account runs (identical to an all-trades run when tickers are not
+  shared across accounts).
 - Export → clear → import restores accounts, trades, default identical.
 
 ## 2. Data Model & Store
