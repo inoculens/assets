@@ -1356,11 +1356,27 @@ function renderAccountDetail(st, id) {
   // Holding first, then worth, market, cost, gains: Quantity, Value,
   // Live price, Average entry, Unrealized, Realized, Total P&L, Return.
   // (Single ticker per account, so rows[0] is the position.)
+  // A closed position states facts, not leftovers: average of nothing is
+  // unknown, the notice sits above the grid (never inside it), and final
+  // return is realized vs lifetime buy cost.
   var pos = rows.length ? rows[0] : null;
+  var closed = !!(pos && pos.qtyHeld === 0);
+  var lifetimeCost = 0;
+  if (closed) {
+    atrades.forEach(function (t) {
+      if (!t || t.type !== 'buy') return;
+      var cn = normalizeTrade(t);
+      lifetimeCost += cn.totalMain + cn.feeMain;
+    });
+    var closedFlag = document.createElement('p');
+    closedFlag.className = 'muted closed-flag';
+    closedFlag.textContent = 'Closed — nothing held.';
+    host.appendChild(closedFlag);
+  }
   if (pos) stats.appendChild(statCard('Quantity', fmtQty(pos.qtyHeld) + ' ' + String(pos.symbol || '').toUpperCase(), pos.qtyHeld));
   stats.appendChild(statCard('Value', mvKnown ? fmtMoney(mv, main) : (atrades.length ? '—' : 'New'), mvKnown ? mv : null));
   if (pos) stats.appendChild(statCard('Live price', pos.livePrice !== null ? fmtMoney(pos.livePrice, main) : '—', pos.livePrice));
-  if (pos) stats.appendChild(statCard('Average entry', fmtMoney(pos.avgEntry, main), pos.avgEntry));
+  if (pos) stats.appendChild(statCard('Average entry', (!closed) ? fmtMoney(pos.avgEntry, main) : '—', (!closed) ? pos.avgEntry : null));
   stats.appendChild(statCard('Unrealized', unKnown ? fmtMoney(un, main) : '—', unKnown ? un : null));
   stats.appendChild(statCard('Realized', fmtMoney(rz, main), rz));
   if (pos) {
@@ -1368,13 +1384,8 @@ function renderAccountDetail(st, id) {
     var tsc = plClass(pos.totalPL);
     if (tsc) tplCard.querySelector('.card-value').classList.add(tsc);
     stats.appendChild(tplCard);
-    if (pos.qtyHeld === 0) {
-      var closedFlag = document.createElement('p');
-      closedFlag.className = 'muted';
-      closedFlag.textContent = 'Closed — nothing held.';
-      stats.appendChild(closedFlag);
-    }
   }
+  if (closed && lifetimeCost > 0) ret = (rz / lifetimeCost) * 100;
   var retCard = statCard('Return', ret !== null ? fmtPct(ret) : '—', ret);
   var rsc = plClass(ret);
   if (rsc) retCard.querySelector('.card-value').classList.add(rsc);

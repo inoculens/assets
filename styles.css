@@ -1067,3 +1067,7 @@ body {
     transform: none;
   }
 }
+
+.closed-flag {
+  margin: 0.9rem 0 0;
+}
