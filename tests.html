@@ -285,7 +285,109 @@
       });
     })();
 
-    // Later tasks (Ledger, Prices/Fx, Ui) append new section IIFEs here.
+    // === Ledger tests (Task 4: normalize + average + FIFO) ===
+    (function ledgerTests() {
+      var L = window.Inoculens || {};
+      var normalizeTrade = L.normalizeTrade;
+      var computeAverage = L.computeAverage;
+      var computeFifo = L.computeFifo;
+      var computePositions = L.computePositions;
+      var validateTrade = L.validateTrade;
+
+      // Spec fixture — verbatim values from task brief.
+      function specTrades() {
+        return [
+          {id:'a',type:'buy',symbol:'BTC',qty:1,total:50000,currency:'EUR',date:'2026-01-01',fee:0,feeCurrency:'EUR',fxLock:{pair:'EUR/EUR',rate:1,source:'1:1'}},
+          {id:'b',type:'buy',symbol:'BTC',qty:1,total:70000,currency:'EUR',date:'2026-02-01',fee:0,feeCurrency:'EUR',fxLock:{pair:'EUR/EUR',rate:1,source:'1:1'}},
+          {id:'c',type:'sell',symbol:'BTC',qty:1,total:80000,currency:'EUR',date:'2026-03-01',fee:0,feeCurrency:'EUR',fxLock:{pair:'EUR/EUR',rate:1,source:'1:1'}},
+        ];
+      }
+
+      test('ledger fns exposed', function () {
+        assert(typeof normalizeTrade === 'function', 'normalizeTrade missing');
+        assert(typeof computeAverage === 'function', 'computeAverage missing');
+        assert(typeof computeFifo === 'function', 'computeFifo missing');
+        assert(typeof computePositions === 'function', 'computePositions missing');
+        assert(typeof validateTrade === 'function', 'validateTrade missing');
+      });
+
+      test('normalizeTrade converts at fxLock rate', function () {
+        var r = normalizeTrade({ total: 10, fee: 2, currency: 'USD', feeCurrency: 'USD', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
+        assert(r.totalMain === 5, 'totalMain expected 5, got ' + r.totalMain);
+        assert(r.feeMain === 1, 'feeMain expected 1, got ' + r.feeMain);
+      });
+
+      test('normalizeTrade feeCurrency mismatch assumes same rate + flags', function () {
+        var r = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
+        assert(r.feeMain === 5, 'fee should fall back to trade lock rate, got ' + r.feeMain);
+        assert(r.feeFxAssumedSameRate === true, 'missing feeFxAssumedSameRate flag');
+        var r2 = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' }, feeFxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } });
+        assert(r2.feeMain === 10, 'feeFxLock rate not used, got ' + r2.feeMain);
+        assert(!r2.feeFxAssumedSameRate, 'flag must be absent when feeFxLock present');
+      });
+
+      test('average-cost spec fixture (avg 60k / realized 20k / qty 1)', function () {
+        var tr = specTrades();
+        var avg = computeAverage(tr).get('BTC');
+        assert(avg.avgEntry === 60000 && avg.realized === 20000 && avg.qty === 1,
+          'bad average: ' + JSON.stringify(avg));
+      });
+
+      test('FIFO spec fixture (realized 30k, first-lot gain 30k)', function () {
+        var tr = specTrades();
+        var fifo = computeFifo(tr).get('BTC');
+        assert(fifo.realized === 30000 && fifo.lots[0].gain === 30000,
+          'bad fifo: ' + JSON.stringify(fifo));
+      });
+
+      test('FIFO lots carry holdingDays + open/close dates', function () {
+        var fifo = computeFifo(specTrades()).get('BTC');
+        var lot = fifo.lots[0];
+        assert(lot.openDate === '2026-01-01' && lot.closeDate === '2026-03-01',
+          'bad lot dates: ' + JSON.stringify(lot));
+        assert(typeof lot.holdingDays === 'number' && lot.holdingDays > 0,
+          'bad holdingDays: ' + JSON.stringify(lot));
+        assert(lot.qty === 1 && lot.proceeds === 80000 && lot.cost === 50000,
+          'bad lot amounts: ' + JSON.stringify(lot));
+      });
+
+      test('validateTrade oversell blocked, exact sell allowed', function () {
+        assert(validateTrade({type:'sell',symbol:'BTC',qty:5}, 1) !== null, 'oversell not blocked');
+        assert(validateTrade({type:'sell',symbol:'BTC',qty:1}, 1) === null, 'exact sell should pass');
+      });
+
+      test('validateTrade blocks qty<=0, total<0, future date', function () {
+        assert(validateTrade({ type: 'buy', symbol: 'BTC', qty: 0 }, 0) !== null, 'qty 0 not blocked');
+        assert(validateTrade({ type: 'buy', symbol: 'BTC', qty: -1 }, 0) !== null, 'negative qty not blocked');
+        assert(validateTrade({ type: 'buy', symbol: 'BTC', qty: 1, total: -5 }, 0) !== null, 'negative total not blocked');
+        assert(validateTrade({ type: 'buy', symbol: 'BTC', qty: 1, total: 10, date: '2999-01-01' }, 0) !== null, 'future date not blocked');
+        assert(validateTrade({ type: 'buy', symbol: 'BTC', qty: 1, total: 10, date: '2026-01-01' }, 0) === null, 'valid buy rejected');
+      });
+
+      test('compute never goes negative on oversell', function () {
+        var tr = specTrades().concat([
+          {id:'d',type:'sell',symbol:'BTC',qty:99,total:99*80000,currency:'EUR',date:'2026-04-01',fee:0,feeCurrency:'EUR',fxLock:{pair:'EUR/EUR',rate:1,source:'1:1'}},
+        ]);
+        var avg = computeAverage(tr).get('BTC');
+        var fifo = computeFifo(tr).get('BTC');
+        assert(avg.qty === 0 && avg.qty >= 0, 'average went negative: ' + JSON.stringify(avg));
+        assert(fifo.qty === 0 && fifo.qty >= 0, 'fifo went negative: ' + JSON.stringify(fifo));
+      });
+
+      test('computePositions shape for Ui (Task 6)', function () {
+        var rows = computePositions(specTrades(), { BTC: 100000 }, 'average');
+        assert(rows.length === 1, 'expected 1 row, got ' + rows.length);
+        var p = rows[0];
+        assert(p.symbol === 'BTC' && p.qtyHeld === 1 && p.avgEntry === 60000, 'bad position head: ' + JSON.stringify(p));
+        assert(p.livePrice === 100000 && p.marketValue === 100000, 'bad market value: ' + JSON.stringify(p));
+        assert(p.unrealized === 40000 && p.realized === 20000 && p.totalPL === 60000, 'bad P&L: ' + JSON.stringify(p));
+        assert(typeof p.returnPct === 'number' && isFinite(p.returnPct), 'bad returnPct: ' + JSON.stringify(p));
+        var fr = computePositions(specTrades(), { BTC: 100000 }, 'fifo')[0];
+        assert(fr.realized === 30000, 'fifo method not honoured: ' + JSON.stringify(fr));
+      });
+    })();
+
+    // Later tasks (Prices, Ui) append new section IIFEs here.
 
     renderResults();
   </script>
