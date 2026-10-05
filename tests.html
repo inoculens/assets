@@ -40,11 +40,24 @@
       if (!cond) throw new Error(msg || 'assertion failed');
     }
     function test(name, fn) {
+      var r;
       try {
-        fn();
-        results.push({ name: name, ok: true });
+        r = fn();
       } catch (e) {
         results.push({ name: name, ok: false, error: String((e && e.message) || e) });
+        return;
+      }
+      // Async support (Fx task): a promise-returning fn settles later and re-renders.
+      if (r && typeof r.then === 'function') {
+        r.then(function () {
+          results.push({ name: name, ok: true });
+          renderResults();
+        }, function (e) {
+          results.push({ name: name, ok: false, error: String((e && e.message) || e) });
+          renderResults();
+        });
+      } else {
+        results.push({ name: name, ok: true });
       }
     }
     function renderResults() {
@@ -161,6 +174,115 @@
       } finally {
         restore();
       }
+    })();
+
+    // === Fx tests ===
+    (function fxTests() {
+      var Fx = window.Inoculens || {};
+      var normalizeToMain = Fx.normalizeToMain;
+      var stableToUsd = Fx.stableToUsd;
+      var pickRate = Fx.pickRate;
+      var fetchEcbRate = Fx.fetchEcbRate;
+
+      test('normalizeToMain scales total+fee', function () {
+        assert(normalizeToMain(10, 0, 0.92) === 9.2, 'expected 9.2, got ' + normalizeToMain(10, 0, 0.92));
+        assert(normalizeToMain(10, 2, 0.5) === 6, 'fee not converted at same rate');
+      });
+
+      test('stablecoin path flag', function () {
+        assert(stableToUsd('USDC') === true && stableToUsd('EUR') === false, 'stable flag wrong');
+        assert(stableToUsd('USDT') === true && stableToUsd('DAI') === true, 'USDT/DAI should map to USD');
+        assert(stableToUsd('USD') === false, 'USD itself is not a stable mapping');
+      });
+
+      test('pickRate forward-fill uses previous fixing', function () {
+        var r = pickRate({ '2026-09-30': 0.9 }, '2026-10-01');
+        assert(r.rate === 0.9 && r.interpolated === true, 'weekend-gap forward-fill failed: ' + JSON.stringify(r));
+        assert(r.source === 'ECB-2026-09-30', 'source should pin actual fixing date: ' + JSON.stringify(r));
+      });
+
+      test('pickRate exact date is not interpolated', function () {
+        var r = pickRate({ '2026-10-01': 0.92 }, '2026-10-01');
+        assert(r.rate === 0.92 && r.interpolated === false, 'exact fixing flagged interpolated');
+        assert(r.source === 'ECB-2026-10-01', 'bad source: ' + JSON.stringify(r));
+      });
+
+      test('pickRate gives up after 5-day window', function () {
+        var r = pickRate({ '2026-09-20': 0.9 }, '2026-10-01');
+        assert(r === null, 'expected null beyond lookback, got ' + JSON.stringify(r));
+      });
+
+      test('fetchEcbRate same-currency needs no network', function () {
+        var origFetch = window.fetch;
+        var called = 0;
+        window.fetch = function () { called++; return Promise.reject(new Error('must not fetch')); };
+        function restore() { window.fetch = origFetch; }
+        return fetchEcbRate('2026-10-01', 'EUR', 'EUR').then(function (r) {
+          restore();
+          assert(r.rate === 1 && r.interpolated === false && r.source === '1:1', 'bad 1:1 result: ' + JSON.stringify(r));
+          assert(called === 0, 'same-currency must not hit network');
+        }, function (e) { restore(); throw e; });
+      });
+
+      test('fetchEcbRate exact date', function () {
+        var origFetch = window.fetch;
+        window.fetch = function () {
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ rates: { EUR: 0.92 } }); } });
+        };
+        function restore() { window.fetch = origFetch; }
+        return fetchEcbRate('2026-10-01', 'USD', 'EUR').then(function (r) {
+          restore();
+          assert(r.rate === 0.92 && r.interpolated === false && r.source === 'ECB-2026-10-01', 'bad exact result: ' + JSON.stringify(r));
+        }, function (e) { restore(); throw e; });
+      });
+
+      test('fetchEcbRate weekend-gap walks back (empty + 404)', function () {
+        var origFetch = window.fetch;
+        window.fetch = function (url) {
+          if (url.indexOf('2026-10-01') !== -1) {
+            return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ rates: {} }); } });
+          }
+          if (url.indexOf('2026-09-30') !== -1) {
+            return Promise.resolve({ ok: false, status: 404 });
+          }
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ rates: { EUR: 0.9 } }); } });
+        };
+        function restore() { window.fetch = origFetch; }
+        return fetchEcbRate('2026-10-01', 'USD', 'EUR').then(function (r) {
+          restore();
+          assert(r.rate === 0.9 && r.interpolated === true && r.source === 'ECB-2026-09-29', 'no forward-fill: ' + JSON.stringify(r));
+        }, function (e) { restore(); throw e; });
+      });
+
+      test('fetchEcbRate stablecoin maps via USD', function () {
+        var origFetch = window.fetch;
+        var urls = [];
+        window.fetch = function (url) {
+          urls.push(url);
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ rates: { EUR: 0.92 } }); } });
+        };
+        function restore() { window.fetch = origFetch; }
+        return fetchEcbRate('2026-10-01', 'USDC', 'EUR').then(function (r) {
+          restore();
+          assert(urls.length === 1 && urls[0].indexOf('from=USD') !== -1 && urls[0].indexOf('to=EUR') !== -1, 'stable not mapped USDC->USD: ' + urls.join(','));
+          assert(r.rate === 0.92, 'bad stable rate: ' + JSON.stringify(r));
+        }, function (e) { restore(); throw e; });
+      });
+
+      test('fetchEcbRate failure throws fx-unavailable after retry', function () {
+        var origFetch = window.fetch;
+        var called = 0;
+        window.fetch = function () { called++; return Promise.reject(new Error('net down')); };
+        function restore() { window.fetch = origFetch; }
+        return fetchEcbRate('2026-10-01', 'USD', 'EUR').then(function () {
+          restore();
+          assert(false, 'should have thrown fx-unavailable');
+        }, function (e) {
+          restore();
+          assert(e && e.message === 'fx-unavailable', 'wrong error: ' + ((e && e.message) || e));
+          assert(called === 2, 'expected exactly one retry, got ' + called);
+        });
+      });
     })();
 
     // Later tasks (Ledger, Prices/Fx, Ui) append new section IIFEs here.
