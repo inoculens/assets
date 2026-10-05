@@ -1353,7 +1353,7 @@ function renderAccountDetail(st, id) {
   // Live price, Average entry, Unrealized, Realized, Total P&L, Return.
   // (Single ticker per account, so rows[0] is the position.)
   var pos = rows.length ? rows[0] : null;
-  if (pos) stats.appendChild(statCard('Quantity', fmtQty(pos.qtyHeld), pos.qtyHeld));
+  if (pos) stats.appendChild(statCard('Quantity', fmtQty(pos.qtyHeld) + ' ' + String(pos.symbol || '').toUpperCase(), pos.qtyHeld));
   stats.appendChild(statCard('Value', mvKnown ? fmtMoney(mv, main) : (atrades.length ? '—' : 'New'), mvKnown ? mv : null));
   if (pos) stats.appendChild(statCard('Live price', pos.livePrice !== null ? fmtMoney(pos.livePrice, main) : '—', pos.livePrice));
   if (pos) stats.appendChild(statCard('Average entry', fmtMoney(pos.avgEntry, main), pos.avgEntry));
