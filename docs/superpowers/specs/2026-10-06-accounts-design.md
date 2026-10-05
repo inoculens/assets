@@ -66,8 +66,7 @@ Per-account card (stacked vertically):
   total, return — one row; `—` semantics for unknown live preserved),
   then that account's trades (date, side, qty, native/normalized totals +
   rate badge, fee, note, delete). Empty account → muted line, no tables.
-- Delete account: confirm; blocked while trades remain (message to delete
-  or move trades first — no move UI in this spec; delete trades first).
+- Delete account: confirm; blocked while trades remain (message: delete its trades first — no move-trades UI in this spec).
 
 Trade dialog: first field is Account select (defaults to default account,
 or the originating card's account; user-changeable). Symbol shown locked
