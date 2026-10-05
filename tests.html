@@ -995,6 +995,26 @@
           saveState(defaultState()); render();
           assert(document.getElementById('accounts').textContent.indexOf('Create your first account') !== -1, 'empty-state prompt missing');
         });
+
+        test('accounts deleting empty default falls back to survivor', function () {
+          L.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'empty-default' },
+            accounts: [
+              { id: 'empty-default', name: 'Empty', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
+              { id: 'survivor', name: 'Keeper', ticker: 'ETH', createdAt: '2026-10-06T00:00:01.000Z' }
+            ],
+            trades: [],
+            priceOverrides: {}
+          });
+          init(); render();
+          var realConfirm = window.confirm; window.confirm = function () { return true; };
+          deleteAccount('empty-default');
+          window.confirm = realConfirm;
+          assert(defaultAccount(loadState()).id === 'survivor', 'default should fall back to survivor, got ' + JSON.stringify(defaultAccount(loadState())));
+          var cards = document.querySelectorAll('#accounts .account-card');
+          assert(cards.length === 1, 'only survivor card should render, got ' + cards.length);
+          assert(cards[0].getAttribute('data-account') === 'survivor', 'survivor card missing');
+        });
       } finally {
         restoreState();
       }

@@ -1190,16 +1190,6 @@ function deleteTrade(id) {
   render(); // cached live prices stay; no refetch needed on delete
 }
 
-function deleteTrade(id) {
-  if (!id) return;
-  var st = loadState();
-  var kept = (st.trades || []).filter(function (t) { return !t || t.id !== id; });
-  if (kept.length === (st.trades || []).length) return; // unknown id: no write
-  st.trades = kept;
-  if (!saveStateGuarded(st)) return;
-  render(); // cached live prices stay; no refetch needed on delete
-}
-
 // --- Accounts UI (Task 2: stacked cards + CRUD + empty state) ---
 // Per-card + Trade button renders ONLY data-account-trade="<id>" here.
 // Task 3 owns wiring it to openPrefillTrade; this task leaves it unwired.
