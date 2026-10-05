@@ -457,9 +457,9 @@ function validateTrade(t, heldQty) {
   }
   if (typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.date)) {
     var now = new Date();
-    var m = now.getUTCMonth() + 1;
-    var d = now.getUTCDate();
-    var today = now.getUTCFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (d < 10 ? '0' : '') + d;
+    var m = now.getMonth() + 1;
+    var d = now.getDate();
+    var today = now.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (d < 10 ? '0' : '') + d;
     if (t.date.slice(0, 10) > today) return 'date cannot be in the future';
   }
   if (t.type === 'sell' && typeof heldQty === 'number' && isFinite(heldQty)) {
@@ -638,10 +638,13 @@ var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
 var moneyFmtCache = {};
 
 function todayStr() {
+  // Local calendar date (user-facing default + date max), matching the
+  // local-based download filename. Pure FX calendar math (fxShiftDate,
+  // ledgerHoldingDays) intentionally stays on UTC date arithmetic.
   var n = new Date();
-  var m = n.getUTCMonth() + 1;
-  var d = n.getUTCDate();
-  return n.getUTCFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (d < 10 ? '0' : '') + d;
+  var m = n.getMonth() + 1;
+  var d = n.getDate();
+  return n.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (d < 10 ? '0' : '') + d;
 }
 
 function uid() {
@@ -924,10 +927,12 @@ function deleteTrade(id) {
 // --- Trade form ---
 var TRADE_CCY_OPTIONS = ['EUR', 'USD', 'GBP', 'CHF', 'USDC', 'USDT'];
 
-function ccyOptions(selected) {
-  return TRADE_CCY_OPTIONS.map(function (c) {
+function ccyOptions(selected, includeCustom) {
+  var base = TRADE_CCY_OPTIONS.map(function (c) {
     return '<option value="' + c + '"' + (c === selected ? ' selected' : '') + '>' + c + '</option>';
-  }).join('') + '<option value="CUSTOM"' + (selected === 'CUSTOM' ? ' selected' : '') + '>Other…</option>';
+  }).join('');
+  if (includeCustom === false) return base; // e.g. fee select: no dead Other… option
+  return base + '<option value="CUSTOM"' + (selected === 'CUSTOM' ? ' selected' : '') + '>Other…</option>';
 }
 
 function buildTradeForm() {
@@ -947,13 +952,14 @@ function buildTradeForm() {
     '<input id="t-total" inputmode="decimal" placeholder="50000">' +
     '<label for="t-currency">Currency</label>' +
     '<select id="t-currency">' + ccyOptions('EUR') + '</select>' +
+    '<label for="t-custom-ccy" id="t-custom-ccy-label" hidden>Custom currency code</label>' +
     '<input id="t-custom-ccy" autocomplete="off" spellcheck="false" placeholder="Code, e.g. JPY" hidden>' +
     '<label for="t-date">Date</label>' +
     '<input id="t-date" type="date">' +
     '<label for="t-fee">Fee</label>' +
     '<input id="t-fee" inputmode="decimal" placeholder="0">' +
     '<label for="t-feeccy">Fee currency</label>' +
-    '<select id="t-feeccy">' + ccyOptions('EUR') + '</select>' +
+    '<select id="t-feeccy">' + ccyOptions('EUR', false) + '</select>' +
     '<label for="t-note">Note</label>' +
     '<input id="t-note" autocomplete="off" placeholder="optional">' +
     '<details><summary>Manual FX rate (fallback when ECB is unavailable)</summary>' +
@@ -974,8 +980,11 @@ function buildTradeForm() {
   var custom = document.getElementById('t-custom-ccy');
   var feeccy = document.getElementById('t-feeccy');
   ccy.addEventListener('change', function () {
-    custom.hidden = (ccy.value !== 'CUSTOM');
-    if (ccy.value !== 'CUSTOM' && feeccy) feeccy.value = ccy.value; // fee usually in trade currency
+    var needCustom = (ccy.value === 'CUSTOM');
+    custom.hidden = !needCustom;
+    var clabel = document.getElementById('t-custom-ccy-label');
+    if (clabel) clabel.hidden = !needCustom;
+    if (!needCustom && feeccy) feeccy.value = ccy.value; // fee usually in trade currency
   });
 }
 
@@ -1005,7 +1014,7 @@ function onTradeSubmit(ev) {
   var feeRaw = uiVal('t-fee', '').trim();
   var fee = (feeRaw === '') ? 0 : Number(feeRaw);
   var feeCcyRaw = uiVal('t-feeccy', '');
-  var feeCurrency = (feeCcyRaw === 'CUSTOM' || !feeCcyRaw) ? currency : String(feeCcyRaw).toUpperCase();
+  var feeCurrency = feeCcyRaw ? String(feeCcyRaw).toUpperCase() : currency;
   var note = uiVal('t-note', '').trim();
   var manualRateRaw = uiVal('t-manual-rate', '').trim();
   var manualPriceRaw = uiVal('t-manual-price', '').trim();

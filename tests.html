@@ -558,6 +558,28 @@
       }
     })();
 
+    // === Polish tests (Task 7: dead CUSTOM option, local today) ===
+    (function polishTests() {
+      test('fee currency select offers no dead CUSTOM option', function () {
+        if (typeof init === 'function') init();
+        var feeOpts = Array.prototype.map.call(
+          document.querySelectorAll('#t-feeccy option'), function (o) { return o.value; });
+        assert(feeOpts.length > 0, 'fee select has no options');
+        assert(feeOpts.indexOf('CUSTOM') === -1, 't-feeccy must not offer CUSTOM, got ' + feeOpts.join(','));
+        var tradeOpts = Array.prototype.map.call(
+          document.querySelectorAll('#t-currency option'), function (o) { return o.value; });
+        assert(tradeOpts.indexOf('CUSTOM') !== -1, 't-currency should keep Other…');
+        assert(document.querySelector('label[for="t-custom-ccy"]') !== null, 'custom currency input needs a label');
+      });
+
+      test('todayStr uses local calendar date', function () {
+        var n = new Date();
+        function p(x) { return (x < 10 ? '0' : '') + x; }
+        var local = n.getFullYear() + '-' + p(n.getMonth() + 1) + '-' + p(n.getDate());
+        assert(todayStr() === local, 'todayStr ' + todayStr() + ' !== local ' + local);
+      });
+    })();
+
     renderResults();
   </script>
 </body>

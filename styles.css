@@ -69,6 +69,11 @@ header.brand {
   display: none;
 }
 
+/* Honor hidden attributes against element display rules (e.g. label{display:block}). */
+[hidden] {
+  display: none !important;
+}
+
 #banner.error {
   border-color: var(--accent);
   color: var(--text);
