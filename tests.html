@@ -27,9 +27,30 @@
     <ul id="results"></ul>
     <div id="ui-fixtures">
       <div id="banner" role="status" aria-live="polite" hidden></div>
+      <div class="topbar-controls">
+        <select id="tb-main">
+          <option value="EUR">EUR</option>
+          <option value="USD">USD</option>
+          <option value="GBP">GBP</option>
+          <option value="CHF">CHF</option>
+        </select>
+        <button type="button" id="tb-avg" aria-pressed="true">Average</button>
+        <button type="button" id="tb-fifo" aria-pressed="false">FIFO</button>
+        <button type="button" id="tb-add">+ Add trade</button>
+        <button type="button" id="tb-settings">Settings</button>
+      </div>
+      <p id="tb-totals"></p>
+      <section id="overview" aria-label="Summary"><div class="cards" id="summary-cards"></div></section>
       <section id="positions" aria-label="Positions"></section>
       <section id="trades" aria-label="Trades"></section>
-      <aside id="settings" aria-label="Settings"></aside>
+      <dialog id="trade-dialog" aria-labelledby="trade-dialog-title">
+        <div class="dialog-head"><h2 id="trade-dialog-title">Add trade</h2></div>
+        <div id="trade-dialog-body"></div>
+      </dialog>
+      <dialog id="settings-dialog" aria-labelledby="settings-dialog-title">
+        <div class="dialog-head"><h2 id="settings-dialog-title">Settings</h2></div>
+        <div id="settings-dialog-body"></div>
+      </dialog>
     </div>
   </main>
 

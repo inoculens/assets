@@ -48,25 +48,60 @@
 </head>
 <body>
   <header class="brand">
-    <div class="brand-inner">
-      <h1>INOCULENS ASSETS</h1>
-      <p class="tagline">Local-first portfolio tracker — private crypto P&amp;L in your browser.</p>
+    <div class="brand-inner topbar">
+      <div class="brand-id">
+        <h1>INOCULENS ASSETS</h1>
+        <p class="tagline">Local-first portfolio tracker — private P&amp;L in your browser.</p>
+      </div>
+      <p id="tb-totals" class="topbar-totals" aria-live="polite"></p>
+      <div class="topbar-controls">
+        <label class="tb-field" for="tb-main">Currency
+          <select id="tb-main">
+            <option value="EUR">EUR</option>
+            <option value="USD">USD</option>
+            <option value="GBP">GBP</option>
+            <option value="CHF">CHF</option>
+          </select>
+        </label>
+        <div class="segmented" role="group" aria-label="Cost method">
+          <button type="button" id="tb-avg" aria-pressed="true">Average</button>
+          <button type="button" id="tb-fifo" aria-pressed="false">FIFO</button>
+        </div>
+        <button type="button" id="tb-add" class="primary">+ Add trade</button>
+        <button type="button" id="tb-settings" aria-haspopup="dialog">Settings</button>
+      </div>
     </div>
   </header>
 
   <div id="banner" role="status" aria-live="polite" hidden></div>
 
   <main>
+    <section id="overview" aria-label="Summary">
+      <div class="cards" id="summary-cards"></div>
+    </section>
     <section id="positions" aria-label="Positions">
       <h2>Positions</h2>
     </section>
     <section id="trades" aria-label="Trades">
       <h2>Trades</h2>
     </section>
-    <aside id="settings" aria-label="Settings">
-      <h2>Settings</h2>
-    </aside>
   </main>
+
+  <dialog id="trade-dialog" aria-labelledby="trade-dialog-title">
+    <div class="dialog-head">
+      <h2 id="trade-dialog-title">Add trade</h2>
+      <button type="button" data-close aria-label="Close dialog">✕</button>
+    </div>
+    <div id="trade-dialog-body"></div>
+  </dialog>
+
+  <dialog id="settings-dialog" aria-labelledby="settings-dialog-title">
+    <div class="dialog-head">
+      <h2 id="settings-dialog-title">Settings</h2>
+      <button type="button" data-close aria-label="Close dialog">✕</button>
+    </div>
+    <div id="settings-dialog-body"></div>
+  </dialog>
 
   <noscript>
     <p>INOCULENS ASSETS needs JavaScript to compute your local-first portfolio. No data leaves your browser.</p>

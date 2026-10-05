@@ -655,15 +655,16 @@ if (typeof window !== 'undefined') {
 }
 
 // === Ui ===
-// DOM boot + render loop (Task 6). Binds the trade form, positions/trades
-// tables, settings drawer, import/export and banner to Store/Fx/Ledger/
-// Prices. Render loop: every mutation does saveState -> recompute
-// (computePositions) -> render(). A main-currency switch re-fetches live
-// prices only; frozen trade fxLocks are never rewritten. Money is formatted
-// with Intl.NumberFormat in the current mainCurrency. Every positions/trades
-// <td> carries a data-label so the mobile card layout (styles.css) can label
-// rows. init() boots on DOMContentLoaded; render()/refreshPrices() are the
-// recompute+render entry points (also used by tests.html).
+// DOM boot + render loop (Task 6; top-bar + dialogs redesign). Binds the
+// sticky top bar, positions/trades tables, trade + settings dialogs,
+// import/export and banner to Store/Fx/Ledger/Prices. Render loop: every
+// mutation does saveState -> recompute (computePositions) -> render(). A
+// main-currency switch re-fetches live prices only; frozen trade fxLocks
+// are never rewritten. Money is formatted with Intl.NumberFormat in the
+// current mainCurrency. Every positions/trades <td> carries a data-label
+// so the mobile card layout (styles.css) can label rows. init() boots on
+// DOMContentLoaded; render()/refreshPrices() are the recompute+render
+// entry points (also used by tests.html).
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -817,10 +818,56 @@ function buildPositions() {
   table.appendChild(thead);
   table.appendChild(document.createElement('tbody'));
   host.appendChild(table);
-  var totals = document.createElement('p');
-  totals.id = 'positions-totals';
-  totals.className = 'muted';
-  host.appendChild(totals);
+}
+
+// --- Summary cards + top-bar totals ---
+// Portfolio-level rollups rendered into the sticky top bar (#tb-totals)
+// and the overview cards (#summary-cards): value, unrealized, realized,
+// return vs remaining cost basis.
+
+function renderSummaryCards(st, rows) {
+  var main = st.settings.mainCurrency;
+  var mv = 0;
+  var un = 0;
+  var rz = 0;
+  var pl = 0;
+  rows.forEach(function (p) { mv += p.marketValue; un += p.unrealized; rz += p.realized; pl += p.totalPL; });
+  var tb = document.getElementById('tb-totals');
+  if (tb) {
+    tb.textContent = rows.length
+      ? ('Portfolio value ' + fmtMoney(mv, main) + ' · total P&L ' + fmtMoney(pl, main) +
+        ' (' + st.settings.costMethod + ', ' + main + ')')
+      : '';
+  }
+  var host = document.getElementById('summary-cards');
+  if (!host) return;
+  host.innerHTML = '';
+  if (!rows.length) {
+    var p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'No positions yet — add your first trade.';
+    host.appendChild(p);
+    return;
+  }
+  var cost = mv - un;
+  var ret = cost > 0 ? (pl / cost) * 100 : 0;
+  [['Value', fmtMoney(mv, main), mv],
+   ['Unrealized', fmtMoney(un, main), un],
+   ['Realized', fmtMoney(rz, main), rz],
+   ['Return', fmtPct(ret), ret]].forEach(function (c) {
+    var d = document.createElement('div');
+    d.className = 'card';
+    var l = document.createElement('span');
+    l.className = 'card-label';
+    l.textContent = c[0];
+    var v = document.createElement('span');
+    v.className = 'card-value num';
+    v.textContent = c[1];
+    v.setAttribute('data-value', String(c[2]));
+    d.appendChild(l);
+    d.appendChild(v);
+    host.appendChild(d);
+  });
 }
 
 function renderPositions(st) {
@@ -856,16 +903,7 @@ function renderPositions(st) {
     tr.appendChild(posCell('Return %', fmtPct(p.returnPct), true, p.returnPct));
     tbody.appendChild(tr);
   });
-  var totals = document.getElementById('positions-totals');
-  if (totals) {
-    var mv = 0;
-    var pl = 0;
-    rows.forEach(function (p) { mv += p.marketValue; pl += p.totalPL; });
-    totals.textContent = rows.length
-      ? ('Portfolio value ' + fmtMoney(mv, main) + ' · total P&L ' + fmtMoney(pl, main) +
-        ' (' + st.settings.costMethod + ', ' + main + ')')
-      : '';
-  }
+  renderSummaryCards(st, rows);
 }
 
 // --- Trades table ---
@@ -1004,11 +1042,10 @@ function ensureCustomFeeOption(code) {
 }
 
 function buildTradeForm() {
-  var host = document.getElementById('trades');
+  var host = document.getElementById('trade-dialog-body');
   if (!host || document.getElementById('trade-form')) return;
   var wrap = document.createElement('div');
   wrap.innerHTML =
-    '<h3>Add trade</h3>' +
     '<form id="trade-form">' +
     '<label for="t-side">Side</label>' +
     '<select id="t-side"><option value="buy">Buy</option><option value="sell">Sell</option></select>' +
@@ -1041,7 +1078,7 @@ function buildTradeForm() {
     '<p id="t-error" class="banner-error" role="alert" hidden></p>' +
     '<button class="primary" type="submit">Add trade</button>' +
     '</form>';
-  host.insertBefore(wrap, host.querySelector('table'));
+  host.appendChild(wrap);
   var form = document.getElementById('trade-form');
   form.addEventListener('submit', onTradeSubmit);
   var ccy = document.getElementById('t-currency');
@@ -1142,6 +1179,7 @@ function onTradeSubmit(ev) {
     tradeFormError(null);
     refreshPrices(); // recompute + render when fresh prices land (renders sync too)
     render();
+    closeDialog('trade-dialog');
   }
   if (from === String(main).toUpperCase()) {
     proceed({ pair: from + '/' + main, rate: 1, source: '1:1', interpolated: false });
@@ -1159,25 +1197,104 @@ function onTradeSubmit(ev) {
   });
 }
 
-// --- Settings drawer ---
-// Main-currency select, cost-method toggle, override editor, download/upload,
-// clear-with-confirm, demo trade. A main-currency switch re-fetches prices
-// only; trade fxLocks are never rewritten.
+// --- Top bar + dialogs ---
+// Sticky top panel: totals, main currency, cost toggle, Add trade +
+// Settings buttons. The trade form and settings live in modal <dialog>s
+// so the page never scrolls through them. Dialog content keeps the same
+// element IDs, so tests.html and existing handlers keep working.
+
+var dialogOpener = null;
+
+function openDialog(id) {
+  var dlg = document.getElementById(id);
+  if (!dlg) return;
+  dialogOpener = document.activeElement;
+  if (typeof dlg.showModal === 'function') {
+    if (!dlg.open) dlg.showModal();
+  } else {
+    dlg.setAttribute('open', '');
+  }
+  var first = dlg.querySelector('input, select, button:not([data-close])');
+  if (first && typeof first.focus === 'function') {
+    try { first.focus(); } catch (e) { /* ignore */ }
+  }
+}
+
+function closeDialog(id) {
+  var dlg = typeof id === 'string' ? document.getElementById(id) : id;
+  if (!dlg) return;
+  if (typeof dlg.close === 'function' && dlg.open) dlg.close();
+  else dlg.removeAttribute('open');
+}
+
+function returnFocus() {
+  if (dialogOpener && typeof dialogOpener.focus === 'function') {
+    try { dialogOpener.focus(); } catch (e) { /* ignore */ }
+  }
+  dialogOpener = null;
+}
+
+function wireDialog(id) {
+  var dlg = document.getElementById(id);
+  if (!dlg || dlg.getAttribute('data-wired')) return;
+  dlg.setAttribute('data-wired', '1');
+  dlg.addEventListener('click', function (e) {
+    if (e.target === dlg) closeDialog(dlg); // backdrop click
+    var c = e.target && e.target.closest ? e.target.closest('[data-close]') : null;
+    if (c) closeDialog(dlg);
+  });
+  dlg.addEventListener('close', returnFocus);
+}
+
+function buildTopbar() {
+  wireDialog('trade-dialog');
+  wireDialog('settings-dialog');
+  var main = document.getElementById('tb-main');
+  if (main && !main.getAttribute('data-wired')) {
+    main.setAttribute('data-wired', '1');
+    main.addEventListener('change', function (e) {
+      var st = loadState();
+      st.settings.mainCurrency = e.target.value;
+      if (!saveStateGuarded(st)) return;
+      clearBanner();
+      refreshPrices(); // re-fetch in the new currency; fxLocks untouched
+    });
+  }
+  var methods = [['tb-avg', 'average'], ['tb-fifo', 'fifo']];
+  methods.forEach(function (pair) {
+    var b = document.getElementById(pair[0]);
+    if (!b || b.getAttribute('data-wired')) return;
+    b.setAttribute('data-wired', '1');
+    b.addEventListener('click', function () {
+      var st = loadState();
+      st.settings.costMethod = pair[1];
+      if (!saveStateGuarded(st)) return;
+      render(); // no refetch: cost view needs no new prices
+    });
+  });
+  var add = document.getElementById('tb-add');
+  if (add && !add.getAttribute('data-wired')) {
+    add.setAttribute('data-wired', '1');
+    add.addEventListener('click', function () { openDialog('trade-dialog'); });
+  }
+  var gear = document.getElementById('tb-settings');
+  if (gear && !gear.getAttribute('data-wired')) {
+    gear.setAttribute('data-wired', '1');
+    gear.addEventListener('click', function () { openDialog('settings-dialog'); });
+  }
+}
+
+// --- Settings dialog ---
+// Override editor, download/upload, clear-with-confirm, demo trade. Main
+// currency + cost method live in the sticky top bar (buildTopbar). A
+// main-currency switch re-fetches prices only; trade fxLocks are never
+// rewritten.
 
 function buildSettings() {
-  var host = document.getElementById('settings');
-  if (!host || document.getElementById('s-main')) return;
+  var host = document.getElementById('settings-dialog-body');
+  if (!host || document.getElementById('o-add')) return;
   var wrap = document.createElement('div');
   wrap.innerHTML =
-    '<label for="s-main">Main currency</label>' +
-    '<select id="s-main">' +
-    '<option value="EUR">EUR</option><option value="USD">USD</option>' +
-    '<option value="GBP">GBP</option><option value="CHF">CHF</option>' +
-    '</select>' +
-    '<fieldset><legend>Cost method</legend>' +
-    '<label><input type="radio" name="cost" value="average"> Average cost</label>' +
-    '<label><input type="radio" name="cost" value="fifo"> FIFO</label>' +
-    '</fieldset>' +
     '<h3>Manual price overrides</h3>' +
     '<label for="o-symbol">Symbol</label>' +
     '<input id="o-symbol" autocomplete="off" spellcheck="false" placeholder="BTC">' +
@@ -1193,22 +1310,6 @@ function buildSettings() {
     '<button id="s-demo" type="button">Load demo trade</button>' +
     '<button id="s-clear" type="button">Clear all data</button>';
   host.appendChild(wrap);
-  document.getElementById('s-main').addEventListener('change', function (e) {
-    var st = loadState();
-    st.settings.mainCurrency = e.target.value;
-    if (!saveStateGuarded(st)) return;
-    clearBanner();
-    refreshPrices(); // re-fetch in the new currency; fxLocks untouched
-  });
-  var radios = wrap.querySelectorAll('input[name="cost"]');
-  for (var i = 0; i < radios.length; i++) {
-    radios[i].addEventListener('change', function (e) {
-      var st = loadState();
-      st.settings.costMethod = (e.target.value === 'fifo') ? 'fifo' : 'average';
-      if (!saveStateGuarded(st)) return;
-      render(); // no refetch: cost view needs no new prices
-    });
-  }
   document.getElementById('o-add').addEventListener('click', function () {
     var sym = uiVal('o-symbol', '').trim().toUpperCase();
     var price = Number(uiVal('o-price', ''));
@@ -1250,6 +1351,7 @@ function buildSettings() {
       input.value = '';
       clearBanner();
       refreshPrices();
+      closeDialog('settings-dialog');
     };
     reader.onerror = function () {
       showBanner('Import failed: could not read file.');
@@ -1261,13 +1363,14 @@ function buildSettings() {
   document.getElementById('s-clear').addEventListener('click', clearAllData);
 }
 
-function syncSettings(st) {
-  var main = document.getElementById('s-main');
+function syncTopbar(st) {
+  var main = document.getElementById('tb-main');
   if (main) main.value = st.settings.mainCurrency;
-  var radios = document.querySelectorAll('#settings input[name="cost"]');
-  for (var i = 0; i < radios.length; i++) {
-    radios[i].checked = (radios[i].value === st.settings.costMethod);
-  }
+  var avg = document.getElementById('tb-avg');
+  var fifo = document.getElementById('tb-fifo');
+  var isFifo = st.settings.costMethod === 'fifo';
+  if (avg) avg.setAttribute('aria-pressed', isFifo ? 'false' : 'true');
+  if (fifo) fifo.setAttribute('aria-pressed', isFifo ? 'true' : 'false');
   var list = document.getElementById('o-list');
   if (list) {
     list.innerHTML = '';
@@ -1376,7 +1479,7 @@ function render() {
   if (!st || !st.settings) st = defaultState();
   renderPositions(st);
   renderTrades(st);
-  syncSettings(st);
+  syncTopbar(st);
 }
 
 function init() {
@@ -1385,6 +1488,7 @@ function init() {
     return;
   }
   if (!document.getElementById('positions') || !document.getElementById('trades')) return;
+  buildTopbar();
   buildPositions();
   buildTradeForm();
   buildTradesTable();
