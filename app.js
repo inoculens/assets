@@ -827,7 +827,7 @@ if (typeof window !== 'undefined') {
 // DOMContentLoaded; render()/refreshPrices() are the recompute+render
 // entry points (also used by tests.html).
 
-var APP_VERSION = '2026-10-06.5';
+var APP_VERSION = '2026-10-06.6';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -1260,7 +1260,10 @@ function plClass(n) {
 
 function moneyCell(label, n, main) {
   var td = posCell(label, (n !== null && n !== undefined) ? fmtMoney(n, main) : '—', true, n);
-  if (n !== null && n !== undefined) td.classList.add(plClass(n));
+  if (n !== null && n !== undefined) {
+    var sc = plClass(n);
+    if (sc) td.classList.add(sc); // plClass('' ) for zero/NaN: add('') would throw
+  }
   return td;
 }
 
@@ -1276,7 +1279,10 @@ function positionRow(p, main) {
   tr.appendChild(moneyCell('Realized', p.realized, main));
   tr.appendChild(moneyCell('Total P&L', p.totalPL, main));
   var retTd = posCell('Return %', (p.returnPct !== null) ? fmtPct(p.returnPct) : '—', true, p.returnPct);
-  if (p.returnPct !== null) retTd.classList.add(plClass(p.returnPct));
+  if (p.returnPct !== null) {
+    var rsc = plClass(p.returnPct);
+    if (rsc) retTd.classList.add(rsc);
+  }
   tr.appendChild(retTd);
   return tr;
 }
