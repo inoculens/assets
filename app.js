@@ -56,7 +56,27 @@ function loadState() {
 }
 
 function saveState(s) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch (e) {
+    throw new Error('storage-unavailable');
+  }
+}
+
+function isValidImportTrade(t) {
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return false;
+  if (t.type !== 'buy' && t.type !== 'sell') return false;
+  if (typeof t.symbol !== 'string' || t.symbol.trim().length === 0) return false;
+  var qty = Number(t.qty);
+  if (!isFinite(qty) || qty <= 0) return false;
+  var total = Number(t.total);
+  if (!isFinite(total) || total < 0) return false;
+  if (typeof t.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(t.date)) return false;
+  if (t.fee !== undefined && t.fee !== null) {
+    var fee = Number(t.fee);
+    if (!isFinite(fee) || fee < 0) return false;
+  }
+  return true;
 }
 
 function exportState(s) {
@@ -92,6 +112,11 @@ function importState(json) {
   }
   if (!Array.isArray(data.trades)) {
     throw new Error('import failed: trades must be an array');
+  }
+  for (var ti = 0; ti < data.trades.length; ti++) {
+    if (!isValidImportTrade(data.trades[ti])) {
+      throw new Error('import failed: invalid trade at index ' + ti);
+    }
   }
   var priceOverrides = {};
   if (data.priceOverrides !== undefined) {
@@ -176,8 +201,9 @@ function pickRate(ratesByDate, date) {
   return null;
 }
 
-function fxFetchOnce(url) {
-  return fetch(url).then(function (res) {
+function fxFetchOnce(url, fetchImpl) {
+  var f = fetchImpl || ((typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : fetch);
+  return f(url).then(function (res) {
     if (!res.ok) {
       var err = new Error('fx-http-' + res.status);
       err.fxStatus = res.status;
@@ -187,10 +213,10 @@ function fxFetchOnce(url) {
   });
 }
 
-function fxFetchWithRetry(url) {
-  return fxFetchOnce(url).catch(function (e) {
+function fxFetchWithRetry(url, fetchImpl) {
+  return fxFetchOnce(url, fetchImpl).catch(function (e) {
     if (e && e.fxStatus === 404) throw e; // missing fixing: no point retrying the same date
-    return fxFetchOnce(url); // retry once; a second failure propagates to the caller
+    return fxFetchOnce(url, fetchImpl); // retry once; a second failure propagates to the caller
   });
 }
 
@@ -202,6 +228,9 @@ function fetchEcbRate(date, from, to) {
   if (effFrom === effTo) {
     return Promise.resolve({ rate: 1, interpolated: false, source: '1:1' });
   }
+  // Hermetic async: capture window.fetch once per operation so concurrent
+  // tests.html stubs (or later restores) cannot clobber retry/walkBack fetches.
+  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : fetch;
   function attempt(d, back) {
     var url = FX_BASE_URL + '/' + d +
       '?from=' + encodeURIComponent(effFrom) + '&to=' + encodeURIComponent(effTo);
@@ -209,7 +238,7 @@ function fetchEcbRate(date, from, to) {
       if (back >= FX_MAX_LOOKBACK_DAYS) throw new Error('fx-unavailable');
       return attempt(fxShiftDate(d, -1), back + 1);
     }
-    return fxFetchWithRetry(url).then(
+    return fxFetchWithRetry(url, capturedFetch).then(
       function (data) {
         var rate = data && data.rates && data.rates[effTo];
         if (typeof rate === 'number' && isFinite(rate)) {
@@ -574,7 +603,10 @@ function fetchLivePrice(symbol, vs) {
   }
   var url = 'https://api.coingecko.com/api/v3/simple/price?ids=' +
     encodeURIComponent(id) + '&vs_currencies=' + encodeURIComponent(curLow);
-  return fetch(url).then(function (res) {
+  // Hermetic async: capture fetch at call time so a later stub restore
+  // cannot clobber this operation's continuation.
+  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : fetch;
+  return capturedFetch(url).then(function (res) {
     if (!res.ok) throw new Error('price-http-' + res.status);
     return res.json();
   }).then(function (data) {
@@ -711,6 +743,23 @@ function clearBanner() {
   b.hidden = true;
 }
 
+// Guarded persistence for UI mutations: saveState throws
+// Error('storage-unavailable') on private-mode/quota failure. Every UI
+// mutation must go through here so no storage failure bricks the UI
+// uncaught — the failure surfaces via the existing banner path.
+function saveStateGuarded(s) {
+  try {
+    saveState(s);
+    return true;
+  } catch (e) {
+    if (e && e.message === 'storage-unavailable') {
+      showBanner('Storage unavailable — change was not saved (private mode or quota exceeded).');
+      return false;
+    }
+    throw e;
+  }
+}
+
 function heldQtyFor(trades, symbol) {
   var sym = String(symbol || '').toUpperCase();
   var held = 0;
@@ -794,7 +843,8 @@ function renderPositions(st) {
   }
   rows.forEach(function (p) {
     var tr = document.createElement('tr');
-    tr.appendChild(posCell('Symbol', p.symbol, false, null));
+    var symLabel = (p.qtyHeld === 0) ? (p.symbol + ' (Closed)') : p.symbol;
+    tr.appendChild(posCell('Symbol', symLabel, false, null));
     tr.appendChild(posCell('Qty', fmtQty(p.qtyHeld), true, p.qtyHeld));
     tr.appendChild(posCell('Avg entry', fmtMoney(p.avgEntry, main), true, p.avgEntry));
     tr.appendChild(posCell('Live',
@@ -830,6 +880,9 @@ function fxBadgeText(t) {
   var bits = String(lock.source || 'rate');
   if (isFinite(r)) bits += ' @ ' + r;
   if (lock.interpolated) bits += ' (prev close)';
+  if (t && stableToUsd(t.currency)) {
+    return String(t.currency).toUpperCase() + '→USD 1.0 · ' + bits;
+  }
   return bits;
 }
 
@@ -920,12 +973,12 @@ function deleteTrade(id) {
   var kept = (st.trades || []).filter(function (t) { return !t || t.id !== id; });
   if (kept.length === (st.trades || []).length) return; // unknown id: no write
   st.trades = kept;
-  saveState(st);
+  if (!saveStateGuarded(st)) return;
   render(); // cached live prices stay; no refetch needed on delete
 }
 
 // --- Trade form ---
-var TRADE_CCY_OPTIONS = ['EUR', 'USD', 'GBP', 'CHF', 'USDC', 'USDT'];
+var TRADE_CCY_OPTIONS = ['EUR', 'USD', 'GBP', 'CHF', 'USDC', 'USDT', 'DAI'];
 
 function ccyOptions(selected, includeCustom) {
   var base = TRADE_CCY_OPTIONS.map(function (c) {
@@ -933,6 +986,21 @@ function ccyOptions(selected, includeCustom) {
   }).join('');
   if (includeCustom === false) return base; // e.g. fee select: no dead Other… option
   return base + '<option value="CUSTOM"' + (selected === 'CUSTOM' ? ' selected' : '') + '>Other…</option>';
+}
+
+function ensureCustomFeeOption(code) {
+  var feeccy = document.getElementById('t-feeccy');
+  if (!feeccy) return;
+  var prev = feeccy.querySelector('[data-custom-fee]');
+  if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+  if (typeof code === 'string' && /^[A-Z]{2,10}$/.test(code)) {
+    var opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = code;
+    opt.setAttribute('data-custom-fee', '1');
+    feeccy.appendChild(opt);
+    feeccy.value = code;
+  }
 }
 
 function buildTradeForm() {
@@ -984,7 +1052,15 @@ function buildTradeForm() {
     custom.hidden = !needCustom;
     var clabel = document.getElementById('t-custom-ccy-label');
     if (clabel) clabel.hidden = !needCustom;
-    if (!needCustom && feeccy) feeccy.value = ccy.value; // fee usually in trade currency
+    if (!needCustom && feeccy) {
+      ensureCustomFeeOption('');
+      feeccy.value = ccy.value; // fee usually in trade currency
+    } else {
+      ensureCustomFeeOption(String(custom.value || '').trim().toUpperCase());
+    }
+  });
+  custom.addEventListener('input', function () {
+    if (ccy.value === 'CUSTOM') ensureCustomFeeOption(String(custom.value || '').trim().toUpperCase());
   });
 }
 
@@ -1015,6 +1091,7 @@ function onTradeSubmit(ev) {
   var fee = (feeRaw === '') ? 0 : Number(feeRaw);
   var feeCcyRaw = uiVal('t-feeccy', '');
   var feeCurrency = feeCcyRaw ? String(feeCcyRaw).toUpperCase() : currency;
+  if (!feeCurrency || feeCurrency === 'CUSTOM') feeCurrency = currency; // harden: CUSTOM literal never persists
   var note = uiVal('t-note', '').trim();
   var manualRateRaw = uiVal('t-manual-rate', '').trim();
   var manualPriceRaw = uiVal('t-manual-price', '').trim();
@@ -1054,7 +1131,7 @@ function onTradeSubmit(ev) {
     var err = validateTrade(trade, heldQtyFor(st.trades, symbol));
     if (err) { tradeFormError(err); return; }
     st.trades.push(trade);
-    saveState(st);
+    if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); return; }
     uiSetVal('t-qty', '');
     uiSetVal('t-total', '');
     uiSetVal('t-note', '');
@@ -1119,7 +1196,7 @@ function buildSettings() {
   document.getElementById('s-main').addEventListener('change', function (e) {
     var st = loadState();
     st.settings.mainCurrency = e.target.value;
-    saveState(st);
+    if (!saveStateGuarded(st)) return;
     clearBanner();
     refreshPrices(); // re-fetch in the new currency; fxLocks untouched
   });
@@ -1128,7 +1205,7 @@ function buildSettings() {
     radios[i].addEventListener('change', function (e) {
       var st = loadState();
       st.settings.costMethod = (e.target.value === 'fifo') ? 'fifo' : 'average';
-      saveState(st);
+      if (!saveStateGuarded(st)) return;
       render(); // no refetch: cost view needs no new prices
     });
   }
@@ -1140,7 +1217,7 @@ function buildSettings() {
     var st = loadState();
     st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
     st.priceOverrides[sym] = price;
-    saveState(st);
+    if (!saveStateGuarded(st)) return;
     uiSetVal('o-symbol', '');
     uiSetVal('o-price', '');
     clearBanner();
@@ -1152,7 +1229,7 @@ function buildSettings() {
     var st = loadState();
     if (st.priceOverrides && Object.prototype.hasOwnProperty.call(st.priceOverrides, btn.getAttribute('data-override-del'))) {
       delete st.priceOverrides[btn.getAttribute('data-override-del')];
-      saveState(st);
+      if (!saveStateGuarded(st)) return;
     }
     refreshPrices();
   });
@@ -1251,7 +1328,7 @@ function addDemoTrade() {
     fxLock: { pair: m + '/' + m, rate: 1, source: '1:1', interpolated: false },
     createdAt: new Date().toISOString()
   });
-  saveState(st);
+  if (!saveStateGuarded(st)) return;
   clearBanner();
   refreshPrices();
 }
@@ -1262,7 +1339,7 @@ function clearAllData() {
     return;
   }
   livePrices = {};
-  saveState(defaultState());
+  if (!saveStateGuarded(defaultState())) return;
   clearBanner();
   render();
 }
@@ -1327,6 +1404,11 @@ if (typeof window !== 'undefined') {
   window.Inoculens.render = render;
   window.Inoculens.refreshPrices = refreshPrices;
   window.Inoculens.getLivePrices = function () { return livePrices; };
+  window.Inoculens.fxBadgeText = fxBadgeText;
+  window.Inoculens.TRADE_CCY_OPTIONS = TRADE_CCY_OPTIONS;
+  window.Inoculens.ensureCustomFeeOption = ensureCustomFeeOption;
+  window.Inoculens.saveStateGuarded = saveStateGuarded;
+  window.Inoculens.isValidImportTrade = isValidImportTrade;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
     document.addEventListener('DOMContentLoaded', init);
   }

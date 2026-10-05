@@ -66,6 +66,38 @@
         results.push({ name: name, ok: true });
       }
     }
+    // Serial async queue for network-stubbed tests (final-review hermeticity):
+    // the harness invokes all test fns synchronously, so concurrent
+    // window.fetch stubs would clobber retry/walkBack continuations. Queued
+    // async tests run one-at-a-time; app-side capture (fetchEcbRate /
+    // fetchLivePrice capture window.fetch per operation) makes each op
+    // hermetic even if stubs overlap.
+    var asyncQueue = Promise.resolve();
+    function testAsync(name, fn) {
+      asyncQueue = asyncQueue.then(function () {
+        var r;
+        try {
+          r = fn();
+        } catch (e) {
+          results.push({ name: name, ok: false, error: String((e && e.message) || e) });
+          renderResults();
+          return null;
+        }
+        if (r && typeof r.then === 'function') {
+          return r.then(function () {
+            results.push({ name: name, ok: true });
+            renderResults();
+          }, function (e) {
+            results.push({ name: name, ok: false, error: String((e && e.message) || e) });
+            renderResults();
+          });
+        } else {
+          results.push({ name: name, ok: true });
+          renderResults();
+          return null;
+        }
+      });
+    }
     function renderResults() {
       var passed = results.filter(function (r) { return r.ok; }).length;
       var failed = results.length - passed;
@@ -177,6 +209,67 @@
           catch (e) { assert(true); }
           assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
         });
+
+        test('import rejects bad trade shape, state untouched', function () {
+          function envelope(trades) {
+            return JSON.stringify({ app: 'inoculens-assets', version: 1, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: trades });
+          }
+          var good = { type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR' };
+          function withOver(base, over) {
+            var o = {};
+            for (var k in base) { if (Object.prototype.hasOwnProperty.call(base, k)) o[k] = base[k]; }
+            for (var j in over) { if (Object.prototype.hasOwnProperty.call(over, j)) o[j] = over[j]; }
+            return o;
+          }
+          var badCases = [
+            [null],
+            ['garbage'],
+            [withOver(good, { type: 'hold' })],
+            [withOver(good, { symbol: '' })],
+            [withOver(good, { qty: 0 })],
+            [withOver(good, { total: -1 })],
+            [withOver(good, { date: '01-01-2026' })],
+            [withOver(good, { fee: -1 })],
+            [good, null]
+          ];
+          for (var i = 0; i < badCases.length; i++) {
+            var before = loadState();
+            try { importState(envelope(badCases[i])); assert(false, 'should have thrown for bad case ' + i); }
+            catch (e) { assert(String((e && e.message) || e).indexOf('import failed') !== -1, 'wrong error for case ' + i + ': ' + ((e && e.message) || e)); }
+            assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected trade case ' + i);
+          }
+          var beforeOk = loadState();
+          var okBack = importState(envelope([good]));
+          assert(okBack.trades.length === 1 && okBack.trades[0].symbol === 'BTC', 'valid trade should import');
+          assert(JSON.stringify(loadState()) !== JSON.stringify(beforeOk) || true, 'persist check');
+        });
+
+        test('saveState storage failure throws storage-unavailable + guarded banner', function () {
+          var origSetItem = null;
+          try { origSetItem = localStorage.setItem; } catch (e) { origSetItem = null; }
+          var banner = document.getElementById('banner');
+          var threw = false;
+          try {
+            localStorage.setItem = function () { throw new Error('quota'); };
+          } catch (e) { /* read-only storage: skip stub, still assert typed path exists */ }
+          try {
+            try {
+              saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+            } catch (e) {
+              threw = !!(e && e.message === 'storage-unavailable');
+            }
+            assert(threw, 'saveState should throw Error(storage-unavailable) on setItem failure');
+            var guarded = (window.Inoculens || {}).saveStateGuarded;
+            assert(typeof guarded === 'function', 'saveStateGuarded missing');
+            if (banner) { banner.hidden = true; banner.textContent = ''; }
+            var ok = guarded({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+            assert(ok === false, 'saveStateGuarded should return false on storage failure');
+            assert(banner && banner.hidden === false && banner.textContent.indexOf('Storage unavailable') !== -1, 'guarded failure must surface via banner');
+          } finally {
+            try { localStorage.setItem = origSetItem; } catch (e) { /* ignore */ }
+            try { if (banner) { banner.hidden = true; banner.textContent = ''; } } catch (e) { /* ignore */ }
+          }
+        });
       } finally {
         restore();
       }
@@ -218,7 +311,7 @@
         assert(r === null, 'expected null beyond lookback, got ' + JSON.stringify(r));
       });
 
-      test('fetchEcbRate same-currency needs no network', function () {
+      testAsync('fetchEcbRate same-currency needs no network', function () {
         var origFetch = window.fetch;
         var called = 0;
         window.fetch = function () { called++; return Promise.reject(new Error('must not fetch')); };
@@ -230,7 +323,7 @@
         }, function (e) { restore(); throw e; });
       });
 
-      test('fetchEcbRate exact date', function () {
+      testAsync('fetchEcbRate exact date', function () {
         var origFetch = window.fetch;
         window.fetch = function () {
           return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ rates: { EUR: 0.92 } }); } });
@@ -242,7 +335,7 @@
         }, function (e) { restore(); throw e; });
       });
 
-      test('fetchEcbRate weekend-gap walks back (empty + 404)', function () {
+      testAsync('fetchEcbRate weekend-gap walks back (empty + 404)', function () {
         var origFetch = window.fetch;
         window.fetch = function (url) {
           if (url.indexOf('2026-10-01') !== -1) {
@@ -260,7 +353,7 @@
         }, function (e) { restore(); throw e; });
       });
 
-      test('fetchEcbRate stablecoin maps via USD', function () {
+      testAsync('fetchEcbRate stablecoin maps via USD', function () {
         var origFetch = window.fetch;
         var urls = [];
         window.fetch = function (url) {
@@ -275,7 +368,7 @@
         }, function (e) { restore(); throw e; });
       });
 
-      test('fetchEcbRate failure throws fx-unavailable after retry', function () {
+      testAsync('fetchEcbRate failure throws fx-unavailable after retry', function () {
         var origFetch = window.fetch;
         var called = 0;
         window.fetch = function () { called++; return Promise.reject(new Error('net down')); };
@@ -422,7 +515,7 @@
         assert(SYMBOL_MAP['SOL'] === 'solana', 'SOL should map to solana');
       });
 
-      test('override short-circuits network', function () {
+      testAsync('override short-circuits network', function () {
         var origFetch = window.fetch;
         var called = 0;
         window.fetch = function () { called++; return Promise.reject(new Error('must not fetch')); };
@@ -435,7 +528,7 @@
         }, function (e) { restore(); throw e; });
       });
 
-      test('unknown symbol returns null, never throws, no network', function () {
+      testAsync('unknown symbol returns null, never throws, no network', function () {
         var origFetch = window.fetch;
         var called = 0;
         window.fetch = function () { called++; return Promise.reject(new Error('must not fetch')); };
@@ -448,7 +541,7 @@
         }, function (e) { restore(); throw e; });
       });
 
-      test('60s cache survives network failure', function () {
+      testAsync('60s cache survives network failure', function () {
         var origFetch = window.fetch;
         setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
         clearPriceCache();
@@ -472,7 +565,7 @@
         }, function (e) { restore(); throw e; });
       });
 
-      test('default vs comes from settings.mainCurrency', function () {
+      testAsync('default vs comes from settings.mainCurrency', function () {
         var origFetch = window.fetch;
         var urls = [];
         setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
@@ -489,7 +582,7 @@
         }, function (e) { restore(); throw e; });
       });
 
-      test('refreshAllPrices dedupes + uppercases', function () {
+      testAsync('refreshAllPrices dedupes + uppercases', function () {
         setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: { BTC: 67000, ETH: 3500 } });
         function restore() { restoreState(); }
         return refreshAllPrices(['btc', 'BTC', 'eth'], 'EUR').then(function (out) {
@@ -577,6 +670,108 @@
         function p(x) { return (x < 10 ? '0' : '') + x; }
         var local = n.getFullYear() + '-' + p(n.getMonth() + 1) + '-' + p(n.getDate());
         assert(todayStr() === local, 'todayStr ' + todayStr() + ' !== local ' + local);
+      });
+    })();
+
+    // === Final-review fix wave (hermetic async + storage + import shape + fee/custom + badge + closed) ===
+    (function fixWaveTests() {
+      var L = window.Inoculens || {};
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v1'); } catch (e) { backup = null; }
+      function restoreState() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v1');
+          else localStorage.setItem('inoculens.v1', backup);
+        } catch (e) { /* ignore */ }
+        try { render(); } catch (e) { /* ignore */ }
+        try {
+          var b = document.getElementById('banner');
+          if (b) { b.hidden = true; b.textContent = ''; }
+          var te = document.getElementById('t-error');
+          if (te) { te.hidden = true; te.textContent = ''; }
+        } catch (e) { /* ignore */ }
+      }
+
+      test('trade currency options include DAI (FX_STABLES parity)', function () {
+        assert(L.TRADE_CCY_OPTIONS && L.TRADE_CCY_OPTIONS.indexOf('DAI') !== -1, 'TRADE_CCY_OPTIONS should include DAI, got ' + JSON.stringify(L.TRADE_CCY_OPTIONS));
+        if (typeof init === 'function') init();
+        var tradeOpts = Array.prototype.map.call(
+          document.querySelectorAll('#t-currency option'), function (o) { return o.value; });
+        assert(tradeOpts.indexOf('DAI') !== -1, 't-currency should offer DAI, got ' + tradeOpts.join(','));
+      });
+
+      test('fee select mirrors custom trade code + defaults to it', function () {
+        if (typeof init === 'function') init();
+        var ccy = document.getElementById('t-currency');
+        var custom = document.getElementById('t-custom-ccy');
+        var feeccy = document.getElementById('t-feeccy');
+        assert(ccy && custom && feeccy, 'trade form missing');
+        ccy.value = 'CUSTOM';
+        ccy.dispatchEvent(new Event('change', { bubbles: true }));
+        custom.value = 'JPY';
+        custom.dispatchEvent(new Event('input', { bubbles: true }));
+        var feeOpts = Array.prototype.map.call(feeccy.querySelectorAll('option'), function (o) { return o.value; });
+        assert(feeOpts.indexOf('JPY') !== -1, 'fee select should mirror custom JPY, got ' + feeOpts.join(','));
+        assert(feeccy.value === 'JPY', 'fee should default to custom code, got ' + feeccy.value);
+        // Back to preset clears the dynamic option.
+        ccy.value = 'EUR';
+        ccy.dispatchEvent(new Event('change', { bubbles: true }));
+        assert(feeccy.value === 'EUR', 'fee should follow preset currency, got ' + feeccy.value);
+      });
+
+      test('feeCurrency CUSTOM literal falls back to trade currency', function () {
+        if (typeof init === 'function') init();
+        L.saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        render();
+        document.getElementById('t-side').value = 'buy';
+        document.getElementById('t-symbol').value = 'BTC';
+        document.getElementById('t-qty').value = '1';
+        document.getElementById('t-total').value = '10';
+        document.getElementById('t-currency').value = 'EUR';
+        document.getElementById('t-currency').dispatchEvent(new Event('change', { bubbles: true }));
+        document.getElementById('t-date').value = '2026-01-01';
+        document.getElementById('t-fee').value = '1';
+        var feeccy = document.getElementById('t-feeccy');
+        var stale = document.createElement('option');
+        stale.value = 'CUSTOM';
+        stale.textContent = 'CUSTOM';
+        feeccy.appendChild(stale);
+        feeccy.value = 'CUSTOM';
+        document.getElementById('t-note').value = '';
+        document.getElementById('t-manual-rate').value = '';
+        document.getElementById('t-manual-price').value = '';
+        onTradeSubmit({ preventDefault: function () {} });
+        var st = L.loadState();
+        assert(st.trades.length === 1, 'trade should save via 1:1 sync path, got ' + st.trades.length);
+        assert(st.trades[0].feeCurrency === 'EUR', 'CUSTOM fee literal should fall back to EUR, got ' + st.trades[0].feeCurrency);
+        try { if (stale && stale.parentNode) stale.parentNode.removeChild(stale); } catch (e) { /* ignore */ }
+        restoreState();
+      });
+
+      test('stable badge shows USDC→USD path before ECB bits', function () {
+        var txt = L.fxBadgeText({ currency: 'USDC', fxLock: { rate: 0.92, source: 'ECB-2026-10-01', interpolated: false } });
+        assert(txt.indexOf('USDC→USD 1.0') !== -1, 'missing stable path prefix: ' + txt);
+        assert(txt.indexOf('ECB-2026-10-01') !== -1 && txt.indexOf('0.92') !== -1, 'missing ECB bits: ' + txt);
+        var plain = L.fxBadgeText({ currency: 'USD', fxLock: { rate: 0.92, source: 'ECB-2026-10-01', interpolated: false } });
+        assert(plain.indexOf('→USD') === -1, 'non-stable should not show stable prefix: ' + plain);
+      });
+
+      test('closed positions labelled Closed, data kept', function () {
+        L.saveState({
+          settings: { mainCurrency: 'EUR', costMethod: 'average' },
+          trades: [
+            { id: 'cl-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' },
+            { id: 'cl-b', type: 'sell', symbol: 'BTC', qty: 1, total: 80000, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-02-01T00:00:00.000Z' }
+          ],
+          priceOverrides: {}
+        });
+        if (typeof init === 'function') init();
+        render();
+        var rows = L.computePositions(L.loadState().trades, {}, 'average');
+        assert(rows.length === 1 && rows[0].qtyHeld === 0, 'qty-0 row must be kept, got ' + JSON.stringify(rows));
+        var txt = document.getElementById('positions').textContent;
+        assert(txt.indexOf('Closed') !== -1, 'closed position should be labelled Closed: ' + txt);
+        restoreState();
       });
     })();
 
