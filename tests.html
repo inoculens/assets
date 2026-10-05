@@ -505,6 +505,36 @@
         var fr = computePositions(specTrades(), { BTC: 100000 }, 'fifo')[0];
         assert(fr.realized === 30000, 'fifo method not honoured: ' + JSON.stringify(fr));
       });
+
+      test('unknown live price stays unknown, never a fictitious loss', function () {
+        // User report: buy 0.00039164 BTC for 30 EUR with no live price showed
+        // Value €0.00 / Unrealized -€30 / Return -100%. Unknown must be null.
+        var tr = [
+          {id:'u-a',type:'buy',symbol:'BTC',qty:0.00039164,total:30,currency:'EUR',date:'2026-10-05',fee:0,feeCurrency:'EUR',note:'',fxLock:{pair:'EUR/EUR',rate:1,source:'1:1',interpolated:false},createdAt:'2026-10-05T00:00:00.000Z'}
+        ];
+        [{}, { BTC: null }, { BTC: 0 }, { BTC: NaN }].forEach(function (live, i) {
+          var p = computePositions(tr, live, 'average')[0];
+          assert(p.livePrice === null, 'case ' + i + ': livePrice should be null, got ' + p.livePrice);
+          assert(p.marketValue === null, 'case ' + i + ': marketValue should be null, got ' + p.marketValue);
+          assert(p.unrealized === null, 'case ' + i + ': unrealized should be null, got ' + p.unrealized);
+          assert(p.returnPct === null, 'case ' + i + ': returnPct should be null, got ' + p.returnPct);
+          assert(p.totalPL === 0, 'case ' + i + ': totalPL should be realized-only 0, got ' + p.totalPL);
+        });
+        var p = computePositions(tr, {}, 'average')[0];
+        assert(p.qtyHeld === 0.00039164, 'qty changed: ' + p.qtyHeld);
+        assert(p.avgEntry > 76000 && p.avgEntry < 77000, 'entry wrong: ' + p.avgEntry);
+        assert(p.realized === 0, 'realized wrong: ' + p.realized);
+        // Known price still computes.
+        var k = computePositions(tr, { BTC: 80000 }, 'average')[0];
+        assert(k.marketValue !== null && k.unrealized > 0 && k.totalPL > 0, 'known price broken: ' + JSON.stringify(k));
+        // Closed position keeps realized even with unknown live.
+        var closed = computePositions(tr.concat([
+          {id:'u-b',type:'sell',symbol:'BTC',qty:0.00039164,total:35,currency:'EUR',date:'2026-10-06',fee:0,feeCurrency:'EUR',note:'',fxLock:{pair:'EUR/EUR',rate:1,source:'1:1',interpolated:false},createdAt:'2026-10-06T00:00:00.000Z'}
+        ]), {}, 'average')[0];
+        assert(closed.qtyHeld === 0, 'closed qty wrong: ' + closed.qtyHeld);
+        assert(closed.unrealized === 0, 'closed unrealized should be 0, got ' + closed.unrealized);
+        assert(Math.abs(closed.totalPL - 5) < 1e-9, 'closed totalPL should be realized ~5, got ' + closed.totalPL);
+      });
     })();
 
     // === Prices tests (Task 5: mapping/cache only, no network asserts) ===
@@ -775,6 +805,29 @@
         assert(txt.indexOf('ECB-2026-10-01') !== -1 && txt.indexOf('0.92') !== -1, 'missing ECB bits: ' + txt);
         var plain = L.fxBadgeText({ currency: 'USD', fxLock: { rate: 0.92, source: 'ECB-2026-10-01', interpolated: false } });
         assert(plain.indexOf('→USD') === -1, 'non-stable should not show stable prefix: ' + plain);
+      });
+
+      test('positions show unknowns, not a fictitious loss, when live price missing', function () {
+        L.saveState({
+          settings: { mainCurrency: 'EUR', costMethod: 'average' },
+          trades: [
+            { id: 'dbg-a', type: 'buy', symbol: 'BTC', qty: 0.00039164, total: 30, currency: 'EUR', date: '2026-10-05', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-05T00:00:00.000Z' }
+          ],
+          priceOverrides: {}
+        });
+        // Force unknown live (clear anything an earlier async refresh fetched).
+        var lp = (L.getLivePrices && L.getLivePrices()) || {};
+        Object.keys(lp).forEach(function (k) { delete lp[k]; });
+        if (typeof init === 'function') init();
+        render();
+        function cell(label) { return document.querySelector('#positions td[data-label="' + label + '"]'); }
+        var live = cell('Live'), val = cell('Value'), un = cell('Unrealized'), ret = cell('Return %'), tot = cell('Total P&L');
+        assert(live && live.textContent === '—', 'Live should be —, got ' + (live && live.textContent));
+        assert(val && val.textContent === '—', 'Value should be —, got ' + (val && val.textContent));
+        assert(un && un.textContent === '—', 'Unrealized should be —, got ' + (un && un.textContent));
+        assert(ret && ret.textContent === '—', 'Return should be —, got ' + (ret && ret.textContent));
+        assert(tot && tot.getAttribute('data-value') === '0', 'Total P&L should be realized-only 0, got ' + (tot && tot.getAttribute('data-value')));
+        restoreState();
       });
 
       test('closed positions labelled Closed, data kept', function () {

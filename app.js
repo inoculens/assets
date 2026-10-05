@@ -444,15 +444,22 @@ function computePositions(trades, live, method) {
   });
   var rows = [];
   engine.forEach(function (v, sym) {
-    var lp = live ? Number(live[sym]) : NaN;
-    var livePrice = isFinite(lp) ? lp : 0;
+    // Unknown live price stays unknown (null) — never coerced to 0, which
+    // fabricated a full loss (value 0, unrealized -cost, return -100%).
+    var raw = live ? live[sym] : undefined;
+    var num = Number(raw);
+    var known = isFinite(num) && num > 0;
+    var livePrice = known ? num : null;
     var qtyHeld = v.qty || 0;
     var avgEntry = v.avgEntry || 0;
-    var marketValue = qtyHeld * livePrice;
-    var unrealized = marketValue - avgEntry * qtyHeld;
+    var marketValue = known ? qtyHeld * num : (qtyHeld === 0 ? 0 : null);
+    var unrealized = marketValue === null ? null : marketValue - avgEntry * qtyHeld;
     var realized = v.realized || 0;
-    var totalPL = unrealized + realized;
+    var totalPL = unrealized === null ? realized : unrealized + realized;
     var denom = buyCost[sym] || 0;
+    var returnPct = denom > 0
+      ? (unrealized === null ? (qtyHeld === 0 ? (realized / denom) * 100 : null) : (totalPL / denom) * 100)
+      : 0;
     rows.push({
       symbol: sym,
       qtyHeld: qtyHeld,
@@ -462,7 +469,7 @@ function computePositions(trades, live, method) {
       unrealized: unrealized,
       realized: realized,
       totalPL: totalPL,
-      returnPct: denom > 0 ? (totalPL / denom) * 100 : 0
+      returnPct: returnPct
     });
   });
   rows.sort(function (a, b) { return a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0; });
@@ -795,7 +802,8 @@ function posCell(label, text, num, raw) {
   td.setAttribute('data-label', label);
   if (num) td.className = 'num';
   td.textContent = text;
-  if (raw !== null && raw !== undefined && isFinite(Number(raw))) {
+  // null/undefined/'' (unknown values) carry no data-value; 0 is a real value.
+  if (raw !== null && raw !== undefined && raw !== '' && isFinite(Number(raw))) {
     td.setAttribute('data-value', String(Number(raw)));
   }
   return td;
@@ -831,11 +839,20 @@ function renderSummaryCards(st, rows) {
   var un = 0;
   var rz = 0;
   var pl = 0;
-  rows.forEach(function (p) { mv += p.marketValue; un += p.unrealized; rz += p.realized; pl += p.totalPL; });
+  var mvKnown = false;
+  var unKnown = false;
+  var costKnown = 0; // remaining cost basis of positions with known prices
+  rows.forEach(function (p) {
+    rz += p.realized;
+    pl += p.totalPL;
+    if (p.marketValue !== null) { mv += p.marketValue; mvKnown = true; }
+    if (p.unrealized !== null) { un += p.unrealized; unKnown = true; }
+    if (p.marketValue !== null && p.unrealized !== null) costKnown += p.marketValue - p.unrealized;
+  });
   var tb = document.getElementById('tb-totals');
   if (tb) {
     tb.textContent = rows.length
-      ? ('Portfolio value ' + fmtMoney(mv, main) + ' · total P&L ' + fmtMoney(pl, main) +
+      ? ('Portfolio value ' + (mvKnown ? fmtMoney(mv, main) : '—') + ' · total P&L ' + fmtMoney(pl, main) +
         ' (' + st.settings.costMethod + ', ' + main + ')')
       : '';
   }
@@ -849,12 +866,11 @@ function renderSummaryCards(st, rows) {
     host.appendChild(p);
     return;
   }
-  var cost = mv - un;
-  var ret = cost > 0 ? (pl / cost) * 100 : 0;
-  [['Value', fmtMoney(mv, main), mv],
-   ['Unrealized', fmtMoney(un, main), un],
+  var ret = costKnown > 0 ? ((un + rz) / costKnown) * 100 : null;
+  [['Value', mvKnown ? fmtMoney(mv, main) : '—', mvKnown ? mv : null],
+   ['Unrealized', unKnown ? fmtMoney(un, main) : '—', unKnown ? un : null],
    ['Realized', fmtMoney(rz, main), rz],
-   ['Return', fmtPct(ret), ret]].forEach(function (c) {
+   ['Return', ret !== null ? fmtPct(ret) : '—', ret]].forEach(function (c) {
     var d = document.createElement('div');
     d.className = 'card';
     var l = document.createElement('span');
@@ -863,7 +879,9 @@ function renderSummaryCards(st, rows) {
     var v = document.createElement('span');
     v.className = 'card-value num';
     v.textContent = c[1];
-    v.setAttribute('data-value', String(c[2]));
+    if (c[2] !== null && c[2] !== undefined && isFinite(Number(c[2]))) {
+      v.setAttribute('data-value', String(Number(c[2])));
+    }
     d.appendChild(l);
     d.appendChild(v);
     host.appendChild(d);
@@ -895,12 +913,15 @@ function renderPositions(st) {
     tr.appendChild(posCell('Qty', fmtQty(p.qtyHeld), true, p.qtyHeld));
     tr.appendChild(posCell('Avg entry', fmtMoney(p.avgEntry, main), true, p.avgEntry));
     tr.appendChild(posCell('Live',
-      (isFinite(p.livePrice) && p.livePrice > 0) ? fmtMoney(p.livePrice, main) : '—', true, p.livePrice));
-    tr.appendChild(posCell('Value', fmtMoney(p.marketValue, main), true, p.marketValue));
-    tr.appendChild(posCell('Unrealized', fmtMoney(p.unrealized, main), true, p.unrealized));
+      (p.livePrice !== null) ? fmtMoney(p.livePrice, main) : '—', true, p.livePrice));
+    tr.appendChild(posCell('Value',
+      (p.marketValue !== null) ? fmtMoney(p.marketValue, main) : '—', true, p.marketValue));
+    tr.appendChild(posCell('Unrealized',
+      (p.unrealized !== null) ? fmtMoney(p.unrealized, main) : '—', true, p.unrealized));
     tr.appendChild(posCell('Realized', fmtMoney(p.realized, main), true, p.realized));
     tr.appendChild(posCell('Total P&L', fmtMoney(p.totalPL, main), true, p.totalPL));
-    tr.appendChild(posCell('Return %', fmtPct(p.returnPct), true, p.returnPct));
+    tr.appendChild(posCell('Return %',
+      (p.returnPct !== null) ? fmtPct(p.returnPct) : '—', true, p.returnPct));
     tbody.appendChild(tr);
   });
   renderSummaryCards(st, rows);
