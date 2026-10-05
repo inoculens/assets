@@ -896,3 +896,60 @@ button.quiet.danger:hover {
   color: var(--loss);
   border-color: rgba(255, 92, 92, 0.4);
 }
+
+/* Columnar trade rows: fixed label column, right-aligned tabular values —
+   numbers line up across all trade blocks. Compact rows, generous blocks. */
+.trade-block .stat-label {
+  flex: 0 0 7.5rem;
+}
+.trade-block .stat-val {
+  flex: 1;
+}
+.trade-block .stat-row {
+  padding: 0.42rem 0.1rem;
+}
+.trade-head {
+  padding-bottom: 0.55rem;
+}
+.trade-del {
+  margin-left: 0.25rem;
+  padding: 0.25rem 0.55rem;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.trade-block {
+  padding: 0.85rem 1rem 0.7rem;
+  margin: 0.85rem 0;
+}
+
+/* Vertical rhythm: breathing room between stacked elements */
+.detail-stats {
+  margin: 1.1rem 0 0.25rem;
+}
+#account-detail .muted {
+  margin: 0.9rem 0;
+}
+.dialog-head {
+  margin-bottom: 0.9rem;
+}
+#trade-dialog-body label,
+#account-dialog-body label {
+  margin-top: 0.85rem;
+}
+#trade-dialog-body button.primary,
+#account-dialog-body button.primary {
+  margin-top: 1.1rem;
+}
+details.adv {
+  margin-top: 1rem;
+}
+#settings-dialog-body .opt button,
+#trade-dialog-body details button {
+  margin-top: 0.5rem;
+}
+.account-empty p {
+  margin: 0.6rem 0;
+}
+#banner {
+  margin-bottom: 0.25rem;
+}

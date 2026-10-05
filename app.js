@@ -973,6 +973,7 @@ function statCard(label, text, raw) {
   v.className = 'card-value num';
   v.textContent = text;
   if (raw !== null && raw !== undefined && isFinite(Number(raw))) {
+    d.setAttribute('data-value', String(Number(raw)));
     v.setAttribute('data-value', String(Number(raw)));
   }
   d.appendChild(l);
@@ -1219,31 +1220,6 @@ function sectionTitle(text) {
   return h;
 }
 
-function positionFacts(rows, main) {
-  var box = document.createElement('div');
-  box.className = 'facts';
-  if (!rows.length) {
-    var p = document.createElement('p');
-    p.className = 'muted';
-    p.textContent = 'No trades yet — add one to see P&L.';
-    box.appendChild(p);
-    return box;
-  }
-  rows.forEach(function (r) {
-    if (r.qtyHeld === 0) {
-      var closed = document.createElement('p');
-      closed.className = 'muted';
-      closed.textContent = 'Closed — nothing held.';
-      box.appendChild(closed);
-    }
-    box.appendChild(statRow('Qty', fmtQty(r.qtyHeld), r.qtyHeld, false));
-    box.appendChild(statRow('Avg entry', fmtMoney(r.avgEntry, main), r.avgEntry, false));
-    box.appendChild(statRow('Live price', (r.livePrice !== null) ? fmtMoney(r.livePrice, main) : '—', r.livePrice, false));
-    box.appendChild(statRow('Total P&L', fmtMoney(r.totalPL, main), r.totalPL, true));
-  });
-  return box;
-}
-
 function tradeBlock(t, main) {
   var n = normalizeTrade(t);
   var box = document.createElement('article');
@@ -1262,6 +1238,14 @@ function tradeBlock(t, main) {
   when.className = 'trade-when muted';
   when.textContent = t.date || '';
   head.appendChild(when);
+  var del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'quiet danger trade-del';
+  del.textContent = '×';
+  del.setAttribute('data-del', t.id || '');
+  del.setAttribute('aria-label', 'Delete trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
+  del.addEventListener('click', function () { deleteTrade(del.getAttribute('data-del')); });
+  head.appendChild(del);
   box.appendChild(head);
   box.appendChild(statRow('Paid', fmtQty(t.total) + ' ' + String(t.currency || '').toUpperCase(), t.total, false));
   box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
@@ -1285,17 +1269,6 @@ function tradeBlock(t, main) {
   if (n.feeFxAssumedSameRate) feeRow.title = 'Fee converted at the trade FX rate (*)';
   box.appendChild(feeRow);
   if (t.note) box.appendChild(statRow('Note', String(t.note), null, false));
-  var foot = document.createElement('div');
-  foot.className = 'trade-foot';
-  var del = document.createElement('button');
-  del.type = 'button';
-  del.className = 'quiet danger';
-  del.textContent = 'Delete';
-  del.setAttribute('data-del', t.id || '');
-  del.setAttribute('aria-label', 'Delete trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
-  del.addEventListener('click', function () { deleteTrade(del.getAttribute('data-del')); });
-  foot.appendChild(del);
-  box.appendChild(foot);
   return box;
 }
 
@@ -1383,14 +1356,35 @@ function renderAccountDetail(st, id) {
   var rsc = plClass(ret);
   if (rsc) retCard.querySelector('.card-value').classList.add(rsc);
   stats.appendChild(retCard);
+  // Same card language for the holding facts: one unified grid, no second
+  // visual system. (Single ticker per account, so rows[0] is the position.)
+  var pos = rows.length ? rows[0] : null;
+  if (pos) {
+    stats.appendChild(statCard('Qty', fmtQty(pos.qtyHeld), pos.qtyHeld));
+    stats.appendChild(statCard('Avg entry', fmtMoney(pos.avgEntry, main), pos.avgEntry));
+    stats.appendChild(statCard('Live price', pos.livePrice !== null ? fmtMoney(pos.livePrice, main) : '—', pos.livePrice));
+    var tplCard = statCard('Total P&L', fmtMoney(pos.totalPL, main), pos.totalPL);
+    var tsc = plClass(pos.totalPL);
+    if (tsc) tplCard.querySelector('.card-value').classList.add(tsc);
+    stats.appendChild(tplCard);
+    if (pos.qtyHeld === 0) {
+      var closedFlag = document.createElement('p');
+      closedFlag.className = 'muted';
+      closedFlag.textContent = 'Closed — nothing held.';
+      stats.appendChild(closedFlag);
+    }
+  }
   host.appendChild(stats);
-  host.appendChild(sectionTitle('Position'));
-  host.appendChild(positionFacts(rows, main));
   if (atrades.length) {
     host.appendChild(sectionTitle('Trades'));
     ledgerSortByDate(atrades).reverse().forEach(function (t) {
       host.appendChild(tradeBlock(t, main));
     });
+  } else {
+    var muted = document.createElement('p');
+    muted.className = 'muted';
+    muted.textContent = 'No trades yet — add one to see P&L.';
+    host.appendChild(muted);
   }
 }
 

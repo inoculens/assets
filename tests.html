@@ -967,7 +967,7 @@
         route();
         render();
         function cell(label) { return document.querySelector('#account-detail [data-label="' + label + '"]'); }
-        var live = cell('Live'), val = cell('Value'), un = cell('Unrealized'), ret = cell('Return %'), tot = cell('Total P&L');
+        var live = cell('Live price'), val = cell('Value'), un = cell('Unrealized'), ret = cell('Return'), tot = cell('Total P&L');
         assert(live && live.textContent === '—', 'Live should be —, got ' + (live && live.textContent));
         assert(val && val.textContent === '—', 'Value should be —, got ' + (val && val.textContent));
         assert(un && un.textContent === '—', 'Unrealized should be —, got ' + (un && un.textContent));
