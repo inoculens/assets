@@ -307,7 +307,9 @@ if (typeof window !== 'undefined') {
 }
 
 // === Fx ===
-// ECB historical FX via the Frankfurter proxy (https://api.frankfurter.app).
+// ECB historical FX via the Frankfurter proxy (https://api.frankfurter.dev).
+// NOTE: the legacy api.frankfurter.app host 301-redirects cross-origin and
+// browsers refuse the fetch, so always use the canonical host below.
 // fetchEcbRate(date, from, to) locks the rate at trade date with forward-fill:
 // a weekend/holiday gap walks back up to FX_MAX_LOOKBACK_DAYS and returns
 // interpolated:true with source:'ECB-'+actualFixingDate. Stablecoins
@@ -318,7 +320,7 @@ if (typeof window !== 'undefined') {
 
 var FX_STABLES = ['USDC', 'USDT', 'DAI'];
 var FX_MAX_LOOKBACK_DAYS = 5;
-var FX_BASE_URL = 'https://api.frankfurter.app';
+var FX_BASE_URL = 'https://api.frankfurter.dev/v1';
 
 function stableToUsd(ccy) {
   if (typeof ccy !== 'string') return false;
@@ -396,7 +398,10 @@ function fetchEcbRate(date, from, to) {
       function (data) {
         var rate = data && data.rates && data.rates[effTo];
         if (typeof rate === 'number' && isFinite(rate)) {
-          return { rate: rate, interpolated: back > 0, source: 'ECB-' + d };
+          // Frankfurter answers with the latest available fixing, which may
+          // predate the requested date: pin provenance to its actual date.
+          var dd = (data && typeof data.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.date)) ? data.date : d;
+          return { rate: rate, interpolated: back > 0 || dd !== d, source: 'ECB-' + dd };
         }
         return walkBack(); // 200 but no fixing for this date: previous close
       },
@@ -827,7 +832,7 @@ if (typeof window !== 'undefined') {
 // DOMContentLoaded; render()/refreshPrices() are the recompute+render
 // entry points (also used by tests.html).
 
-var APP_VERSION = '2026-10-06.7';
+var APP_VERSION = '2026-10-06.8';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price

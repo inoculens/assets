@@ -483,6 +483,35 @@
         }, function (e) { restore(); throw e; });
       });
 
+      testAsync('fetchEcbRate uses the canonical Frankfurter host (no redirect)', function () {
+        var origFetch = window.fetch;
+        var urls = [];
+        window.fetch = function (url) {
+          urls.push(url);
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ rates: { EUR: 0.92 } }); } });
+        };
+        function restore() { window.fetch = origFetch; }
+        return fetchEcbRate('2026-10-01', 'USD', 'EUR').then(function (r) {
+          restore();
+          assert(urls.length === 1 && urls[0].indexOf('https://api.frankfurter.dev/v1/') === 0, 'must hit canonical host directly, got ' + urls.join(','));
+          assert(r.rate === 0.92, 'bad rate: ' + JSON.stringify(r));
+        }, function (e) { restore(); throw e; });
+      });
+
+      testAsync('fetchEcbRate pins provenance to the fixing date the API returns', function () {
+        var origFetch = window.fetch;
+        window.fetch = function () {
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ date: '2026-10-05', rates: { EUR: 0.89254 } }); } });
+        };
+        function restore() { window.fetch = origFetch; }
+        return fetchEcbRate('2026-10-06', 'USDC', 'EUR').then(function (r) {
+          restore();
+          assert(r.rate === 0.89254, 'bad rate: ' + JSON.stringify(r));
+          assert(r.interpolated === true, 'previous-close fixing must flag interpolated: ' + JSON.stringify(r));
+          assert(r.source === 'ECB-2026-10-05', 'source must pin actual fixing date: ' + JSON.stringify(r));
+        }, function (e) { restore(); throw e; });
+      });
+
       testAsync('fetchEcbRate failure throws fx-unavailable after retry', function () {
         var origFetch = window.fetch;
         var called = 0;
