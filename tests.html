@@ -151,28 +151,31 @@
 
       // Preserve any real user data across the test run; restore afterwards.
       var backup = null;
-      try { backup = localStorage.getItem('inoculens.v1'); } catch (e) { backup = null; }
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
       function restore() {
         try {
-          if (backup === null) localStorage.removeItem('inoculens.v1');
-          else localStorage.setItem('inoculens.v1', backup);
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
         } catch (e) { /* ignore */ }
       }
 
       try {
         test('store round-trip', function () {
-          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} };
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} };
           saveState(s);
           assert(JSON.stringify(loadState()) === JSON.stringify(s), 'loadState did not return saved state');
         });
 
         test('export shape', function () {
-          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} };
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} };
           var out = JSON.parse(exportState(s));
-          assert(out.app === 'inoculens-assets' && out.version === 1 && Array.isArray(out.trades), 'bad envelope: ' + JSON.stringify(out));
+          assert(out.app === 'inoculens-assets' && out.version === 2 && Array.isArray(out.trades), 'bad envelope: ' + JSON.stringify(out));
           assert(out.settings && out.settings.mainCurrency === 'EUR', 'envelope missing settings');
           assert(typeof out.exportedAt === 'string', 'envelope missing exportedAt');
-          assert(out.priceOverrides && typeof out.priceOverrides === 'object', 'envelope missing priceOverrides');
+          assert(Array.isArray(out.accounts), 'envelope missing accounts');
+          var keys = Object.keys(out).sort();
+          assert(JSON.stringify(keys) === JSON.stringify(['accounts', 'app', 'exportedAt', 'settings', 'trades', 'version']),
+            'envelope must be exactly {app,version,exportedAt,settings,accounts,trades}, got ' + JSON.stringify(keys));
         });
 
         test('corrupt import rejects, state untouched', function () {
@@ -186,38 +189,40 @@
         });
 
         test('loadState falls back to defaults', function () {
-          try { localStorage.removeItem('inoculens.v1'); } catch (e) { /* ignore */ }
+          try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
           var d = loadState();
           assert(d.settings.mainCurrency === 'EUR' && d.settings.costMethod === 'average', 'bad default settings');
+          assert(d.settings.defaultAccountId === null, 'default defaultAccountId should be null');
+          assert(Array.isArray(d.accounts) && d.accounts.length === 0, 'default accounts not empty');
           assert(Array.isArray(d.trades) && d.trades.length === 0, 'default trades not empty');
-          try { localStorage.setItem('inoculens.v1', '###corrupt###'); } catch (e) { /* ignore */ }
+          try { localStorage.setItem('inoculens.v2', '###corrupt###'); } catch (e) { /* ignore */ }
           var d2 = loadState();
           assert(d2.settings.mainCurrency === 'EUR' && Array.isArray(d2.trades), 'corrupt storage did not fall back');
         });
 
         test('export/import round-trip identity', function () {
-          var s = { settings: { mainCurrency: 'USD', costMethod: 'fifo' }, trades: [], priceOverrides: {} };
+          var s = { settings: { mainCurrency: 'USD', costMethod: 'fifo', defaultAccountId: 'a1' }, accounts: [{ id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [{ id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'USD', date: '2026-01-01', fee: 0, feeCurrency: 'USD', accountId: 'a1', fxLock: { pair: 'USD/USD', rate: 1, source: '1:1' } }], priceOverrides: {} };
           var json = exportState(s);
-          try { localStorage.removeItem('inoculens.v1'); } catch (e) { /* ignore */ }
+          try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
           var back = importState(json);
           assert(back.settings.mainCurrency === 'USD' && back.settings.costMethod === 'fifo', 'imported settings mismatch');
-          assert(Array.isArray(back.trades) && back.trades.length === 0, 'imported trades mismatch');
+          assert(back.settings.defaultAccountId === 'a1', 'imported defaultAccountId mismatch');
+          assert(Array.isArray(back.accounts) && back.accounts.length === 1 && back.accounts[0].id === 'a1', 'imported accounts mismatch');
+          assert(Array.isArray(back.trades) && back.trades.length === 1 && back.trades[0].accountId === 'a1', 'imported trades mismatch');
           assert(JSON.stringify(loadState()) === JSON.stringify(back), 'imported state was not persisted');
         });
 
-        test('priceOverrides round-trip', function () {
-          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: { BTC: 50000, ETH: 3000.5 } };
-          var json = exportState(s);
-          assert(JSON.stringify(JSON.parse(json).priceOverrides) === JSON.stringify(s.priceOverrides), 'envelope dropped priceOverrides');
-          try { localStorage.removeItem('inoculens.v1'); } catch (e) { /* ignore */ }
-          var back = importState(json);
-          assert(JSON.stringify(back.priceOverrides) === JSON.stringify(s.priceOverrides), 'imported priceOverrides mismatch');
-          assert(JSON.stringify(loadState()) === JSON.stringify(back), 'imported state was not persisted');
+        test('priceOverrides round-trip via storage (export envelope carries settings/accounts/trades only)', function () {
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: { BTC: 50000, ETH: 3000.5 } };
+          saveState(s);
+          assert(JSON.stringify(loadState().priceOverrides) === JSON.stringify(s.priceOverrides), 'stored priceOverrides mismatch');
+          var out = JSON.parse(exportState(s));
+          assert(out.priceOverrides === undefined, 'v2 envelope must not carry priceOverrides, got ' + JSON.stringify(out.priceOverrides));
         });
 
         test('legacy envelope without priceOverrides imports with {}', function () {
           var legacy = JSON.stringify({ app: 'inoculens-assets', version: 1, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'fifo' }, trades: [] });
-          try { localStorage.removeItem('inoculens.v1'); } catch (e) { /* ignore */ }
+          try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
           var back = importState(legacy);
           assert(JSON.stringify(back.priceOverrides) === '{}', 'legacy import did not default priceOverrides to {}');
           assert(back.settings.costMethod === 'fifo', 'legacy import lost settings');
@@ -225,7 +230,7 @@
 
         test('invalid priceOverrides rejects, state untouched', function () {
           var before = loadState();
-          var bad = JSON.stringify({ app: 'inoculens-assets', version: 1, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: { BTC: 'high' } });
+          var bad = JSON.stringify({ app: 'inoculens-assets', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: { BTC: 'high' } });
           try { importState(bad); assert(false, 'should have thrown on non-numeric override'); }
           catch (e) { assert(true); }
           assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
@@ -275,7 +280,7 @@
           } catch (e) { /* read-only storage: skip stub, still assert typed path exists */ }
           try {
             try {
-              saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+              saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} });
             } catch (e) {
               threw = !!(e && e.message === 'storage-unavailable');
             }
@@ -283,13 +288,69 @@
             var guarded = (window.Inoculens || {}).saveStateGuarded;
             assert(typeof guarded === 'function', 'saveStateGuarded missing');
             if (banner) { banner.hidden = true; banner.textContent = ''; }
-            var ok = guarded({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+            var ok = guarded({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} });
             assert(ok === false, 'saveStateGuarded should return false on storage failure');
             assert(banner && banner.hidden === false && banner.textContent.indexOf('Storage unavailable') !== -1, 'guarded failure must surface via banner');
           } finally {
             try { localStorage.setItem = origSetItem; } catch (e) { /* ignore */ }
             try { if (banner) { banner.hidden = true; banner.textContent = ''; } } catch (e) { /* ignore */ }
           }
+        });
+      } finally {
+        restore();
+      }
+    })();
+
+    // === Accounts-storage tests (Task 1: Store v2) ===
+    (function accountsStorageTests() {
+      var Store = window.Inoculens || {};
+      var saveState = Store.saveState;
+      var loadState = Store.loadState;
+      var exportState = Store.exportState;
+      var importState = Store.importState;
+      var accountById = Store.accountById;
+      var defaultAccount = Store.defaultAccount;
+
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+      function restore() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
+        } catch (e) { /* ignore */ }
+      }
+
+      try {
+        test('accounts v2 round-trip incl. accounts + default', function () {
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a1' }, accounts: [{ id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [{ id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', accountId: 'a1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } }], priceOverrides: {} };
+          saveState(s);
+          assert(loadState().accounts.length === 1 && loadState().settings.defaultAccountId === 'a1', 'accounts/default did not round-trip');
+          var out = JSON.parse(exportState(s));
+          assert(out.version === 2 && Array.isArray(out.accounts), 'bad v2 envelope: ' + JSON.stringify(out));
+        });
+
+        test('accounts v1 import groups per symbol', function () {
+          var v1 = JSON.stringify({ app: 'inoculens-assets', version: 1, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [{ id: 'x', type: 'buy', symbol: 'BTC', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } }, { id: 'y', type: 'buy', symbol: 'ETH', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } }] });
+          var st2 = importState(v1);
+          assert(st2.accounts.length === 2 && st2.trades.every(function (t) { return !!t.accountId; }), 'v1 import did not group per symbol: ' + JSON.stringify(st2));
+        });
+
+        test('accounts unknown accountId rejects atomically', function () {
+          var before = loadState();
+          try { importState(JSON.stringify({ app: 'inoculens-assets', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [{ id: 'z', type: 'buy', symbol: 'BTC', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', accountId: 'nope', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } }] })); assert(false, 'should have thrown on unknown accountId'); } catch (e) { assert(true); }
+          assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
+        });
+
+        test('accounts defaultAccount fallback', function () {
+          assert(defaultAccount({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'gone' }, accounts: [{ id: 'a', name: 'A', ticker: 'BTC', createdAt: 'x' }], trades: [], priceOverrides: {} }).id === 'a', 'dangling default should fall back to first account');
+          assert(defaultAccount({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} }) === null, 'empty accounts should give null');
+        });
+
+        test('accounts accountById semantics', function () {
+          var st = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a' }, accounts: [{ id: 'a', name: 'A', ticker: 'BTC', createdAt: 'x' }], trades: [], priceOverrides: {} };
+          assert(accountById(st, 'a') !== null && accountById(st, 'a').id === 'a', 'accountById should return the account');
+          assert(accountById(st, 'missing') === null, 'accountById should return null for unknown id');
+          assert(accountById(st, null) === null, 'accountById should return null for null id');
         });
       } finally {
         restore();
@@ -545,12 +606,12 @@
       var refreshAllPrices = P.refreshAllPrices;
 
       var backup = null;
-      try { backup = localStorage.getItem('inoculens.v1'); } catch (e) { backup = null; }
-      function setState(s) { try { localStorage.setItem('inoculens.v1', JSON.stringify(s)); } catch (e) { /* ignore */ } }
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+      function setState(s) { try { localStorage.setItem('inoculens.v2', JSON.stringify(s)); } catch (e) { /* ignore */ } }
       function restoreState() {
         try {
-          if (backup === null) localStorage.removeItem('inoculens.v1');
-          else localStorage.setItem('inoculens.v1', backup);
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
         } catch (e) { /* ignore */ }
       }
       function clearPriceCache() {
@@ -673,11 +734,11 @@
     }
     (function uiTests() {
       var backup = null;
-      try { backup = localStorage.getItem('inoculens.v1'); } catch (e) { backup = null; }
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
       function restore() {
         try {
-          if (backup === null) localStorage.removeItem('inoculens.v1');
-          else localStorage.setItem('inoculens.v1', backup);
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
         } catch (e) { /* ignore */ }
       }
       try {
@@ -728,11 +789,11 @@
     (function fixWaveTests() {
       var L = window.Inoculens || {};
       var backup = null;
-      try { backup = localStorage.getItem('inoculens.v1'); } catch (e) { backup = null; }
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
       function restoreState() {
         try {
-          if (backup === null) localStorage.removeItem('inoculens.v1');
-          else localStorage.setItem('inoculens.v1', backup);
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
         } catch (e) { /* ignore */ }
         try { render(); } catch (e) { /* ignore */ }
         try {

@@ -6,17 +6,19 @@
 
 // === Store ===
 // Local-first persistence: localStorage + versioned export/import.
-// Key: exactly 'inoculens.v1'. Export envelope: exactly
-// {app:"inoculens-assets", version:1, exportedAt, settings, trades, priceOverrides}.
+// Key: exactly 'inoculens.v2' (v1 is never read at runtime; v1 files import
+// via the grouping branch in importState). Export envelope: exactly
+// {app:"inoculens-assets", version:2, exportedAt, settings, accounts, trades}.
 // Failed imports throw Error(reason) and leave stored data untouched.
 
-var STORAGE_KEY = 'inoculens.v1';
+var STORAGE_KEY = 'inoculens.v2';
 var APP_ID = 'inoculens-assets';
-var STORE_VERSION = 1;
+var STORE_VERSION = 2;
 
 function defaultState() {
   return {
-    settings: { mainCurrency: 'EUR', costMethod: 'average' },
+    settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null },
+    accounts: [],
     trades: [],
     priceOverrides: {}
   };
@@ -26,6 +28,41 @@ function isValidSettings(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v) &&
     typeof v.mainCurrency === 'string' && v.mainCurrency.length > 0 &&
     (v.costMethod === 'average' || v.costMethod === 'fifo');
+}
+
+function isValidAccount(a) {
+  return !!a && typeof a === 'object' && !Array.isArray(a) &&
+    typeof a.id === 'string' && a.id.length > 0 &&
+    typeof a.name === 'string' &&
+    typeof a.ticker === 'string' && a.ticker.length > 0;
+}
+
+function normalizeAccount(a) {
+  return {
+    id: a.id,
+    name: a.name,
+    ticker: a.ticker,
+    createdAt: (typeof a.createdAt === 'string' && a.createdAt.length > 0)
+      ? a.createdAt
+      : new Date().toISOString()
+  };
+}
+
+function normalizeDefaultAccountId(v) {
+  if (v === null || v === undefined) return null;
+  return (typeof v === 'string' && v.length > 0) ? v : null;
+}
+
+function normalizeSettings(s, fallback) {
+  var fb = fallback || { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null };
+  if (!isValidSettings(s)) {
+    return { mainCurrency: fb.mainCurrency, costMethod: fb.costMethod, defaultAccountId: normalizeDefaultAccountId(fb.defaultAccountId) };
+  }
+  return {
+    mainCurrency: s.mainCurrency,
+    costMethod: s.costMethod,
+    defaultAccountId: normalizeDefaultAccountId(s.defaultAccountId)
+  };
 }
 
 function loadState() {
@@ -45,9 +82,10 @@ function loadState() {
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
   return {
-    settings: isValidSettings(parsed.settings)
-      ? { mainCurrency: parsed.settings.mainCurrency, costMethod: parsed.settings.costMethod }
-      : fallback.settings,
+    settings: normalizeSettings(parsed.settings, fallback.settings),
+    accounts: Array.isArray(parsed.accounts)
+      ? parsed.accounts.filter(isValidAccount).map(normalizeAccount)
+      : [],
     trades: Array.isArray(parsed.trades) ? parsed.trades : [],
     priceOverrides: (parsed.priceOverrides && typeof parsed.priceOverrides === 'object' && !Array.isArray(parsed.priceOverrides))
       ? parsed.priceOverrides
@@ -63,7 +101,7 @@ function saveState(s) {
   }
 }
 
-function isValidImportTrade(t) {
+function isValidImportTrade(t, accountIds) {
   if (!t || typeof t !== 'object' || Array.isArray(t)) return false;
   if (t.type !== 'buy' && t.type !== 'sell') return false;
   if (typeof t.symbol !== 'string' || t.symbol.trim().length === 0) return false;
@@ -76,17 +114,38 @@ function isValidImportTrade(t) {
     var fee = Number(t.fee);
     if (!isFinite(fee) || fee < 0) return false;
   }
+  // Strict v2 membership: when the account roster is supplied, the trade
+  // must name one of its accounts. Legacy v1 callers omit it (their trades
+  // gain accountIds during grouping instead).
+  if (accountIds !== undefined) {
+    if (!Array.isArray(accountIds)) return false;
+    if (typeof t.accountId !== 'string' || t.accountId.length === 0) return false;
+    if (accountIds.indexOf(t.accountId) === -1) return false;
+  }
+  return true;
+}
+
+function isValidPriceOverrides(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  var keys = Object.keys(v);
+  for (var i = 0; i < keys.length; i++) {
+    var n = Number(v[keys[i]]);
+    if (typeof v[keys[i]] !== 'number' || !isFinite(n)) return false;
+  }
   return true;
 }
 
 function exportState(s) {
+  var st = s || {};
   var envelope = {
     app: APP_ID,
     version: STORE_VERSION,
     exportedAt: new Date().toISOString(),
-    settings: s.settings,
-    trades: s.trades,
-    priceOverrides: (s && s.priceOverrides && typeof s.priceOverrides === 'object') ? s.priceOverrides : {}
+    settings: normalizeSettings(st.settings, defaultState().settings),
+    accounts: Array.isArray(st.accounts)
+      ? st.accounts.filter(isValidAccount).map(normalizeAccount)
+      : [],
+    trades: Array.isArray(st.trades) ? st.trades : []
   };
   return JSON.stringify(envelope);
 }
@@ -104,9 +163,54 @@ function importState(json) {
   if (data.app !== APP_ID) {
     throw new Error('import failed: unknown app');
   }
+  if (data.version === 1) {
+    return importStateV1(data);
+  }
   if (data.version !== STORE_VERSION) {
     throw new Error('import failed: unsupported version');
   }
+  if (!isValidSettings(data.settings)) {
+    throw new Error('import failed: invalid settings');
+  }
+  if (!Array.isArray(data.accounts)) {
+    throw new Error('import failed: accounts must be an array');
+  }
+  for (var ai = 0; ai < data.accounts.length; ai++) {
+    if (!isValidAccount(data.accounts[ai])) {
+      throw new Error('import failed: invalid account at index ' + ai);
+    }
+  }
+  var accountIds = data.accounts.map(function (a) { return a.id; });
+  if (!Array.isArray(data.trades)) {
+    throw new Error('import failed: trades must be an array');
+  }
+  for (var ti = 0; ti < data.trades.length; ti++) {
+    if (!isValidImportTrade(data.trades[ti], accountIds)) {
+      throw new Error('import failed: invalid trade at index ' + ti);
+    }
+  }
+  var priceOverrides = {};
+  if (data.priceOverrides !== undefined) {
+    if (!isValidPriceOverrides(data.priceOverrides)) {
+      throw new Error('import failed: invalid priceOverrides');
+    }
+    priceOverrides = data.priceOverrides;
+  }
+  // All validation passed — only now replace stored state (never partial).
+  var next = {
+    settings: normalizeSettings(data.settings, defaultState().settings),
+    accounts: data.accounts.map(normalizeAccount),
+    trades: data.trades,
+    priceOverrides: priceOverrides
+  };
+  saveState(next);
+  return next;
+}
+
+// Legacy v1 file import: group v1 trades (account-less) into auto-created
+// per-symbol accounts. No legacy runtime paths — v1 is never read from
+// localStorage, only accepted here.
+function importStateV1(data) {
   if (!isValidSettings(data.settings)) {
     throw new Error('import failed: invalid settings');
   }
@@ -120,26 +224,64 @@ function importState(json) {
   }
   var priceOverrides = {};
   if (data.priceOverrides !== undefined) {
-    if (!data.priceOverrides || typeof data.priceOverrides !== 'object' || Array.isArray(data.priceOverrides)) {
+    if (!isValidPriceOverrides(data.priceOverrides)) {
       throw new Error('import failed: invalid priceOverrides');
-    }
-    var keys = Object.keys(data.priceOverrides);
-    for (var i = 0; i < keys.length; i++) {
-      var v = data.priceOverrides[keys[i]];
-      if (typeof v !== 'number' || !isFinite(v)) {
-        throw new Error('import failed: invalid priceOverrides');
-      }
     }
     priceOverrides = data.priceOverrides;
   }
-  // All validation passed — only now replace stored state (never partial).
+  var accounts = [];
+  var bySymbol = {};
+  var trades = data.trades.map(function (t) {
+    var sym = String(t.symbol).toUpperCase();
+    if (!Object.prototype.hasOwnProperty.call(bySymbol, sym)) {
+      var acc = { id: uid(), name: sym, ticker: sym, createdAt: new Date().toISOString() };
+      bySymbol[sym] = acc;
+      accounts.push(acc);
+    }
+    var copy = {};
+    for (var k in t) {
+      if (Object.prototype.hasOwnProperty.call(t, k)) copy[k] = t[k];
+    }
+    copy.accountId = bySymbol[sym].id;
+    return copy;
+  });
+  // Membership holds by construction; re-check via the extended validator
+  // so a grouping bug can never silently persist a dangling trade.
+  var accountIds = accounts.map(function (a) { return a.id; });
+  for (var vi = 0; vi < trades.length; vi++) {
+    if (!isValidImportTrade(trades[vi], accountIds)) {
+      throw new Error('import failed: invalid trade at index ' + vi);
+    }
+  }
   var next = {
-    settings: { mainCurrency: data.settings.mainCurrency, costMethod: data.settings.costMethod },
-    trades: data.trades,
+    settings: {
+      mainCurrency: data.settings.mainCurrency,
+      costMethod: data.settings.costMethod,
+      defaultAccountId: accounts.length ? accounts[0].id : null
+    },
+    accounts: accounts,
+    trades: trades,
     priceOverrides: priceOverrides
   };
   saveState(next);
   return next;
+}
+
+function accountById(st, id) {
+  if (typeof id !== 'string' || id.length === 0) return null;
+  var list = (st && Array.isArray(st.accounts)) ? st.accounts : [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].id === id) return list[i];
+  }
+  return null;
+}
+
+function defaultAccount(st) {
+  var list = (st && Array.isArray(st.accounts)) ? st.accounts : [];
+  if (!list.length) return null;
+  var want = (st && st.settings) ? st.settings.defaultAccountId : null;
+  var hit = (typeof want === 'string' && want.length > 0) ? accountById(st, want) : null;
+  return hit || list[0];
 }
 
 // Expose pure functions for tests.html via window.Inoculens.
@@ -150,6 +292,8 @@ if (typeof window !== 'undefined') {
   window.Inoculens.exportState = exportState;
   window.Inoculens.importState = importState;
   window.Inoculens.defaultState = defaultState;
+  window.Inoculens.accountById = accountById;
+  window.Inoculens.defaultAccount = defaultAccount;
 }
 
 // === Fx ===
