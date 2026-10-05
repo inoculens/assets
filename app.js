@@ -2019,7 +2019,10 @@ function refreshPrices() {
   var st = loadState();
   var syms = uniqueSymbols(st.trades);
   (st.accounts || []).forEach(function (a) {
-    if (a && a.ticker) syms.push(String(a.ticker).toUpperCase());
+    if (a && a.ticker) {
+      var t = String(a.ticker).toUpperCase();
+      if (syms.indexOf(t) === -1) syms.push(t); // unique: trades may already list it
+    }
   });
   if (!syms.length) {
     render();
