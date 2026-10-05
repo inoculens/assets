@@ -525,6 +525,15 @@ dialog::backdrop {
 .gain { color: var(--gain); }
 .loss { color: var(--loss); }
 
+footer {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 1rem 1.5rem;
+}
+footer .muted {
+  font-size: 0.8rem;
+}
+
 /* Slim header */
 .brand h1 {
   font-size: 1.1rem;

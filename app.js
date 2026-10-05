@@ -827,6 +827,8 @@ if (typeof window !== 'undefined') {
 // DOMContentLoaded; render()/refreshPrices() are the recompute+render
 // entry points (also used by tests.html).
 
+var APP_VERSION = '2026-10-06.5';
+
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
 var moneyFmtCache = {};
@@ -2286,6 +2288,8 @@ function render() {
   if (!st || !st.settings) st = defaultState();
   renderAccounts(st);
   syncTopbar(st);
+  var ver = document.getElementById('app-ver');
+  if (ver) ver.textContent = 'INOCULENS ASSETS v' + APP_VERSION + ' · local-only, no account, no server';
   route(); // show home or the routed account page
 }
 
@@ -2342,5 +2346,13 @@ if (typeof window !== 'undefined') {
   window.Inoculens.accountDetailId = accountDetailId;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
     document.addEventListener('DOMContentLoaded', init);
+  }
+  // Surface unexpected errors visibly so users can report them with the version above.
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('error', function (e) {
+      try {
+        showBanner('App error: ' + ((e && e.message) || 'unknown error') + ' — please report this text plus your app version (bottom of page).');
+      } catch (err) { /* ignore */ }
+    });
   }
 }
