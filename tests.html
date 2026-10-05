@@ -40,12 +40,26 @@
         <button type="button" id="tb-account">+ Account</button>
         <button type="button" id="tb-settings">Settings</button>
       </div>
-      <p id="tb-totals"></p>
-      <section id="overview" aria-label="Summary"><div class="cards" id="summary-cards"></div></section>
-      <section id="accounts" aria-label="Accounts"></section>
+      <p id="tb-totals" class="hero-sub" aria-live="polite"></p>
+      <div id="view-home">
+        <section id="hero" aria-label="Portfolio total">
+          <p class="hero-value" id="hero-value">—</p>
+          <p class="hero-pl" id="hero-pl"></p>
+        </section>
+        <section id="overview" aria-label="Summary"><div class="cards" id="summary-cards"></div></section>
+        <section id="accounts" aria-label="Accounts"></section>
+      </div>
+      <div id="view-account" hidden>
+        <a href="#/" id="acct-back">‹ Accounts</a>
+        <section id="account-detail" aria-label="Account detail"></section>
+      </div>
       <dialog id="trade-dialog" aria-labelledby="trade-dialog-title">
         <div class="dialog-head"><h2 id="trade-dialog-title">Add trade</h2></div>
         <div id="trade-dialog-body"></div>
+      </dialog>
+      <dialog id="account-dialog" aria-labelledby="account-dialog-title">
+        <div class="dialog-head"><h2 id="account-dialog-title">New account</h2></div>
+        <div id="account-dialog-body"></div>
       </dialog>
       <dialog id="settings-dialog" aria-labelledby="settings-dialog-title">
         <div class="dialog-head"><h2 id="settings-dialog-title">Settings</h2></div>
@@ -764,20 +778,33 @@
         } catch (e) { /* ignore */ }
       }
       try {
-        test('ui positions checklist (Task 6, accounts cards)', function () {
+        test('ui positions checklist (detail view)', function () {
           seedForUi();
           init();
-          assert(document.querySelector('#accounts .account-card tbody tr') !== null, 'account card shows no rows after seed');
+          location.hash = '#/account/ui-acct';
+          route();
+          assert(document.querySelector('#account-detail tbody tr') !== null, 'detail shows no rows after seed');
           setCostMethod('fifo');
           assert(uiShows('30'), 'fifo realized 30k not visible');
-          var cell = document.querySelector('#accounts td[data-label="Realized"]');
+          var cell = document.querySelector('#account-detail td[data-label="Realized"]');
           assert(cell && cell.getAttribute('data-value') === '30000',
             'fifo realized cell should carry data-value 30000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
           setCostMethod('average');
           assert(uiShows('20'), 'average realized 20k not visible');
-          cell = document.querySelector('#accounts td[data-label="Realized"]');
+          cell = document.querySelector('#account-detail td[data-label="Realized"]');
           assert(cell && cell.getAttribute('data-value') === '20000',
             'average realized cell should carry data-value 20000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
+          location.hash = '#/';
+          route();
+        });
+        test('home cards stay minimal (no tables)', function () {
+          seedForUi();
+          init();
+          location.hash = '#/';
+          render();
+          assert(document.querySelector('#accounts .account-card') !== null, 'home card missing');
+          assert(document.querySelector('#accounts table') === null, 'home cards must stay table-free');
+          assert(document.querySelector('#accounts .acct-pl') !== null, 'home card should show live P&L');
         });
       } finally {
         restore();
@@ -907,14 +934,18 @@
         var lp = (L.getLivePrices && L.getLivePrices()) || {};
         Object.keys(lp).forEach(function (k) { delete lp[k]; });
         if (typeof init === 'function') init();
+        location.hash = '#/account/dbg-acct';
+        route();
         render();
-        function cell(label) { return document.querySelector('#accounts td[data-label="' + label + '"]'); }
+        function cell(label) { return document.querySelector('#account-detail td[data-label="' + label + '"]'); }
         var live = cell('Live'), val = cell('Value'), un = cell('Unrealized'), ret = cell('Return %'), tot = cell('Total P&L');
         assert(live && live.textContent === '—', 'Live should be —, got ' + (live && live.textContent));
         assert(val && val.textContent === '—', 'Value should be —, got ' + (val && val.textContent));
         assert(un && un.textContent === '—', 'Unrealized should be —, got ' + (un && un.textContent));
         assert(ret && ret.textContent === '—', 'Return should be —, got ' + (ret && ret.textContent));
         assert(tot && tot.getAttribute('data-value') === '0', 'Total P&L should be realized-only 0, got ' + (tot && tot.getAttribute('data-value')));
+        location.hash = '#/';
+        route();
         restoreState();
       });
 
@@ -931,11 +962,15 @@
           priceOverrides: {}
         });
         if (typeof init === 'function') init();
+        location.hash = '#/account/cl-acct';
+        route();
         render();
         var rows = L.computePositions(L.loadState().trades, {}, 'average');
         assert(rows.length === 1 && rows[0].qtyHeld === 0, 'qty-0 row must be kept, got ' + JSON.stringify(rows));
-        var txt = document.getElementById('accounts').textContent;
+        var txt = document.getElementById('account-detail').textContent;
         assert(txt.indexOf('Closed') !== -1, 'closed position should be labelled Closed: ' + txt);
+        location.hash = '#/';
+        route();
         restoreState();
       });
     })();
@@ -971,12 +1006,16 @@
         });
       }
       try {
-        test('accounts two cards with separated P&L', function () {
+        test('accounts home cards are minimal folders', function () {
           seedTwoAccounts(); init(); render();
-          assert(document.querySelectorAll('#accounts .account-card').length === 2, 'two cards expected');
-          assert(document.querySelector('#accounts').textContent.indexOf('Cold') !== -1, 'account name missing');
           var cards = document.querySelectorAll('#accounts .account-card');
-          assert(cards[0].textContent.indexOf('30') !== -1 && cards[1].textContent.indexOf('70') !== -1, 'per-card P&L mixed');
+          assert(cards.length === 2, 'two cards expected');
+          var txt = document.querySelector('#accounts').textContent;
+          assert(txt.indexOf('Cold') !== -1 && txt.indexOf('Hot') !== -1, 'account names missing');
+          assert(txt.indexOf('BTC') !== -1, 'tickers missing');
+          assert(document.querySelector('#accounts table') === null, 'home cards must not embed tables');
+          assert(document.querySelectorAll('#accounts .acct-pl').length === 2, 'each card should show live P&L');
+          assert(document.querySelector('#accounts [data-account-nav]') !== null, 'cards should navigate to detail');
         });
 
         test('accounts per-card Trade button renders account binding (Task 3 wires it)', function () {
@@ -1016,6 +1055,75 @@
           var cards = document.querySelectorAll('#accounts .account-card');
           assert(cards.length === 1, 'only survivor card should render, got ' + cards.length);
           assert(cards[0].getAttribute('data-account') === 'survivor', 'survivor card missing');
+        });
+      } finally {
+        restoreState();
+      }
+    })();
+
+    // === Routing + detail view tests (list → detail navigation) ===
+    (function routingTests() {
+      var L = window.Inoculens || {};
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+      function restoreState() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
+        } catch (e) { /* ignore */ }
+        try { location.hash = '#/'; } catch (e) { /* ignore */ }
+        try { route(); render(); } catch (e) { /* ignore */ }
+      }
+      function seedSplit() {
+        try {
+          var lp = (L.getLivePrices && L.getLivePrices()) || {};
+          Object.keys(lp).forEach(function (k) { delete lp[k]; });
+        } catch (e) { /* ignore */ }
+        L.saveState({
+          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'r1' },
+          accounts: [
+            { id: 'r1', name: 'Cold', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' },
+            { id: 'r2', name: 'Hot', ticker: 'BTC', createdAt: '2026-01-01T00:00:01.000Z' }
+          ],
+          trades: [
+            { id: 'r-t1', type: 'buy', symbol: 'BTC', qty: 1, total: 30, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'r1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' },
+            { id: 'r-t2', type: 'sell', symbol: 'BTC', qty: 1, total: 50, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'r1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-02-01T00:00:00.000Z' },
+            { id: 'r-t3', type: 'buy', symbol: 'BTC', qty: 1, total: 70, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'r2', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
+          ],
+          priceOverrides: {}
+        });
+      }
+      function go(id) { location.hash = '#/account/' + id; route(); }
+      try {
+        test('routing opens detail with name, tables, separated realized', function () {
+          seedSplit(); init(); go('r1');
+          var det = document.getElementById('account-detail');
+          assert(det.textContent.indexOf('Cold') !== -1, 'detail should show account name');
+          assert(det.querySelector('tbody tr') !== null, 'detail should show tables');
+          var cell = det.querySelector('td[data-label="Realized"]');
+          assert(cell && cell.getAttribute('data-value') === '20', 'r1 realized should be 20, got ' + (cell && cell.getAttribute('data-value')));
+          go('r2');
+          assert(det.textContent.indexOf('Hot') !== -1, 'detail should switch accounts');
+          cell = det.querySelector('td[data-label="Realized"]');
+          assert(cell && cell.getAttribute('data-value') === '0', 'r2 realized should be 0, got ' + (cell && cell.getAttribute('data-value')));
+        });
+
+        test('routing unknown account falls back home', function () {
+          seedSplit(); init();
+          location.hash = '#/account/nope';
+          route();
+          assert(location.hash === '#/', 'unknown account should reset hash home, got ' + location.hash);
+          route();
+          assert(document.getElementById('view-home').hidden === false, 'home should show after fallback');
+        });
+
+        test('home shows after navigating back', function () {
+          seedSplit(); init(); go('r1');
+          assert(document.getElementById('view-account').hidden === false, 'detail should show');
+          location.hash = '#/';
+          route();
+          assert(document.getElementById('view-home').hidden === false, 'home should show after back');
+          assert(document.getElementById('view-account').hidden === true, 'detail should hide after back');
         });
       } finally {
         restoreState();

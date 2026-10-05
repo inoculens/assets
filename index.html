@@ -50,12 +50,10 @@
   <header class="brand">
     <div class="brand-inner topbar">
       <div class="brand-id">
-        <h1>INOCULENS ASSETS</h1>
-        <p class="tagline">Local-first portfolio tracker — private P&amp;L in your browser.</p>
+        <h1>INOCULENS <span>ASSETS</span></h1>
       </div>
-      <p id="tb-totals" class="topbar-totals" aria-live="polite"></p>
       <div class="topbar-controls">
-        <label class="tb-field" for="tb-main">Currency
+        <label class="tb-field" for="tb-main"><span class="tb-label">Currency</span>
           <select id="tb-main">
             <option value="EUR">EUR</option>
             <option value="USD">USD</option>
@@ -67,9 +65,9 @@
           <button type="button" id="tb-avg" aria-pressed="true">Average</button>
           <button type="button" id="tb-fifo" aria-pressed="false">FIFO</button>
         </div>
-        <button type="button" id="tb-add" class="primary">+ Add trade</button>
+        <button type="button" id="tb-add" class="primary">+ Trade</button>
         <button type="button" id="tb-account">+ Account</button>
-        <button type="button" id="tb-settings" aria-haspopup="dialog">Settings</button>
+        <button type="button" id="tb-settings" class="icon-btn" aria-haspopup="dialog" aria-label="Settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
       </div>
     </div>
   </header>
@@ -77,11 +75,23 @@
   <div id="banner" role="status" aria-live="polite" hidden></div>
 
   <main>
-    <section id="overview" aria-label="Summary">
-      <div class="cards" id="summary-cards"></div>
-    </section>
-    <section id="accounts" aria-label="Accounts">
-    </section>
+    <div id="view-home">
+      <section id="hero" aria-label="Portfolio total">
+        <p class="hero-label">Total balance</p>
+        <p class="hero-value" id="hero-value">—</p>
+        <p class="hero-pl" id="hero-pl" aria-live="polite"></p>
+        <p id="tb-totals" class="hero-sub" aria-live="polite"></p>
+      </section>
+      <section id="overview" aria-label="Summary">
+        <div class="cards" id="summary-cards"></div>
+      </section>
+      <section id="accounts" aria-label="Accounts">
+      </section>
+    </div>
+    <div id="view-account" hidden>
+      <a href="#/" id="acct-back">‹ Accounts</a>
+      <section id="account-detail" aria-label="Account detail"></section>
+    </div>
   </main>
 
   <dialog id="trade-dialog" aria-labelledby="trade-dialog-title">
@@ -90,6 +100,14 @@
       <button type="button" data-close aria-label="Close dialog">✕</button>
     </div>
     <div id="trade-dialog-body"></div>
+  </dialog>
+
+  <dialog id="account-dialog" aria-labelledby="account-dialog-title">
+    <div class="dialog-head">
+      <h2 id="account-dialog-title">New account</h2>
+      <button type="button" data-close aria-label="Close dialog">✕</button>
+    </div>
+    <div id="account-dialog-body"></div>
   </dialog>
 
   <dialog id="settings-dialog" aria-labelledby="settings-dialog-title">
