@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>INOCULENS ASSETS — Local-First Portfolio Tracker</title>
+  <meta name="description" content="INOCULENS ASSETS is a private, local-first portfolio tracker. Track buys and sells per asset with live prices, ECB-locked FX normalization, and average-cost / FIFO P&L — all stored only in your browser. No account, no server, no tracking.">
+  <link rel="canonical" href="https://example.com/">
+  <meta name="theme-color" content="#0f0f0f">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="INOCULENS ASSETS">
+  <meta property="og:title" content="INOCULENS ASSETS — Local-First Portfolio Tracker">
+  <meta property="og:description" content="Private, local-first portfolio tracker: per-asset trades, live prices, ECB FX locks, average-cost and FIFO P&L. Your data never leaves your browser.">
+  <meta property="og:url" content="https://example.com/">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="INOCULENS ASSETS — Local-First Portfolio Tracker">
+  <meta name="twitter:description" content="Private, local-first portfolio tracker with live prices, ECB-locked FX, and average-cost / FIFO P&L. No account, no server.">
+
+  <link rel="manifest" href="./manifest.json">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="./styles.css">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "INOCULENS ASSETS",
+    "applicationCategory": "FinanceApplication",
+    "operatingSystem": "Web",
+    "description": "Private, local-first portfolio tracker: track buys and sells per asset with live prices, ECB-locked FX normalization, and average-cost / FIFO P&L. All data stays in your browser.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+    "url": "https://example.com/"
+  }
+  </script>
+</head>
+<body>
+  <header class="brand">
+    <div class="brand-inner">
+      <h1>INOCULENS ASSETS</h1>
+      <p class="tagline">Local-first portfolio tracker — private crypto P&amp;L in your browser.</p>
+    </div>
+  </header>
+
+  <div id="banner" role="status" aria-live="polite" hidden></div>
+
+  <main>
+    <section id="positions" aria-label="Positions">
+      <h2>Positions</h2>
+    </section>
+    <section id="trades" aria-label="Trades">
+      <h2>Trades</h2>
+    </section>
+    <aside id="settings" aria-label="Settings">
+      <h2>Settings</h2>
+    </aside>
+  </main>
+
+  <noscript>
+    <p>INOCULENS ASSETS needs JavaScript to compute your local-first portfolio. No data leaves your browser.</p>
+  </noscript>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
