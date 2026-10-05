@@ -1134,14 +1134,25 @@
           assert(document.getElementById('t-symbol-locked').textContent === 'BTC', 'symbol should lock to ticker');
         });
 
-        test('header Trade on home keeps the account selectable', function () {
-          seedSplit(); init();
+        test('header Trade on home keeps the account selectable', function () {          seedSplit(); init();
           location.hash = '#/';
           route();
           render();
           document.getElementById('tb-add').click();
           assert(document.getElementById('t-account').value === 'r1', 'trade should default to default account r1');
           assert(document.getElementById('t-account-row').style.display !== 'none', 'account select should show on home');
+        });
+
+        test('deleting a trade always asks for confirmation', function () {
+          seedSplit(); init(); render();
+          var realConfirm = window.confirm;
+          var asked = null;
+          window.confirm = function (msg) { asked = String(msg); return false; };
+          deleteTrade('r-t1');
+          window.confirm = realConfirm;
+          assert(asked !== null && asked.indexOf('Delete trade') !== -1, 'delete must confirm, no prompt shown');
+          assert(L.loadState().trades.length === 3, 'cancelled delete must keep the trade');
+          restoreState();
         });
 
         test('submit navigates to the trade account so rows show', function () {

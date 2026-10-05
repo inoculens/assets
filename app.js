@@ -827,7 +827,7 @@ if (typeof window !== 'undefined') {
 // DOMContentLoaded; render()/refreshPrices() are the recompute+render
 // entry points (also used by tests.html).
 
-var APP_VERSION = '2026-10-06.6';
+var APP_VERSION = '2026-10-06.7';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -1120,9 +1120,15 @@ function fxBadgeText(t) {
 function deleteTrade(id) {
   if (!id) return;
   var st = loadState();
-  var kept = (st.trades || []).filter(function (t) { return !t || t.id !== id; });
-  if (kept.length === (st.trades || []).length) return; // unknown id: no write
-  st.trades = kept;
+  var doomed = null;
+  (st.trades || []).forEach(function (t) { if (t && t.id === id) doomed = t; });
+  if (!doomed) return; // unknown id: no write
+  if (typeof window.confirm === 'function') {
+    var desc = (doomed.type === 'sell' ? 'Sell ' : 'Buy ') + doomed.qty + ' ' +
+      String(doomed.symbol || '') + ' (' + (doomed.date || 'no date') + ')';
+    if (!window.confirm('Delete trade ' + desc + '? This cannot be undone.')) return;
+  }
+  st.trades = (st.trades || []).filter(function (t) { return !t || t.id !== id; });
   if (!saveStateGuarded(st)) return;
   render(); // cached live prices stay; no refetch needed on delete
 }
