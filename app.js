@@ -8,7 +8,7 @@
 // Local-first persistence: localStorage + versioned export/import.
 // Key: exactly 'inoculens.v2' (v1 is never read at runtime; v1 files import
 // via the grouping branch in importState). Export envelope: exactly
-// {app:"inoculens-assets", version:2, exportedAt, settings, accounts, trades}.
+// {app:"inoculens-assets", version:2, exportedAt, settings, accounts, trades, priceOverrides}.
 // Failed imports throw Error(reason) and leave stored data untouched.
 
 var STORAGE_KEY = 'inoculens.v2';
@@ -145,7 +145,10 @@ function exportState(s) {
     accounts: Array.isArray(st.accounts)
       ? st.accounts.filter(isValidAccount).map(normalizeAccount)
       : [],
-    trades: Array.isArray(st.trades) ? st.trades : []
+    trades: Array.isArray(st.trades) ? st.trades : [],
+    priceOverrides: (st.priceOverrides && typeof st.priceOverrides === 'object' && !Array.isArray(st.priceOverrides))
+      ? st.priceOverrides
+      : {}
   };
   return JSON.stringify(envelope);
 }
@@ -181,6 +184,13 @@ function importState(json) {
     }
   }
   var accountIds = data.accounts.map(function (a) { return a.id; });
+  var seenIds = {};
+  for (var di = 0; di < accountIds.length; di++) {
+    if (Object.prototype.hasOwnProperty.call(seenIds, accountIds[di])) {
+      throw new Error('import failed: duplicate account id ' + accountIds[di]);
+    }
+    seenIds[accountIds[di]] = true;
+  }
   if (!Array.isArray(data.trades)) {
     throw new Error('import failed: trades must be an array');
   }

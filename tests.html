@@ -173,9 +173,10 @@
           assert(out.settings && out.settings.mainCurrency === 'EUR', 'envelope missing settings');
           assert(typeof out.exportedAt === 'string', 'envelope missing exportedAt');
           assert(Array.isArray(out.accounts), 'envelope missing accounts');
+          assert(out.priceOverrides && typeof out.priceOverrides === 'object', 'envelope missing priceOverrides');
           var keys = Object.keys(out).sort();
-          assert(JSON.stringify(keys) === JSON.stringify(['accounts', 'app', 'exportedAt', 'settings', 'trades', 'version']),
-            'envelope must be exactly {app,version,exportedAt,settings,accounts,trades}, got ' + JSON.stringify(keys));
+          assert(JSON.stringify(keys) === JSON.stringify(['accounts', 'app', 'exportedAt', 'priceOverrides', 'settings', 'trades', 'version']),
+            'envelope must be exactly {app,version,exportedAt,settings,accounts,trades,priceOverrides}, got ' + JSON.stringify(keys));
         });
 
         test('corrupt import rejects, state untouched', function () {
@@ -212,12 +213,22 @@
           assert(JSON.stringify(loadState()) === JSON.stringify(back), 'imported state was not persisted');
         });
 
-        test('priceOverrides round-trip via storage (export envelope carries settings/accounts/trades only)', function () {
+        test('priceOverrides export/import round-trip', function () {
           var s = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: { BTC: 50000, ETH: 3000.5 } };
-          saveState(s);
-          assert(JSON.stringify(loadState().priceOverrides) === JSON.stringify(s.priceOverrides), 'stored priceOverrides mismatch');
           var out = JSON.parse(exportState(s));
-          assert(out.priceOverrides === undefined, 'v2 envelope must not carry priceOverrides, got ' + JSON.stringify(out.priceOverrides));
+          assert(JSON.stringify(out.priceOverrides) === JSON.stringify(s.priceOverrides), 'envelope dropped priceOverrides');
+          try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
+          var back = importState(JSON.stringify(out));
+          assert(JSON.stringify(back.priceOverrides) === JSON.stringify(s.priceOverrides), 'imported priceOverrides mismatch');
+          assert(JSON.stringify(loadState()) === JSON.stringify(back), 'imported state was not persisted');
+        });
+
+        test('v2 envelope without priceOverrides key imports with {}', function () {
+          var noKey = JSON.stringify({ app: 'inoculens-assets', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [] });
+          try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
+          var back = importState(noKey);
+          assert(JSON.stringify(back.priceOverrides) === '{}', 'missing key did not default priceOverrides to {}');
+          assert(JSON.stringify(loadState()) === JSON.stringify(back), 'imported state was not persisted');
         });
 
         test('legacy envelope without priceOverrides imports with {}', function () {
@@ -338,6 +349,14 @@
         test('accounts unknown accountId rejects atomically', function () {
           var before = loadState();
           try { importState(JSON.stringify({ app: 'inoculens-assets', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [{ id: 'z', type: 'buy', symbol: 'BTC', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', accountId: 'nope', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } }] })); assert(false, 'should have thrown on unknown accountId'); } catch (e) { assert(true); }
+          assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
+        });
+
+        test('accounts duplicate account ids reject atomically', function () {
+          var before = loadState();
+          var dup = JSON.stringify({ app: 'inoculens-assets', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [{ id: 'a', name: 'A', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }, { id: 'a', name: 'B', ticker: 'ETH', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [] });
+          try { importState(dup); assert(false, 'should have thrown on duplicate account id'); }
+          catch (e) { assert(String((e && e.message) || e).indexOf('import failed') !== -1, 'wrong error: ' + ((e && e.message) || e)); }
           assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
         });
 
