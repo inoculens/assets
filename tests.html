@@ -100,6 +100,7 @@
           assert(out.app === 'inoculens-assets' && out.version === 1 && Array.isArray(out.trades), 'bad envelope: ' + JSON.stringify(out));
           assert(out.settings && out.settings.mainCurrency === 'EUR', 'envelope missing settings');
           assert(typeof out.exportedAt === 'string', 'envelope missing exportedAt');
+          assert(out.priceOverrides && typeof out.priceOverrides === 'object', 'envelope missing priceOverrides');
         });
 
         test('corrupt import rejects, state untouched', function () {
@@ -130,6 +131,32 @@
           assert(back.settings.mainCurrency === 'USD' && back.settings.costMethod === 'fifo', 'imported settings mismatch');
           assert(Array.isArray(back.trades) && back.trades.length === 0, 'imported trades mismatch');
           assert(JSON.stringify(loadState()) === JSON.stringify(back), 'imported state was not persisted');
+        });
+
+        test('priceOverrides round-trip', function () {
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: { BTC: 50000, ETH: 3000.5 } };
+          var json = exportState(s);
+          assert(JSON.stringify(JSON.parse(json).priceOverrides) === JSON.stringify(s.priceOverrides), 'envelope dropped priceOverrides');
+          try { localStorage.removeItem('inoculens.v1'); } catch (e) { /* ignore */ }
+          var back = importState(json);
+          assert(JSON.stringify(back.priceOverrides) === JSON.stringify(s.priceOverrides), 'imported priceOverrides mismatch');
+          assert(JSON.stringify(loadState()) === JSON.stringify(back), 'imported state was not persisted');
+        });
+
+        test('legacy envelope without priceOverrides imports with {}', function () {
+          var legacy = JSON.stringify({ app: 'inoculens-assets', version: 1, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'fifo' }, trades: [] });
+          try { localStorage.removeItem('inoculens.v1'); } catch (e) { /* ignore */ }
+          var back = importState(legacy);
+          assert(JSON.stringify(back.priceOverrides) === '{}', 'legacy import did not default priceOverrides to {}');
+          assert(back.settings.costMethod === 'fifo', 'legacy import lost settings');
+        });
+
+        test('invalid priceOverrides rejects, state untouched', function () {
+          var before = loadState();
+          var bad = JSON.stringify({ app: 'inoculens-assets', version: 1, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: { BTC: 'high' } });
+          try { importState(bad); assert(false, 'should have thrown on non-numeric override'); }
+          catch (e) { assert(true); }
+          assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
         });
       } finally {
         restore();

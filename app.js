@@ -7,7 +7,7 @@
 // === Store ===
 // Local-first persistence: localStorage + versioned export/import.
 // Key: exactly 'inoculens.v1'. Export envelope: exactly
-// {app:"inoculens-assets", version:1, exportedAt, settings, trades}.
+// {app:"inoculens-assets", version:1, exportedAt, settings, trades, priceOverrides}.
 // Failed imports throw Error(reason) and leave stored data untouched.
 
 var STORAGE_KEY = 'inoculens.v1';
@@ -65,7 +65,8 @@ function exportState(s) {
     version: STORE_VERSION,
     exportedAt: new Date().toISOString(),
     settings: s.settings,
-    trades: s.trades
+    trades: s.trades,
+    priceOverrides: (s && s.priceOverrides && typeof s.priceOverrides === 'object') ? s.priceOverrides : {}
   };
   return JSON.stringify(envelope);
 }
@@ -96,6 +97,13 @@ function importState(json) {
   if (data.priceOverrides !== undefined) {
     if (!data.priceOverrides || typeof data.priceOverrides !== 'object' || Array.isArray(data.priceOverrides)) {
       throw new Error('import failed: invalid priceOverrides');
+    }
+    var keys = Object.keys(data.priceOverrides);
+    for (var i = 0; i < keys.length; i++) {
+      var v = data.priceOverrides[keys[i]];
+      if (typeof v !== 'number' || !isFinite(v)) {
+        throw new Error('import failed: invalid priceOverrides');
+      }
     }
     priceOverrides = data.priceOverrides;
   }
