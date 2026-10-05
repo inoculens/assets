@@ -1093,6 +1093,10 @@ function renderAccounts(st) {
     avatar.className = 'acct-avatar';
     avatar.setAttribute('aria-hidden', 'true');
     avatar.textContent = String(acc.ticker || '?').charAt(0).toUpperCase();
+    var hue = 0;
+    var tk0 = String(acc.ticker || '?');
+    for (var hi = 0; hi < tk0.length; hi++) hue = (hue * 31 + tk0.charCodeAt(hi)) % 360;
+    avatar.style.background = 'linear-gradient(135deg, hsl(' + hue + ', 55%, 38%), hsl(' + ((hue + 50) % 360) + ', 60%, 26%))';
     card.appendChild(avatar);
     var mid = document.createElement('span');
     mid.className = 'acct-mid';
@@ -1485,23 +1489,23 @@ function deleteAccount(id) {
   var st = loadState();
   var acc = accountById(st, id);
   if (!acc) return; // unknown id: no write, no dialog
-  if (typeof window.confirm === 'function' &&
-      !window.confirm('Delete account "' + acc.name + '" (' + acc.ticker + ')? This cannot be undone.')) {
-    return;
-  }
-  var remaining = accountTrades(st, id);
-  if (remaining.length) {
-    showBanner('Delete its trades first — an account with trades cannot be deleted.');
+  confirmAction('Delete account', 'Delete account "' + acc.name + '" (' + acc.ticker + ')? Its trades must go first — this cannot be undone.', 'Delete', true).then(function (ok) {
+    if (!ok) return;
+    var s2 = loadState();
+    if (!accountById(s2, id)) return;
+    if (accountTrades(s2, id).length) {
+      showBanner('Delete its trades first — an account with trades cannot be deleted.');
+      render();
+      return;
+    }
+    s2.accounts = (s2.accounts || []).filter(function (a) { return !a || a.id !== id; });
+    if (s2.settings.defaultAccountId === id) {
+      s2.settings.defaultAccountId = s2.accounts.length ? s2.accounts[0].id : null;
+    }
+    if (!saveStateGuarded(s2)) return;
+    clearBanner();
     render();
-    return;
-  }
-  st.accounts = (st.accounts || []).filter(function (a) { return !a || a.id !== id; });
-  if (st.settings.defaultAccountId === id) {
-    st.settings.defaultAccountId = st.accounts.length ? st.accounts[0].id : null;
-  }
-  if (!saveStateGuarded(st)) return;
-  clearBanner();
-  render();
+  });
 }
 
 function deleteTrade(id) {
@@ -1510,14 +1514,17 @@ function deleteTrade(id) {
   var doomed = null;
   (st.trades || []).forEach(function (t) { if (t && t.id === id) doomed = t; });
   if (!doomed) return; // unknown id: no write
-  if (typeof window.confirm === 'function') {
-    var desc = (doomed.type === 'sell' ? 'Sell ' : 'Buy ') + doomed.qty + ' ' +
-      String(doomed.symbol || '') + ' (' + (doomed.date || 'no date') + ')';
-    if (!window.confirm('Delete trade ' + desc + '? This cannot be undone.')) return;
-  }
-  st.trades = (st.trades || []).filter(function (t) { return !t || t.id !== id; });
-  if (!saveStateGuarded(st)) return;
-  render(); // cached live prices stay; no refetch needed on delete
+  var desc = (doomed.type === 'sell' ? 'Sell ' : 'Buy ') + doomed.qty + ' ' +
+    String(doomed.symbol || '') + ' (' + (doomed.date || 'no date') + ')';
+  confirmAction('Delete trade', 'Delete trade ' + desc + '? This cannot be undone.', 'Delete', true).then(function (ok) {
+    if (!ok) return;
+    var s2 = loadState();
+    var kept = (s2.trades || []).filter(function (t) { return !t || t.id !== id; });
+    if (kept.length === (s2.trades || []).length) return;
+    s2.trades = kept;
+    if (!saveStateGuarded(s2)) return;
+    render(); // cached live prices stay; no refetch needed on delete
+  });
 }
 
 function buildAccountCreateRow() {
@@ -1612,9 +1619,17 @@ function buildAccounts() {
   }
   // Folder-card navigation (home → detail). Buttons keep their own
   // behavior; anything else on the card opens the account page.
+  // Mousemove spotlight: cursor position feeds the card sheen (CSS vars).
   var navHost = document.getElementById('accounts');
   if (navHost && !navHost.getAttribute('data-nav-wired')) {
     navHost.setAttribute('data-nav-wired', '1');
+    navHost.addEventListener('mousemove', function (e) {
+      var card = e.target && e.target.closest ? e.target.closest('.account-card') : null;
+      if (!card) return;
+      var r = card.getBoundingClientRect();
+      card.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+      card.style.setProperty('--my', (e.clientY - r.top) + 'px');
+    });
     navHost.addEventListener('click', function (e) {
       if (!e || !e.target || !e.target.closest) return;
       if (e.target.closest('button')) return;
@@ -1954,6 +1969,40 @@ function returnFocus() {
   dialogOpener = null;
 }
 
+// --- Custom confirm (no browser alerts) ---
+// confirmAction renders the in-app confirm dialog and resolves true/false.
+// Only one pending confirm exists at a time; a newer call settles the older
+// one as cancelled. Esc/backdrop settle as cancelled via close/cancel.
+
+var confirmSettle = null;
+
+function confirmAction(title, message, okText, danger) {
+  if (confirmSettle) settleConfirm(false);
+  var dlg = document.getElementById('confirm-dialog');
+  var t = document.getElementById('confirm-title');
+  var m = document.getElementById('confirm-message');
+  var ok = document.getElementById('confirm-ok');
+  if (!dlg || !t || !m || !ok) {
+    return Promise.resolve(typeof window.confirm === 'function' ? window.confirm(message) : true);
+  }
+  t.textContent = title || 'Are you sure?';
+  m.textContent = message || '';
+  ok.textContent = okText || 'Confirm';
+  ok.className = danger === false ? 'primary' : 'primary danger-btn';
+  openDialog('confirm-dialog');
+  return new Promise(function (resolve) { confirmSettle = resolve; });
+}
+
+function settleConfirm(v) {
+  var dlg = document.getElementById('confirm-dialog');
+  if (dlg) closeDialog(dlg);
+  if (confirmSettle) {
+    var s = confirmSettle;
+    confirmSettle = null;
+    s(v);
+  }
+}
+
 function wireDialog(id) {
   var dlg = document.getElementById(id);
   if (!dlg || dlg.getAttribute('data-wired')) return;
@@ -1969,6 +2018,24 @@ function wireDialog(id) {
 function buildTopbar() {
   wireDialog('trade-dialog');
   wireDialog('settings-dialog');
+  wireDialog('account-dialog');
+  wireDialog('confirm-dialog');
+  var cok = document.getElementById('confirm-ok');
+  if (cok && !cok.getAttribute('data-wired')) {
+    cok.setAttribute('data-wired', '1');
+    cok.addEventListener('click', function () { settleConfirm(true); });
+  }
+  var ccan = document.getElementById('confirm-cancel');
+  if (ccan && !ccan.getAttribute('data-wired')) {
+    ccan.setAttribute('data-wired', '1');
+    ccan.addEventListener('click', function () { settleConfirm(false); });
+  }
+  var cdlg = document.getElementById('confirm-dialog');
+  if (cdlg && !cdlg.getAttribute('data-ev-wired')) {
+    cdlg.setAttribute('data-ev-wired', '1');
+    cdlg.addEventListener('cancel', function () { settleConfirm(false); });
+    cdlg.addEventListener('close', function () { settleConfirm(false); });
+  }
   var main = document.getElementById('tb-main');
   if (main && !main.getAttribute('data-wired')) {
     main.setAttribute('data-wired', '1');
@@ -2183,14 +2250,13 @@ function addDemoTrade() {
 }
 
 function clearAllData() {
-  if (typeof window.confirm === 'function' &&
-      !window.confirm('Delete all trades, overrides and settings? This cannot be undone.')) {
-    return;
-  }
-  livePrices = {};
-  if (!saveStateGuarded(defaultState())) return;
-  clearBanner();
-  render();
+  confirmAction('Clear everything', 'Delete all accounts, trades, overrides and settings? This cannot be undone.', 'Delete everything', true).then(function (ok) {
+    if (!ok) return;
+    livePrices = {};
+    if (!saveStateGuarded(defaultState())) return;
+    clearBanner();
+    render();
+  });
 }
 
 // --- Render loop ---

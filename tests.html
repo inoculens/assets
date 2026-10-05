@@ -65,6 +65,14 @@
         <div class="dialog-head"><h2 id="settings-dialog-title">Settings</h2></div>
         <div id="settings-dialog-body"></div>
       </dialog>
+      <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+        <div class="dialog-head"><h2 id="confirm-title">Are you sure?</h2></div>
+        <p id="confirm-message" class="muted"></p>
+        <div class="dialog-actions">
+          <button type="button" id="confirm-cancel">Cancel</button>
+          <button type="button" id="confirm-ok" class="primary danger-btn">Confirm</button>
+        </div>
+      </dialog>
     </div>
   </main>
 
@@ -1055,18 +1063,21 @@
           assert(ids.indexOf('a1-default-id') !== -1 && ids.indexOf('a2') !== -1, 'per-card Trade buttons must carry data-account-trade="<id>", got ' + JSON.stringify(ids));
         });
 
-        test('accounts default fallback + empty state', function () {
+        testAsync('accounts default fallback + empty state', function () {
           seedTwoAccounts(); init(); render();
-          var realConfirm = window.confirm; window.confirm = function () { return true; };
           deleteAccount('a1-default-id');
-          window.confirm = realConfirm;
-          assert(defaultAccount(loadState()) !== null, 'default should fall back to remaining account');
-          assert(document.querySelector('#accounts .account-card') !== null, 'remaining card missing');
-          saveState(defaultState()); render();
-          assert(document.getElementById('accounts').textContent.indexOf('Create your first account') !== -1, 'empty-state prompt missing');
+          assert(document.getElementById('confirm-message').textContent.indexOf('Delete account') !== -1, 'delete must ask in-app');
+          document.getElementById('confirm-ok').click();
+          return new Promise(function (res) { setTimeout(res, 0); }).then(function () {
+            assert(defaultAccount(loadState()) !== null, 'default should fall back to remaining account');
+            assert(document.querySelector('#accounts .account-card') !== null, 'remaining card missing');
+            saveState(defaultState()); render();
+            assert(document.getElementById('accounts').textContent.indexOf('Create your first account') !== -1, 'empty-state prompt missing');
+            restoreState();
+          });
         });
 
-        test('accounts deleting empty default falls back to survivor', function () {
+        testAsync('accounts deleting empty default falls back to survivor', function () {
           L.saveState({
             settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'empty-default' },
             accounts: [
@@ -1077,13 +1088,15 @@
             priceOverrides: {}
           });
           init(); render();
-          var realConfirm = window.confirm; window.confirm = function () { return true; };
           deleteAccount('empty-default');
-          window.confirm = realConfirm;
-          assert(defaultAccount(loadState()).id === 'survivor', 'default should fall back to survivor, got ' + JSON.stringify(defaultAccount(loadState())));
-          var cards = document.querySelectorAll('#accounts .account-card');
-          assert(cards.length === 1, 'only survivor card should render, got ' + cards.length);
-          assert(cards[0].getAttribute('data-account') === 'survivor', 'survivor card missing');
+          document.getElementById('confirm-ok').click();
+          return new Promise(function (res) { setTimeout(res, 0); }).then(function () {
+            assert(defaultAccount(loadState()).id === 'survivor', 'default should fall back to survivor, got ' + JSON.stringify(defaultAccount(loadState())));
+            var cards = document.querySelectorAll('#accounts .account-card');
+            assert(cards.length === 1, 'only survivor card should render, got ' + cards.length);
+            assert(cards[0].getAttribute('data-account') === 'survivor', 'survivor card missing');
+            restoreState();
+          });
         });
       } finally {
         restoreState();
@@ -1172,16 +1185,21 @@
           assert(document.getElementById('t-account-row').style.display !== 'none', 'account select should show on home');
         });
 
-        test('deleting a trade always asks for confirmation', function () {
+        testAsync('deleting a trade asks in-app and honors cancel then confirm', function () {
           seedSplit(); init(); render();
-          var realConfirm = window.confirm;
-          var asked = null;
-          window.confirm = function (msg) { asked = String(msg); return false; };
           deleteTrade('r-t1');
-          window.confirm = realConfirm;
-          assert(asked !== null && asked.indexOf('Delete trade') !== -1, 'delete must confirm, no prompt shown');
-          assert(L.loadState().trades.length === 3, 'cancelled delete must keep the trade');
-          restoreState();
+          assert(document.getElementById('confirm-message').textContent.indexOf('Delete trade') !== -1, 'delete needs an in-app confirm');
+          document.getElementById('confirm-cancel').click();
+          function flush() { return new Promise(function (res) { setTimeout(res, 0); }); }
+          return flush().then(function () {
+            assert(L.loadState().trades.length === 3, 'cancelled delete must keep the trade');
+            deleteTrade('r-t1');
+            document.getElementById('confirm-ok').click();
+            return flush().then(function () {
+              assert(L.loadState().trades.length === 2, 'confirmed delete must remove the trade');
+              restoreState();
+            });
+          });
         });
 
         test('submit navigates to the trade account so rows show', function () {
