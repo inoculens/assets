@@ -2094,7 +2094,7 @@ function buildTopbar() {
   var gear = document.getElementById('tb-settings');
   if (gear && !gear.getAttribute('data-wired')) {
     gear.setAttribute('data-wired', '1');
-    gear.addEventListener('click', function () { openDialog('settings-dialog'); });
+    gear.addEventListener('click', function () { showSettingsTab('overrides'); openDialog('settings-dialog'); });
   }
 }
 
@@ -2104,29 +2104,58 @@ function buildTopbar() {
 // main-currency switch re-fetches prices only; trade fxLocks are never
 // rewritten.
 
+function showSettingsTab(name) {
+  var host = document.getElementById('settings-dialog-body');
+  if (!host) return;
+  var want = 'overrides';
+  Array.prototype.forEach.call(host.querySelectorAll('[data-settab]'), function (t) {
+    if (t.getAttribute('data-settab') === name) want = name;
+  });
+  Array.prototype.forEach.call(host.querySelectorAll('[data-settab]'), function (t) {
+    t.setAttribute('aria-selected', t.getAttribute('data-settab') === want ? 'true' : 'false');
+  });
+  Array.prototype.forEach.call(host.querySelectorAll('[data-setpanel]'), function (p) {
+    p.hidden = p.getAttribute('data-setpanel') !== want;
+  });
+}
+
 function buildSettings() {
   var host = document.getElementById('settings-dialog-body');
   if (!host || document.getElementById('o-add')) return;
   var wrap = document.createElement('div');
+  wrap.className = 'set-layout';
   wrap.innerHTML =
-    '<details class="opt" open><summary>Price overrides</summary>' +
+    '<div class="set-tabs" role="tablist" aria-label="Settings sections">' +
+    '<button type="button" role="tab" data-settab="overrides" aria-selected="true">Price overrides</button>' +
+    '<button type="button" role="tab" data-settab="backup" aria-selected="false">Backup &amp; restore</button>' +
+    '<button type="button" role="tab" data-settab="danger" aria-selected="false">Danger zone</button>' +
+    '</div>' +
+    '<div class="set-panels">' +
+    '<section data-setpanel="overrides" role="tabpanel" aria-label="Price overrides">' +
     '<label for="o-symbol">Symbol</label>' +
     '<input id="o-symbol" autocomplete="off" spellcheck="false" placeholder="BTC">' +
     '<label for="o-price">Price (main currency)</label>' +
     '<input id="o-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '<button id="o-add" type="button">Save override</button>' +
     '<ul id="o-list"></ul>' +
-    '</details>' +
-    '<details class="opt"><summary>Backup &amp; restore</summary>' +
+    '</section>' +
+    '<section data-setpanel="backup" role="tabpanel" aria-label="Backup and restore" hidden>' +
+    '<p class="muted set-blurb">Your data never leaves this browser. Download a backup file to move it to another device.</p>' +
     '<button id="s-download" type="button">Download backup</button>' +
     '<label for="s-upload">Restore from file</label>' +
     '<input id="s-upload" type="file" accept="application/json,.json">' +
-    '</details>' +
-    '<details class="opt"><summary>Danger zone</summary>' +
+    '</section>' +
+    '<section data-setpanel="danger" role="tabpanel" aria-label="Danger zone" hidden>' +
     '<button id="s-demo" type="button">Load demo trade</button>' +
     '<button id="s-clear" type="button">Clear all data</button>' +
-    '</details>';
+    '</section>' +
+    '</div>';
   host.appendChild(wrap);
+  host.addEventListener('click', function (e) {
+    var tab = e && e.target && e.target.closest ? e.target.closest('[data-settab]') : null;
+    if (!tab) return;
+    showSettingsTab(tab.getAttribute('data-settab'));
+  });
   document.getElementById('o-add').addEventListener('click', function () {
     var sym = uiVal('o-symbol', '').trim().toUpperCase();
     var price = Number(uiVal('o-price', ''));
