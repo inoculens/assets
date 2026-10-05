@@ -1125,6 +1125,97 @@
       }
     })();
 
+    // === Grand totals tests (Task 4 fix: AGGREGATE-BEATS-GLOBAL) ===
+    // Grand totals (topbar + overview cards) are the SUM of the per-account
+    // computePositions runs, never a blended global all-trades run.
+    (function grandTotalsTests() {
+      var L = window.Inoculens || {};
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+      function restoreState() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
+        } catch (e) { /* ignore */ }
+        try { render(); } catch (e) { /* ignore */ }
+      }
+      function lockTrade(id, type, qty, total, date, accountId) {
+        return { id: id, type: type, symbol: 'BTC', qty: qty, total: total, currency: 'EUR', date: date, fee: 0, feeCurrency: 'EUR', note: '', accountId: accountId, fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: date + 'T00:00:00.000Z' };
+      }
+      try {
+        test('grand totals aggregate per-account runs, not blended global', function () {
+          // Shared-ticker counterexample: A1 buys 1 BTC @30 and sells 1 @80,
+          // A2 buys 1 BTC @70. Per-account (average): realized 50 + 0 = 50,
+          // unrealized 0 + 30 = 30. Blended global: realized 30, unrealized 50.
+          var a1 = [
+            lockTrade('gt-a', 'buy', 1, 30, '2026-01-01', 'g1'),
+            lockTrade('gt-c', 'sell', 1, 80, '2026-03-01', 'g1')
+          ];
+          var a2 = [lockTrade('gt-b', 'buy', 1, 70, '2026-02-01', 'g2')];
+          var live = { BTC: 100 };
+          var r1 = L.computePositions(a1, live, 'average')[0];
+          var r2 = L.computePositions(a2, live, 'average')[0];
+          assert((r1.totalPL + r2.totalPL) === 80, 'per-account totalPL should sum to 80, got ' + (r1.totalPL + r2.totalPL));
+          assert((r1.realized + r2.realized) === 50, 'per-account realized should sum to 50, got ' + (r1.realized + r2.realized));
+          assert((r1.unrealized + r2.unrealized) === 30, 'per-account unrealized should sum to 30, got ' + (r1.unrealized + r2.unrealized));
+          var global = L.computePositions(a1.concat(a2), live, 'average')[0];
+          assert(global.realized === 30, 'blended global realized should be 30, got ' + global.realized);
+          assert(global.unrealized === 50, 'blended global unrealized should be 50, got ' + global.unrealized);
+          assert((r1.realized + r2.realized) !== global.realized, 'grand realized must come from per-account sum (50), not blended global (30)');
+          assert((r1.unrealized + r2.unrealized) !== global.unrealized, 'grand unrealized must come from per-account sum (30), not blended global (50)');
+        });
+
+        test('single-account run equals global all-trades run field-for-field', function () {
+          var tr = [
+            lockTrade('gs-a', 'buy', 1, 50000, '2026-01-01', 'solo'),
+            lockTrade('gs-b', 'buy', 1, 70000, '2026-02-01', 'solo'),
+            lockTrade('gs-c', 'sell', 1, 80000, '2026-03-01', 'solo')
+          ];
+          ['average', 'fifo'].forEach(function (m) {
+            var per = L.computePositions(tr, { BTC: 100000 }, m);
+            var glob = L.computePositions(tr.slice(), { BTC: 100000 }, m);
+            assert(JSON.stringify(per) === JSON.stringify(glob), m + ': single-account run differs from global run');
+          });
+        });
+
+        test('DOM grand totals show summed per-account realized (shared ticker)', function () {
+          try {
+            var lp = (L.getLivePrices && L.getLivePrices()) || {};
+            Object.keys(lp).forEach(function (k) { delete lp[k]; });
+          } catch (e) { /* ignore */ }
+          L.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'g1' },
+            accounts: [
+              { id: 'g1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
+              { id: 'g2', name: 'Hot', ticker: 'BTC', createdAt: '2026-10-06T00:00:01.000Z' }
+            ],
+            trades: [
+              lockTrade('gd-a', 'buy', 1, 30, '2026-01-01', 'g1'),
+              lockTrade('gd-b', 'buy', 1, 70, '2026-02-01', 'g2'),
+              lockTrade('gd-c', 'sell', 1, 80, '2026-03-01', 'g1')
+            ],
+            priceOverrides: {}
+          });
+          if (typeof init === 'function') init();
+          render();
+          // Live unknown: g1 closed (realized 50, total 50), g2 holding
+          // (realized 0, total 0). Aggregate: realized 50, total 50.
+          // Blended global would show 30 for both — the asserts pin aggregate.
+          var realizedVal = null;
+          Array.prototype.forEach.call(document.querySelectorAll('#summary-cards .card'), function (c) {
+            var label = c.querySelector('.card-label');
+            var val = c.querySelector('.card-value');
+            if (label && label.textContent === 'Realized' && val) realizedVal = val.getAttribute('data-value');
+          });
+          assert(realizedVal === '50', 'grand Realized card should aggregate per-account (50), got ' + realizedVal);
+          var tb = document.getElementById('tb-totals');
+          assert(tb && tb.textContent.indexOf('50') !== -1, 'grand topbar should show summed total P&L 50, got ' + (tb && tb.textContent));
+        });
+      } finally {
+        restoreState();
+      }
+    })();
+
     renderResults();
   </script>
 </body>

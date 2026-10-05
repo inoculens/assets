@@ -1246,9 +1246,20 @@ function renderAccounts(st) {
   if (!host) return;
   var method = st.settings.costMethod;
   var main = st.settings.mainCurrency;
-  renderSummaryCards(st, computePositions(st.trades || [], livePrices, method));
-  host.innerHTML = '';
   var accounts = Array.isArray(st.accounts) ? st.accounts : [];
+  // AGGREGATE-BEATS-GLOBAL: grand totals are the SUM of the per-account
+  // computePositions runs (same method), never a separate global all-trades
+  // engine run. Each account's run is computed once here and reused for its
+  // card below, so cards and totals agree by construction.
+  var perAcctRows = accounts.map(function (acc) {
+    return computePositions(accountTrades(st, acc.id), livePrices, method);
+  });
+  var grandRows = [];
+  perAcctRows.forEach(function (rows) {
+    rows.forEach(function (r) { grandRows.push(r); });
+  });
+  renderSummaryCards(st, grandRows);
+  host.innerHTML = '';
   if (!accounts.length) {
     var empty = document.createElement('div');
     empty.className = 'account-empty';
@@ -1271,7 +1282,7 @@ function renderAccounts(st) {
   host.appendChild(h2);
   host.appendChild(buildAccountCreateRow());
   var def = defaultAccount(st);
-  accounts.forEach(function (acc) {
+  accounts.forEach(function (acc, ai) {
     var card = document.createElement('article');
     card.className = 'account-card';
     card.setAttribute('data-account', acc.id);
@@ -1324,7 +1335,7 @@ function renderAccounts(st) {
     head.appendChild(actions);
     card.appendChild(head);
     var atrades = accountTrades(st, acc.id);
-    var rows = computePositions(atrades, livePrices, method);
+    var rows = perAcctRows[ai]; // computed once above; totals aggregate these same runs
     var sub = document.createElement('div');
     sub.className = 'account-subtotal';
     if (!rows.length) {
