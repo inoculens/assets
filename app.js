@@ -1349,20 +1349,17 @@ function renderAccountDetail(st, id) {
   });
   var cost = mv - un;
   var ret = (mvKnown && unKnown && cost > 0) ? ((un + rz) / cost) * 100 : null;
+  // Holding first, then worth, market, cost, gains: Quantity, Value,
+  // Live price, Average entry, Unrealized, Realized, Total P&L, Return.
+  // (Single ticker per account, so rows[0] is the position.)
+  var pos = rows.length ? rows[0] : null;
+  if (pos) stats.appendChild(statCard('Quantity', fmtQty(pos.qtyHeld), pos.qtyHeld));
   stats.appendChild(statCard('Value', mvKnown ? fmtMoney(mv, main) : (atrades.length ? '—' : 'New'), mvKnown ? mv : null));
+  if (pos) stats.appendChild(statCard('Live price', pos.livePrice !== null ? fmtMoney(pos.livePrice, main) : '—', pos.livePrice));
+  if (pos) stats.appendChild(statCard('Average entry', fmtMoney(pos.avgEntry, main), pos.avgEntry));
   stats.appendChild(statCard('Unrealized', unKnown ? fmtMoney(un, main) : '—', unKnown ? un : null));
   stats.appendChild(statCard('Realized', fmtMoney(rz, main), rz));
-  var retCard = statCard('Return', ret !== null ? fmtPct(ret) : '—', ret);
-  var rsc = plClass(ret);
-  if (rsc) retCard.querySelector('.card-value').classList.add(rsc);
-  stats.appendChild(retCard);
-  // Same card language for the holding facts: one unified grid, no second
-  // visual system. (Single ticker per account, so rows[0] is the position.)
-  var pos = rows.length ? rows[0] : null;
   if (pos) {
-    stats.appendChild(statCard('Qty', fmtQty(pos.qtyHeld), pos.qtyHeld));
-    stats.appendChild(statCard('Avg entry', fmtMoney(pos.avgEntry, main), pos.avgEntry));
-    stats.appendChild(statCard('Live price', pos.livePrice !== null ? fmtMoney(pos.livePrice, main) : '—', pos.livePrice));
     var tplCard = statCard('Total P&L', fmtMoney(pos.totalPL, main), pos.totalPL);
     var tsc = plClass(pos.totalPL);
     if (tsc) tplCard.querySelector('.card-value').classList.add(tsc);
@@ -1374,6 +1371,10 @@ function renderAccountDetail(st, id) {
       stats.appendChild(closedFlag);
     }
   }
+  var retCard = statCard('Return', ret !== null ? fmtPct(ret) : '—', ret);
+  var rsc = plClass(ret);
+  if (rsc) retCard.querySelector('.card-value').classList.add(rsc);
+  stats.appendChild(retCard);
   host.appendChild(stats);
   if (atrades.length) {
     host.appendChild(sectionTitle('Trades'));
