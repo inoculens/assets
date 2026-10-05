@@ -800,3 +800,96 @@ details.opt + details.opt {
     gap: 0.75rem;
   }
 }
+
+/* Minimalist detail: one fact per row, label left, value right */
+.section-title {
+  margin: 1.6rem 0 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.facts {
+  margin: 0;
+}
+.stat-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0.1rem;
+  border-bottom: 1px solid var(--border);
+}
+.stat-row:last-child {
+  border-bottom: none;
+}
+.stat-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+.stat-val {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.rate-line .stat-val {
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  max-width: 70%;
+}
+
+/* Trade blocks: header + stacked facts, breathing room between trades */
+.trade-block {
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  padding: 0.9rem 1rem 0.4rem;
+  margin: 0.7rem 0;
+  background: rgba(0, 0, 0, 0.22);
+}
+.trade-block:last-child {
+  margin-bottom: 0;
+}
+.trade-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding-bottom: 0.4rem;
+}
+.side {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  flex-shrink: 0;
+}
+.side-buy {
+  color: var(--gain);
+  background: rgba(0, 195, 137, 0.12);
+}
+.side-sell {
+  color: var(--loss);
+  background: rgba(255, 92, 92, 0.12);
+}
+.trade-what {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+.trade-when {
+  margin-left: auto;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+.trade-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.2rem 0 0.3rem;
+}
+button.quiet.danger:hover {
+  color: var(--loss);
+  border-color: rgba(255, 92, 92, 0.4);
+}

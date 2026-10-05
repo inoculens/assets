@@ -812,15 +812,15 @@
           init();
           location.hash = '#/account/ui-acct';
           route();
-          assert(document.querySelector('#account-detail tbody tr') !== null, 'detail shows no rows after seed');
+          assert(document.querySelector('#account-detail .trade-block, #account-detail .facts') !== null, 'detail shows no rows after seed');
           setCostMethod('fifo');
           assert(uiShows('30'), 'fifo realized 30k not visible');
-          var cell = document.querySelector('#account-detail td[data-label="Realized"]');
+          var cell = document.querySelector('#account-detail [data-label="Realized"]');
           assert(cell && cell.getAttribute('data-value') === '30000',
             'fifo realized cell should carry data-value 30000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
           setCostMethod('average');
           assert(uiShows('20'), 'average realized 20k not visible');
-          cell = document.querySelector('#account-detail td[data-label="Realized"]');
+          cell = document.querySelector('#account-detail [data-label="Realized"]');
           assert(cell && cell.getAttribute('data-value') === '20000',
             'average realized cell should carry data-value 20000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
           location.hash = '#/';
@@ -966,7 +966,7 @@
         location.hash = '#/account/dbg-acct';
         route();
         render();
-        function cell(label) { return document.querySelector('#account-detail td[data-label="' + label + '"]'); }
+        function cell(label) { return document.querySelector('#account-detail [data-label="' + label + '"]'); }
         var live = cell('Live'), val = cell('Value'), un = cell('Unrealized'), ret = cell('Return %'), tot = cell('Total P&L');
         assert(live && live.textContent === '—', 'Live should be —, got ' + (live && live.textContent));
         assert(val && val.textContent === '—', 'Value should be —, got ' + (val && val.textContent));
@@ -1128,12 +1128,12 @@
           seedSplit(); init(); go('r1');
           var det = document.getElementById('account-detail');
           assert(det.textContent.indexOf('Cold') !== -1, 'detail should show account name');
-          assert(det.querySelector('tbody tr') !== null, 'detail should show tables');
-          var cell = det.querySelector('td[data-label="Realized"]');
+          assert(det.querySelector('.trade-block') !== null, 'detail should show tables');
+          var cell = det.querySelector('[data-label="Realized"]');
           assert(cell && cell.getAttribute('data-value') === '20', 'r1 realized should be 20, got ' + (cell && cell.getAttribute('data-value')));
           go('r2');
           assert(det.textContent.indexOf('Hot') !== -1, 'detail should switch accounts');
-          cell = det.querySelector('td[data-label="Realized"]');
+          cell = det.querySelector('[data-label="Realized"]');
           assert(cell && cell.getAttribute('data-value') === '0', 'r2 realized should be 0, got ' + (cell && cell.getAttribute('data-value')));
         });
 
@@ -1205,7 +1205,7 @@
           assert(location.hash === '#/account/r1', 'should land on the trade account, got ' + location.hash);
           route();
           var det = document.getElementById('account-detail');
-          assert(det.querySelector('tbody tr') !== null, 'new trade rows should render in the account');
+          assert(det.querySelector('.trade-block') !== null, 'new trade rows should render in the account');
         });
       } finally {
         restoreState();

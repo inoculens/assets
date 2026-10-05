@@ -954,49 +954,18 @@ function uniqueSymbols(trades) {
   return out;
 }
 
-// --- Positions table ---
-// Columns: symbol, qty, avgEntry, live, value, unrealized, realized, total, return%.
-var POSITION_COLUMNS = ['Symbol', 'Qty', 'Avg entry', 'Live', 'Value', 'Unrealized', 'Realized', 'Total P&L', 'Return %'];
 
-function posCell(label, text, num, raw) {
-  var td = document.createElement('td');
-  td.setAttribute('data-label', label);
-  if (num) td.className = 'num';
-  td.textContent = text;
-  // null/undefined/'' (unknown values) carry no data-value; 0 is a real value.
-  if (raw !== null && raw !== undefined && raw !== '' && isFinite(Number(raw))) {
-    td.setAttribute('data-value', String(Number(raw)));
-  }
-  return td;
+// gain/loss tint for P&L figures (Revolut-style): '' for zero/unknown.
+function plClass(n) {
+  var v = Number(n);
+  if (!isFinite(v) || v === 0) return '';
+  return v > 0 ? 'gain' : 'loss';
 }
-
-function buildPositions() {
-  var host = document.getElementById('positions');
-  if (!host || host.querySelector('table')) return;
-  var table = document.createElement('table');
-  var thead = document.createElement('thead');
-  var hr = document.createElement('tr');
-  POSITION_COLUMNS.forEach(function (c, i) {
-    var th = document.createElement('th');
-    th.textContent = c;
-    if (i > 0) th.className = 'num';
-    th.setAttribute('scope', 'col');
-    hr.appendChild(th);
-  });
-  thead.appendChild(hr);
-  table.appendChild(thead);
-  table.appendChild(document.createElement('tbody'));
-  host.appendChild(table);
-}
-
-// --- Summary cards + top-bar totals ---
-// Portfolio-level rollups rendered into the sticky top bar (#tb-totals)
-// and the overview cards (#summary-cards): value, unrealized, realized,
-// return vs remaining cost basis.
 
 function statCard(label, text, raw) {
   var d = document.createElement('div');
   d.className = 'card';
+  d.setAttribute('data-label', label);
   var l = document.createElement('span');
   l.className = 'card-label';
   l.textContent = label;
@@ -1040,7 +1009,7 @@ function renderSummaryCards(st, rows) {
   if (!rows.length) {
     var p = document.createElement('p');
     p.className = 'muted';
-    p.textContent = 'No positions yet — add your first trade.';
+    p.textContent = 'No trades yet — add your first trade.';
     host.appendChild(p);
     return;
   }
@@ -1068,309 +1037,6 @@ function renderSummaryCards(st, rows) {
       hp.className = 'hero-pl pill ' + plClass(pl);
     }
   }
-}
-
-function renderPositions(st) {
-  var host = document.getElementById('positions');
-  if (!host) return;
-  var tbody = host.querySelector('tbody');
-  if (!tbody) return;
-  var main = st.settings.mainCurrency;
-  var rows = computePositions(st.trades, livePrices, st.settings.costMethod);
-  tbody.innerHTML = '';
-  if (!rows.length) {
-    var er = document.createElement('tr');
-    var ec = document.createElement('td');
-    ec.colSpan = POSITION_COLUMNS.length;
-    ec.className = 'muted';
-    ec.setAttribute('data-label', 'Info');
-    ec.textContent = 'No positions yet — add your first trade below.';
-    er.appendChild(ec);
-    tbody.appendChild(er);
-  }
-  rows.forEach(function (p) {
-    var tr = document.createElement('tr');
-    var symLabel = (p.qtyHeld === 0) ? (p.symbol + ' (Closed)') : p.symbol;
-    tr.appendChild(posCell('Symbol', symLabel, false, null));
-    tr.appendChild(posCell('Qty', fmtQty(p.qtyHeld), true, p.qtyHeld));
-    tr.appendChild(posCell('Avg entry', fmtMoney(p.avgEntry, main), true, p.avgEntry));
-    tr.appendChild(posCell('Live',
-      (p.livePrice !== null) ? fmtMoney(p.livePrice, main) : '—', true, p.livePrice));
-    tr.appendChild(posCell('Value',
-      (p.marketValue !== null) ? fmtMoney(p.marketValue, main) : '—', true, p.marketValue));
-    tr.appendChild(posCell('Unrealized',
-      (p.unrealized !== null) ? fmtMoney(p.unrealized, main) : '—', true, p.unrealized));
-    tr.appendChild(posCell('Realized', fmtMoney(p.realized, main), true, p.realized));
-    tr.appendChild(posCell('Total P&L', fmtMoney(p.totalPL, main), true, p.totalPL));
-    tr.appendChild(posCell('Return %',
-      (p.returnPct !== null) ? fmtPct(p.returnPct) : '—', true, p.returnPct));
-    tbody.appendChild(tr);
-  });
-  renderSummaryCards(st, rows);
-}
-
-function fxBadgeText(t) {
-  var lock = t ? t.fxLock : null;
-  if (!lock) return 'legacy rate';
-  var r = Number(lock.rate);
-  var bits = String(lock.source || 'rate');
-  if (isFinite(r)) bits += ' @ ' + r;
-  if (lock.interpolated) bits += ' (prev close)';
-  if (t && stableToUsd(t.currency)) {
-    return String(t.currency).toUpperCase() + '→USD 1.0 · ' + bits;
-  }
-  return bits;
-}
-
-function deleteTrade(id) {
-  if (!id) return;
-  var st = loadState();
-  var doomed = null;
-  (st.trades || []).forEach(function (t) { if (t && t.id === id) doomed = t; });
-  if (!doomed) return; // unknown id: no write
-  if (typeof window.confirm === 'function') {
-    var desc = (doomed.type === 'sell' ? 'Sell ' : 'Buy ') + doomed.qty + ' ' +
-      String(doomed.symbol || '') + ' (' + (doomed.date || 'no date') + ')';
-    if (!window.confirm('Delete trade ' + desc + '? This cannot be undone.')) return;
-  }
-  st.trades = (st.trades || []).filter(function (t) { return !t || t.id !== id; });
-  if (!saveStateGuarded(st)) return;
-  render(); // cached live prices stay; no refetch needed on delete
-}
-
-// --- Accounts UI (Task 2: stacked cards + CRUD + empty state) ---
-// Per-card + Trade buttons carry data-account-trade="<id>", wired below to
-// openPrefillTrade (Task 3).
-
-function accountTrades(st, accountId) {
-  // Single-arg form accountTrades(accountId) reads live state (test helper).
-  if (typeof st === 'string' && accountId === undefined) {
-    return accountTrades(loadState(), st);
-  }
-  return ((st && st.trades) || []).filter(function (t) { return t && t.accountId === accountId; });
-}
-
-function createAccount(name, ticker) {
-  var st = loadState();
-  var tk = String(ticker || '').trim().toUpperCase();
-  var nm = String(name || '').trim();
-  if (!tk) { showBanner('Ticker is required (e.g. BTC).'); return null; }
-  if (!/^[A-Z0-9._-]{1,12}$/.test(tk)) { showBanner('Ticker looks invalid — letters/numbers, up to 12 chars.'); return null; }
-  if (!nm) nm = tk; // name defaults to ticker
-  var first = !Array.isArray(st.accounts) || st.accounts.length === 0;
-  var acc = { id: uid(), name: nm, ticker: tk, createdAt: new Date().toISOString() };
-  st.accounts.push(acc);
-  if (first) st.settings.defaultAccountId = acc.id; // set default if first
-  if (!saveStateGuarded(st)) return null;
-  clearBanner();
-  render();
-  return acc;
-}
-
-function openAccountDialog() {
-  buildAccountDialog();
-  openDialog('account-dialog');
-  return null;
-}
-
-function renameAccount(id, name) {
-  if (!id) return;
-  var st = loadState();
-  var acc = accountById(st, id);
-  if (!acc) return;
-  var nm = String(name === undefined || name === null ? '' : name).trim();
-  if (!nm) { showBanner('Account name cannot be empty.'); return; }
-  acc.name = nm;
-  if (!saveStateGuarded(st)) return;
-  clearBanner();
-  render();
-}
-
-function setDefaultAccount(id) {
-  if (!id) return;
-  var st = loadState();
-  if (!accountById(st, id)) return;
-  st.settings.defaultAccountId = id;
-  if (!saveStateGuarded(st)) return;
-  render();
-}
-
-function deleteAccount(id) {
-  if (!id) return;
-  var st = loadState();
-  var acc = accountById(st, id);
-  if (!acc) return; // unknown id: no write, no dialog
-  if (typeof window.confirm === 'function' &&
-      !window.confirm('Delete account "' + acc.name + '" (' + acc.ticker + ')? This cannot be undone.')) {
-    return;
-  }
-  var remaining = accountTrades(st, id);
-  if (remaining.length) {
-    showBanner('Delete its trades first — an account with trades cannot be deleted.');
-    render();
-    return;
-  }
-  st.accounts = (st.accounts || []).filter(function (a) { return !a || a.id !== id; });
-  if (st.settings.defaultAccountId === id) {
-    st.settings.defaultAccountId = st.accounts.length ? st.accounts[0].id : null;
-  }
-  if (!saveStateGuarded(st)) return;
-  clearBanner();
-  render();
-}
-
-function buildAccountCreateRow() {
-  var row = document.createElement('div');
-  row.className = 'account-create-row';
-  var fn = document.createElement('div');
-  fn.className = 'fld';
-  var ln = document.createElement('label');
-  ln.setAttribute('for', 'acct-name');
-  ln.textContent = 'Account name';
-  var inName = document.createElement('input');
-  inName.id = 'acct-name';
-  inName.setAttribute('autocomplete', 'off');
-  inName.setAttribute('spellcheck', 'false');
-  inName.setAttribute('placeholder', 'e.g. Cold wallet');
-  fn.appendChild(ln);
-  fn.appendChild(inName);
-  var ft = document.createElement('div');
-  ft.className = 'fld';
-  var lt = document.createElement('label');
-  lt.setAttribute('for', 'acct-ticker');
-  lt.textContent = 'Ticker';
-  var inTick = document.createElement('input');
-  inTick.id = 'acct-ticker';
-  inTick.setAttribute('autocomplete', 'off');
-  inTick.setAttribute('spellcheck', 'false');
-  inTick.setAttribute('placeholder', 'BTC');
-  ft.appendChild(lt);
-  ft.appendChild(inTick);
-  var create = document.createElement('button');
-  create.type = 'button';
-  create.id = 'acct-create';
-  create.className = 'primary';
-  create.textContent = 'Create account';
-  var demo = document.createElement('button');
-  demo.type = 'button';
-  demo.id = 'acct-demo';
-  demo.textContent = 'Load demo';
-  row.appendChild(fn);
-  row.appendChild(ft);
-  row.appendChild(create);
-  row.appendChild(demo);
-  return row;
-}
-
-// gain/loss tint for P&L figures (Revolut-style): '' for zero/unknown.
-function plClass(n) {
-  var v = Number(n);
-  if (!isFinite(v) || v === 0) return '';
-  return v > 0 ? 'gain' : 'loss';
-}
-
-function moneyCell(label, n, main) {
-  var td = posCell(label, (n !== null && n !== undefined) ? fmtMoney(n, main) : '—', true, n);
-  if (n !== null && n !== undefined) {
-    var sc = plClass(n);
-    if (sc) td.classList.add(sc); // plClass('' ) for zero/NaN: add('') would throw
-  }
-  return td;
-}
-
-function positionRow(p, main) {
-  var tr = document.createElement('tr');
-  var symLabel = (p.qtyHeld === 0) ? (p.symbol + ' (Closed)') : p.symbol;
-  tr.appendChild(posCell('Symbol', symLabel, false, null));
-  tr.appendChild(posCell('Qty', fmtQty(p.qtyHeld), true, p.qtyHeld));
-  tr.appendChild(posCell('Avg entry', fmtMoney(p.avgEntry, main), true, p.avgEntry));
-  tr.appendChild(posCell('Live', (p.livePrice !== null) ? fmtMoney(p.livePrice, main) : '—', true, p.livePrice));
-  tr.appendChild(posCell('Value', (p.marketValue !== null) ? fmtMoney(p.marketValue, main) : '—', true, p.marketValue));
-  tr.appendChild(moneyCell('Unrealized', p.unrealized, main));
-  tr.appendChild(moneyCell('Realized', p.realized, main));
-  tr.appendChild(moneyCell('Total P&L', p.totalPL, main));
-  var retTd = posCell('Return %', (p.returnPct !== null) ? fmtPct(p.returnPct) : '—', true, p.returnPct);
-  if (p.returnPct !== null) {
-    var rsc = plClass(p.returnPct);
-    if (rsc) retTd.classList.add(rsc);
-  }
-  tr.appendChild(retTd);
-  return tr;
-}
-
-function positionTable(rows, main) {
-  if (!rows || !rows.length) return null;
-  var table = document.createElement('table');
-  var thead = document.createElement('thead');
-  var hr = document.createElement('tr');
-  POSITION_COLUMNS.forEach(function (c, i) {
-    var th = document.createElement('th');
-    th.textContent = c;
-    if (i > 0) th.className = 'num';
-    th.setAttribute('scope', 'col');
-    hr.appendChild(th);
-  });
-  thead.appendChild(hr);
-  table.appendChild(thead);
-  var tbody = document.createElement('tbody');
-  rows.forEach(function (p) { tbody.appendChild(positionRow(p, main)); });
-  table.appendChild(tbody);
-  return table;
-}
-
-function tradeRow(t, main) {
-  var n = normalizeTrade(t);
-  var tr = document.createElement('tr');
-  tr.appendChild(posCell('Date', t.date || '', false, null));
-  tr.appendChild(posCell('Side', t.type === 'sell' ? 'Sell' : 'Buy', false, null));
-  tr.appendChild(posCell('Qty', fmtQty(t.qty), true, t.qty));
-  tr.appendChild(posCell('Native total',
-    fmtQty(t.total) + ' ' + String(t.currency || '').toUpperCase(), true, t.total));
-  var normTd = posCell('Normalized total', '', true, n.totalMain + n.feeMain);
-  normTd.textContent = fmtMoney(n.totalMain + n.feeMain, main);
-  var badgeEl = document.createElement('small');
-  badgeEl.className = 'muted';
-  badgeEl.textContent = ' ' + fxBadgeText(t);
-  normTd.appendChild(badgeEl);
-  tr.appendChild(normTd);
-  var feeTxt = (Number(t.fee) > 0)
-    ? (fmtQty(t.fee) + ' ' + String(t.feeCurrency || t.currency || '').toUpperCase())
-    : '—';
-  if (n.feeFxAssumedSameRate) feeTxt += ' *';
-  var feeTd = posCell('Fee', feeTxt, true, t.fee);
-  if (n.feeFxAssumedSameRate) feeTd.title = 'Fee converted at the trade FX rate (*)';
-  tr.appendChild(feeTd);
-  tr.appendChild(posCell('Note', t.note ? String(t.note) : '—', false, null));
-  var actTd = document.createElement('td');
-  actTd.setAttribute('data-label', 'Action');
-  var del = document.createElement('button');
-  del.type = 'button';
-  del.textContent = 'Delete';
-  del.setAttribute('data-del', t.id || '');
-  del.setAttribute('aria-label', 'Delete trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
-  del.addEventListener('click', function () { deleteTrade(del.getAttribute('data-del')); });
-  actTd.appendChild(del);
-  tr.appendChild(actTd);
-  return tr;
-}
-
-function tradesTable(atrades, main) {
-  var table = document.createElement('table');
-  var thead = document.createElement('thead');
-  var thtr = document.createElement('tr');
-  ['Date', 'Side', 'Qty', 'Native total', 'Normalized total', 'Fee', 'Note', ''].forEach(function (c, i) {
-    var th = document.createElement('th');
-    th.textContent = c;
-    if (i >= 2 && i <= 5) th.className = 'num';
-    th.setAttribute('scope', 'col');
-    thtr.appendChild(th);
-  });
-  thead.appendChild(thtr);
-  table.appendChild(thead);
-  var tbody = document.createElement('tbody');
-  ledgerSortByDate(atrades).reverse().forEach(function (t) { tbody.appendChild(tradeRow(t, main)); });
-  table.appendChild(tbody);
-  return table;
 }
 
 function renderAccounts(st) {
@@ -1507,15 +1173,130 @@ function startInlineRename(accId, headEl, nameEl) {
 
 // --- Account detail view (list → detail navigation) ---
 // Home shows minimal folder cards; clicking one routes to #/account/<id>
-// and this renders the full account page: header, figures, positions and
-// trades tables, and a ··· menu (trade / default / rename / delete).
-// Tables reuse positionTable + tradesTable, so cells (data-value,
-// data-label, gain/loss) match everywhere. Unknown account id routes home.
+// and this renders the full account page: header, figures, stacked position
+// facts and trades, and a ··· menu (trade / default / rename / delete).
+// Facts carry data-label/data-value, so numbers read top to bottom and the
+// FX conversion always gets its own line. Unknown account id routes home.
 
 function accountDetailId() {
   var h = String((typeof location !== 'undefined' && location.hash) || '');
   var m = /^#\/account\/([^\/?#]+)/.exec(h);
   return m ? decodeURIComponent(m[1]) : null;
+}
+
+// --- Stacked facts (minimalist detail layout) ---
+// One fact per row: muted label left, tabular value right. Values carry
+// data-label (stable test hook) and data-value when known; P&L figures
+// tint gain/loss. The FX conversion always gets its own line so amounts
+// never run into their provenance.
+
+function statRow(label, text, raw, tint) {
+  var d = document.createElement('div');
+  d.className = 'stat-row';
+  d.setAttribute('data-label', label);
+  var l = document.createElement('span');
+  l.className = 'stat-label';
+  l.textContent = label;
+  var v = document.createElement('span');
+  v.className = 'stat-val num';
+  v.textContent = text;
+  if (raw !== null && raw !== undefined && isFinite(Number(raw))) {
+    d.setAttribute('data-value', String(Number(raw)));
+    if (tint) {
+      var sc = plClass(raw);
+      if (sc) v.classList.add(sc);
+    }
+  }
+  d.appendChild(l);
+  d.appendChild(v);
+  return d;
+}
+
+function sectionTitle(text) {
+  var h = document.createElement('h2');
+  h.className = 'section-title';
+  h.textContent = text;
+  return h;
+}
+
+function positionFacts(rows, main) {
+  var box = document.createElement('div');
+  box.className = 'facts';
+  if (!rows.length) {
+    var p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'No trades yet — add one to see P&L.';
+    box.appendChild(p);
+    return box;
+  }
+  rows.forEach(function (r) {
+    if (r.qtyHeld === 0) {
+      var closed = document.createElement('p');
+      closed.className = 'muted';
+      closed.textContent = 'Closed — nothing held.';
+      box.appendChild(closed);
+    }
+    box.appendChild(statRow('Qty', fmtQty(r.qtyHeld), r.qtyHeld, false));
+    box.appendChild(statRow('Avg entry', fmtMoney(r.avgEntry, main), r.avgEntry, false));
+    box.appendChild(statRow('Live price', (r.livePrice !== null) ? fmtMoney(r.livePrice, main) : '—', r.livePrice, false));
+    box.appendChild(statRow('Total P&L', fmtMoney(r.totalPL, main), r.totalPL, true));
+  });
+  return box;
+}
+
+function tradeBlock(t, main) {
+  var n = normalizeTrade(t);
+  var box = document.createElement('article');
+  box.className = 'trade-block';
+  var head = document.createElement('div');
+  head.className = 'trade-head';
+  var side = document.createElement('span');
+  side.className = 'side ' + (t.type === 'sell' ? 'side-sell' : 'side-buy');
+  side.textContent = t.type === 'sell' ? 'Sell' : 'Buy';
+  head.appendChild(side);
+  var what = document.createElement('span');
+  what.className = 'trade-what';
+  what.textContent = fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase();
+  head.appendChild(what);
+  var when = document.createElement('span');
+  when.className = 'trade-when muted';
+  when.textContent = t.date || '';
+  head.appendChild(when);
+  box.appendChild(head);
+  box.appendChild(statRow('Paid', fmtQty(t.total) + ' ' + String(t.currency || '').toUpperCase(), t.total, false));
+  box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+  var rate = document.createElement('div');
+  rate.className = 'stat-row rate-line';
+  rate.setAttribute('data-label', 'Rate');
+  var rl = document.createElement('span');
+  rl.className = 'stat-label';
+  rl.textContent = 'Rate';
+  var rv = document.createElement('span');
+  rv.className = 'stat-val muted';
+  rv.textContent = fxBadgeText(t);
+  rate.appendChild(rl);
+  rate.appendChild(rv);
+  box.appendChild(rate);
+  var feeTxt = (Number(t.fee) > 0)
+    ? (fmtQty(t.fee) + ' ' + String(t.feeCurrency || t.currency || '').toUpperCase())
+    : '—';
+  if (n.feeFxAssumedSameRate) feeTxt += ' *';
+  var feeRow = statRow('Fee', feeTxt, t.fee, false);
+  if (n.feeFxAssumedSameRate) feeRow.title = 'Fee converted at the trade FX rate (*)';
+  box.appendChild(feeRow);
+  if (t.note) box.appendChild(statRow('Note', String(t.note), null, false));
+  var foot = document.createElement('div');
+  foot.className = 'trade-foot';
+  var del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'quiet danger';
+  del.textContent = 'Delete';
+  del.setAttribute('data-del', t.id || '');
+  del.setAttribute('aria-label', 'Delete trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
+  del.addEventListener('click', function () { deleteTrade(del.getAttribute('data-del')); });
+  foot.appendChild(del);
+  box.appendChild(foot);
+  return box;
 }
 
 function renderAccountDetail(st, id) {
@@ -1603,16 +1384,14 @@ function renderAccountDetail(st, id) {
   if (rsc) retCard.querySelector('.card-value').classList.add(rsc);
   stats.appendChild(retCard);
   host.appendChild(stats);
-  var ptable = positionTable(rows, main);
-  if (ptable) {
-    host.appendChild(ptable);
-  } else {
-    var muted = document.createElement('p');
-    muted.className = 'muted';
-    muted.textContent = 'No trades yet — add one to see P&L.';
-    host.appendChild(muted);
+  host.appendChild(sectionTitle('Position'));
+  host.appendChild(positionFacts(rows, main));
+  if (atrades.length) {
+    host.appendChild(sectionTitle('Trades'));
+    ledgerSortByDate(atrades).reverse().forEach(function (t) {
+      host.appendChild(tradeBlock(t, main));
+    });
   }
-  if (atrades.length) host.appendChild(tradesTable(atrades, main));
 }
 
 function route() {
