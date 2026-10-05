@@ -25,6 +25,12 @@
   <main>
     <div id="summary" role="status" aria-live="polite">running…</div>
     <ul id="results"></ul>
+    <div id="ui-fixtures">
+      <div id="banner" role="status" aria-live="polite" hidden></div>
+      <section id="positions" aria-label="Positions"></section>
+      <section id="trades" aria-label="Trades"></section>
+      <aside id="settings" aria-label="Settings"></aside>
+    </div>
   </main>
 
   <noscript>
@@ -495,7 +501,62 @@
       });
     })();
 
-    // Later tasks (Ui) append new section IIFEs here.
+    // === Ui tests (Task 6: DOM checklist) ===
+    // Test-only helpers (per brief): seedForUi loads the Task-4 fixture via
+    // saveState(); setCostMethod(m) rewrites costMethod + render();
+    // uiShows(s) checks body text.
+    function seedForUi() {
+      var L = window.Inoculens;
+      L.saveState({
+        settings: { mainCurrency: 'EUR', costMethod: 'average' },
+        trades: [
+          { id: 'ui-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' },
+          { id: 'ui-b', type: 'buy', symbol: 'BTC', qty: 1, total: 70000, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-02-01T00:00:00.000Z' },
+          { id: 'ui-c', type: 'sell', symbol: 'BTC', qty: 1, total: 80000, currency: 'EUR', date: '2026-03-01', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-03-01T00:00:00.000Z' }
+        ],
+        priceOverrides: {}
+      });
+    }
+    function setCostMethod(m) {
+      var L = window.Inoculens;
+      var s = L.loadState();
+      s.settings = { mainCurrency: s.settings.mainCurrency, costMethod: m };
+      L.saveState(s);
+      render();
+    }
+    function uiShows(s) {
+      return document.body.textContent.indexOf(s) !== -1;
+    }
+    (function uiTests() {
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v1'); } catch (e) { backup = null; }
+      function restore() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v1');
+          else localStorage.setItem('inoculens.v1', backup);
+        } catch (e) { /* ignore */ }
+      }
+      try {
+        test('ui positions checklist (Task 6)', function () {
+          seedForUi();
+          init();
+          assert(document.querySelector('#positions tbody tr') !== null, 'positions table shows no rows after seed');
+          setCostMethod('fifo');
+          assert(uiShows('30'), 'fifo realized 30k not visible');
+          var cell = document.querySelector('#positions td[data-label="Realized"]');
+          assert(cell && cell.getAttribute('data-value') === '30000',
+            'fifo realized cell should carry data-value 30000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
+          setCostMethod('average');
+          assert(uiShows('20'), 'average realized 20k not visible');
+          cell = document.querySelector('#positions td[data-label="Realized"]');
+          assert(cell && cell.getAttribute('data-value') === '20000',
+            'average realized cell should carry data-value 20000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
+        });
+      } finally {
+        restore();
+        try { render(); } catch (e) { /* mounts predate Ui impl while RED */ }
+      }
+    })();
 
     renderResults();
   </script>

@@ -621,3 +621,704 @@ if (typeof window !== 'undefined') {
   window.Inoculens.fetchLivePrice = fetchLivePrice;
   window.Inoculens.refreshAllPrices = refreshAllPrices;
 }
+
+// === Ui ===
+// DOM boot + render loop (Task 6). Binds the trade form, positions/trades
+// tables, settings drawer, import/export and banner to Store/Fx/Ledger/
+// Prices. Render loop: every mutation does saveState -> recompute
+// (computePositions) -> render(). A main-currency switch re-fetches live
+// prices only; frozen trade fxLocks are never rewritten. Money is formatted
+// with Intl.NumberFormat in the current mainCurrency. Every positions/trades
+// <td> carries a data-label so the mobile card layout (styles.css) can label
+// rows. init() boots on DOMContentLoaded; render()/refreshPrices() are the
+// recompute+render entry points (also used by tests.html).
+
+var uiBooted = false;
+var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
+var moneyFmtCache = {};
+
+function todayStr() {
+  var n = new Date();
+  var m = n.getUTCMonth() + 1;
+  var d = n.getUTCDate();
+  return n.getUTCFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (d < 10 ? '0' : '') + d;
+}
+
+function uid() {
+  return 't' + Date.now().toString(36) + Math.floor(Math.random() * 0xffffff).toString(36);
+}
+
+function uiVal(id, fb) {
+  var el = document.getElementById(id);
+  return el ? el.value : fb;
+}
+
+function uiSetVal(id, v) {
+  var el = document.getElementById(id);
+  if (el) el.value = v;
+}
+
+function moneyFmt(currency) {
+  var code = String(currency || 'EUR').toUpperCase();
+  if (!moneyFmtCache[code]) {
+    try {
+      moneyFmtCache[code] = new Intl.NumberFormat(undefined, { style: 'currency', currency: code });
+    } catch (e) {
+      moneyFmtCache[code] = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'EUR' });
+    }
+  }
+  return moneyFmtCache[code];
+}
+
+function fmtMoney(n, currency) {
+  var v = Number(n);
+  if (!isFinite(v)) return '—';
+  try {
+    return moneyFmt(currency).format(v);
+  } catch (e) {
+    return String(Math.round(v * 100) / 100);
+  }
+}
+
+function fmtQty(n) {
+  var v = Number(n);
+  if (!isFinite(v)) return '—';
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 8 }).format(v);
+}
+
+function fmtPct(n) {
+  var v = Number(n);
+  if (!isFinite(v)) return '—';
+  return (Math.round(v * 100) / 100) + '%';
+}
+
+function showBanner(msg) {
+  var b = document.getElementById('banner');
+  if (!b) return;
+  b.textContent = String(msg);
+  b.classList.add('error');
+  b.hidden = false;
+}
+
+function clearBanner() {
+  var b = document.getElementById('banner');
+  if (!b) return;
+  b.textContent = '';
+  b.classList.remove('error');
+  b.hidden = true;
+}
+
+function heldQtyFor(trades, symbol) {
+  var sym = String(symbol || '').toUpperCase();
+  var held = 0;
+  (trades || []).forEach(function (t) {
+    if (!t || String(t.symbol || '').toUpperCase() !== sym) return;
+    var q = Number(t.qty);
+    if (!isFinite(q) || q <= 0) return;
+    if (t.type === 'buy') held += q;
+    else if (t.type === 'sell') held -= q;
+  });
+  return held < 0 ? 0 : held;
+}
+
+function uniqueSymbols(trades) {
+  var seen = {};
+  var out = [];
+  (trades || []).forEach(function (t) {
+    var s = String((t && t.symbol) || '').toUpperCase();
+    if (!s || seen[s]) return;
+    seen[s] = true;
+    out.push(s);
+  });
+  return out;
+}
+
+// --- Positions table ---
+// Columns: symbol, qty, avgEntry, live, value, unrealized, realized, total, return%.
+var POSITION_COLUMNS = ['Symbol', 'Qty', 'Avg entry', 'Live', 'Value', 'Unrealized', 'Realized', 'Total P&L', 'Return %'];
+
+function posCell(label, text, num, raw) {
+  var td = document.createElement('td');
+  td.setAttribute('data-label', label);
+  if (num) td.className = 'num';
+  td.textContent = text;
+  if (raw !== null && raw !== undefined && isFinite(Number(raw))) {
+    td.setAttribute('data-value', String(Number(raw)));
+  }
+  return td;
+}
+
+function buildPositions() {
+  var host = document.getElementById('positions');
+  if (!host || host.querySelector('table')) return;
+  var table = document.createElement('table');
+  var thead = document.createElement('thead');
+  var hr = document.createElement('tr');
+  POSITION_COLUMNS.forEach(function (c, i) {
+    var th = document.createElement('th');
+    th.textContent = c;
+    if (i > 0) th.className = 'num';
+    th.setAttribute('scope', 'col');
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  table.appendChild(document.createElement('tbody'));
+  host.appendChild(table);
+  var totals = document.createElement('p');
+  totals.id = 'positions-totals';
+  totals.className = 'muted';
+  host.appendChild(totals);
+}
+
+function renderPositions(st) {
+  var host = document.getElementById('positions');
+  if (!host) return;
+  var tbody = host.querySelector('tbody');
+  if (!tbody) return;
+  var main = st.settings.mainCurrency;
+  var rows = computePositions(st.trades, livePrices, st.settings.costMethod);
+  tbody.innerHTML = '';
+  if (!rows.length) {
+    var er = document.createElement('tr');
+    var ec = document.createElement('td');
+    ec.colSpan = POSITION_COLUMNS.length;
+    ec.className = 'muted';
+    ec.setAttribute('data-label', 'Info');
+    ec.textContent = 'No positions yet — add your first trade below.';
+    er.appendChild(ec);
+    tbody.appendChild(er);
+  }
+  rows.forEach(function (p) {
+    var tr = document.createElement('tr');
+    tr.appendChild(posCell('Symbol', p.symbol, false, null));
+    tr.appendChild(posCell('Qty', fmtQty(p.qtyHeld), true, p.qtyHeld));
+    tr.appendChild(posCell('Avg entry', fmtMoney(p.avgEntry, main), true, p.avgEntry));
+    tr.appendChild(posCell('Live',
+      (isFinite(p.livePrice) && p.livePrice > 0) ? fmtMoney(p.livePrice, main) : '—', true, p.livePrice));
+    tr.appendChild(posCell('Value', fmtMoney(p.marketValue, main), true, p.marketValue));
+    tr.appendChild(posCell('Unrealized', fmtMoney(p.unrealized, main), true, p.unrealized));
+    tr.appendChild(posCell('Realized', fmtMoney(p.realized, main), true, p.realized));
+    tr.appendChild(posCell('Total P&L', fmtMoney(p.totalPL, main), true, p.totalPL));
+    tr.appendChild(posCell('Return %', fmtPct(p.returnPct), true, p.returnPct));
+    tbody.appendChild(tr);
+  });
+  var totals = document.getElementById('positions-totals');
+  if (totals) {
+    var mv = 0;
+    var pl = 0;
+    rows.forEach(function (p) { mv += p.marketValue; pl += p.totalPL; });
+    totals.textContent = rows.length
+      ? ('Portfolio value ' + fmtMoney(mv, main) + ' · total P&L ' + fmtMoney(pl, main) +
+        ' (' + st.settings.costMethod + ', ' + main + ')')
+      : '';
+  }
+}
+
+// --- Trades table ---
+// Columns: date, side, symbol, qty, native total, normalized total + rate
+// badge, fee, note, delete.
+var TRADE_COLUMNS = ['Date', 'Side', 'Symbol', 'Qty', 'Native total', 'Normalized total', 'Fee', 'Note', ''];
+
+function fxBadgeText(t) {
+  var lock = t ? t.fxLock : null;
+  if (!lock) return 'legacy rate';
+  var r = Number(lock.rate);
+  var bits = String(lock.source || 'rate');
+  if (isFinite(r)) bits += ' @ ' + r;
+  if (lock.interpolated) bits += ' (prev close)';
+  return bits;
+}
+
+function buildTradesTable() {
+  var host = document.getElementById('trades');
+  if (!host || host.querySelector('table')) return;
+  var table = document.createElement('table');
+  var thead = document.createElement('thead');
+  var hr = document.createElement('tr');
+  TRADE_COLUMNS.forEach(function (c, i) {
+    var th = document.createElement('th');
+    th.textContent = c;
+    if (i >= 3 && i <= 6) th.className = 'num';
+    th.setAttribute('scope', 'col');
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  var tbody = document.createElement('tbody');
+  tbody.addEventListener('click', function (e) {
+    var btn = e && e.target && e.target.closest ? e.target.closest('[data-del]') : null;
+    if (!btn) return;
+    deleteTrade(btn.getAttribute('data-del'));
+  });
+  table.appendChild(tbody);
+  host.appendChild(table);
+}
+
+function renderTrades(st) {
+  var host = document.getElementById('trades');
+  if (!host) return;
+  var tbody = host.querySelector('table tbody');
+  if (!tbody) return;
+  var main = st.settings.mainCurrency;
+  var list = ledgerSortByDate(st.trades).reverse(); // newest first
+  tbody.innerHTML = '';
+  if (!list.length) {
+    var er = document.createElement('tr');
+    var ec = document.createElement('td');
+    ec.colSpan = TRADE_COLUMNS.length;
+    ec.className = 'muted';
+    ec.setAttribute('data-label', 'Info');
+    ec.textContent = 'No trades yet.';
+    er.appendChild(ec);
+    tbody.appendChild(er);
+    return;
+  }
+  list.forEach(function (t) {
+    var n = normalizeTrade(t);
+    var tr = document.createElement('tr');
+    tr.appendChild(posCell('Date', t.date || '', false, null));
+    tr.appendChild(posCell('Side', t.type === 'sell' ? 'Sell' : 'Buy', false, null));
+    tr.appendChild(posCell('Symbol', String(t.symbol || '').toUpperCase(), false, null));
+    tr.appendChild(posCell('Qty', fmtQty(t.qty), true, t.qty));
+    tr.appendChild(posCell('Native total',
+      fmtQty(t.total) + ' ' + String(t.currency || '').toUpperCase(), true, t.total));
+    var normTd = posCell('Normalized total', '', true, n.totalMain + n.feeMain);
+    normTd.textContent = fmtMoney(n.totalMain + n.feeMain, main);
+    var badge = document.createElement('small');
+    badge.className = 'muted';
+    badge.textContent = ' ' + fxBadgeText(t);
+    normTd.appendChild(badge);
+    tr.appendChild(normTd);
+    var feeTxt = (Number(t.fee) > 0)
+      ? (fmtQty(t.fee) + ' ' + String(t.feeCurrency || t.currency || '').toUpperCase())
+      : '—';
+    if (n.feeFxAssumedSameRate) feeTxt += ' *';
+    var feeTd = posCell('Fee', feeTxt, true, t.fee);
+    if (n.feeFxAssumedSameRate) feeTd.title = 'Fee converted at the trade FX rate (*)';
+    tr.appendChild(feeTd);
+    tr.appendChild(posCell('Note', t.note ? String(t.note) : '—', false, null));
+    var actTd = document.createElement('td');
+    actTd.setAttribute('data-label', 'Action');
+    var del = document.createElement('button');
+    del.type = 'button';
+    del.textContent = 'Delete';
+    del.setAttribute('data-del', t.id || '');
+    del.setAttribute('aria-label', 'Delete trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
+    actTd.appendChild(del);
+    tr.appendChild(actTd);
+    tbody.appendChild(tr);
+  });
+}
+
+function deleteTrade(id) {
+  if (!id) return;
+  var st = loadState();
+  var kept = (st.trades || []).filter(function (t) { return !t || t.id !== id; });
+  if (kept.length === (st.trades || []).length) return; // unknown id: no write
+  st.trades = kept;
+  saveState(st);
+  render(); // cached live prices stay; no refetch needed on delete
+}
+
+// --- Trade form ---
+var TRADE_CCY_OPTIONS = ['EUR', 'USD', 'GBP', 'CHF', 'USDC', 'USDT'];
+
+function ccyOptions(selected) {
+  return TRADE_CCY_OPTIONS.map(function (c) {
+    return '<option value="' + c + '"' + (c === selected ? ' selected' : '') + '>' + c + '</option>';
+  }).join('') + '<option value="CUSTOM"' + (selected === 'CUSTOM' ? ' selected' : '') + '>Other…</option>';
+}
+
+function buildTradeForm() {
+  var host = document.getElementById('trades');
+  if (!host || document.getElementById('trade-form')) return;
+  var wrap = document.createElement('div');
+  wrap.innerHTML =
+    '<h3>Add trade</h3>' +
+    '<form id="trade-form">' +
+    '<label for="t-side">Side</label>' +
+    '<select id="t-side"><option value="buy">Buy</option><option value="sell">Sell</option></select>' +
+    '<label for="t-symbol">Symbol</label>' +
+    '<input id="t-symbol" autocomplete="off" spellcheck="false" placeholder="BTC">' +
+    '<label for="t-qty">Quantity</label>' +
+    '<input id="t-qty" inputmode="decimal" placeholder="1">' +
+    '<label for="t-total">Total (native currency)</label>' +
+    '<input id="t-total" inputmode="decimal" placeholder="50000">' +
+    '<label for="t-currency">Currency</label>' +
+    '<select id="t-currency">' + ccyOptions('EUR') + '</select>' +
+    '<input id="t-custom-ccy" autocomplete="off" spellcheck="false" placeholder="Code, e.g. JPY" hidden>' +
+    '<label for="t-date">Date</label>' +
+    '<input id="t-date" type="date">' +
+    '<label for="t-fee">Fee</label>' +
+    '<input id="t-fee" inputmode="decimal" placeholder="0">' +
+    '<label for="t-feeccy">Fee currency</label>' +
+    '<select id="t-feeccy">' + ccyOptions('EUR') + '</select>' +
+    '<label for="t-note">Note</label>' +
+    '<input id="t-note" autocomplete="off" placeholder="optional">' +
+    '<details><summary>Manual FX rate (fallback when ECB is unavailable)</summary>' +
+    '<label for="t-manual-rate">Manual rate to main currency</label>' +
+    '<input id="t-manual-rate" inputmode="decimal" placeholder="e.g. 0.92">' +
+    '</details>' +
+    '<details><summary>Manual live price (override)</summary>' +
+    '<label for="t-manual-price">Manual live price in main currency</label>' +
+    '<input id="t-manual-price" inputmode="decimal" placeholder="e.g. 67000">' +
+    '</details>' +
+    '<p id="t-error" class="banner-error" role="alert" hidden></p>' +
+    '<button class="primary" type="submit">Add trade</button>' +
+    '</form>';
+  host.insertBefore(wrap, host.querySelector('table'));
+  var form = document.getElementById('trade-form');
+  form.addEventListener('submit', onTradeSubmit);
+  var ccy = document.getElementById('t-currency');
+  var custom = document.getElementById('t-custom-ccy');
+  var feeccy = document.getElementById('t-feeccy');
+  ccy.addEventListener('change', function () {
+    custom.hidden = (ccy.value !== 'CUSTOM');
+    if (ccy.value !== 'CUSTOM' && feeccy) feeccy.value = ccy.value; // fee usually in trade currency
+  });
+}
+
+function tradeFormError(msg) {
+  var p = document.getElementById('t-error');
+  if (!p) return;
+  if (!msg) {
+    p.textContent = '';
+    p.hidden = true;
+    return;
+  }
+  p.textContent = String(msg);
+  p.hidden = false;
+}
+
+function onTradeSubmit(ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  tradeFormError(null);
+  var main = loadState().settings.mainCurrency;
+  var side = uiVal('t-side', 'buy') === 'sell' ? 'sell' : 'buy';
+  var symbol = uiVal('t-symbol', '').trim().toUpperCase();
+  var qty = Number(uiVal('t-qty', ''));
+  var total = Number(uiVal('t-total', ''));
+  var ccySel = uiVal('t-currency', 'EUR');
+  var currency = (ccySel === 'CUSTOM' ? uiVal('t-custom-ccy', '').trim().toUpperCase() : String(ccySel).toUpperCase());
+  var date = uiVal('t-date', '') || todayStr();
+  var feeRaw = uiVal('t-fee', '').trim();
+  var fee = (feeRaw === '') ? 0 : Number(feeRaw);
+  var feeCcyRaw = uiVal('t-feeccy', '');
+  var feeCurrency = (feeCcyRaw === 'CUSTOM' || !feeCcyRaw) ? currency : String(feeCcyRaw).toUpperCase();
+  var note = uiVal('t-note', '').trim();
+  var manualRateRaw = uiVal('t-manual-rate', '').trim();
+  var manualPriceRaw = uiVal('t-manual-price', '').trim();
+  if (!symbol) { tradeFormError('Symbol is required (e.g. BTC).'); return; }
+  if (!/^[A-Z0-9._-]{1,12}$/.test(symbol)) { tradeFormError('Symbol looks invalid — letters/numbers, up to 12 chars.'); return; }
+  if (!isFinite(qty) || qty <= 0) { tradeFormError('Quantity must be > 0.'); return; }
+  if (!isFinite(total) || total < 0) { tradeFormError('Total must be >= 0.'); return; }
+  if (!/^[A-Z]{2,10}$/.test(currency)) { tradeFormError('Currency code invalid — pick one or enter a 2–10 letter code.'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { tradeFormError('Date must be YYYY-MM-DD.'); return; }
+  if (!isFinite(fee) || fee < 0) { tradeFormError('Fee must be >= 0.'); return; }
+  var manualRate = (manualRateRaw === '') ? null : Number(manualRateRaw);
+  if (manualRate !== null && (!isFinite(manualRate) || manualRate <= 0)) { tradeFormError('Manual rate must be > 0.'); return; }
+  var manualPrice = (manualPriceRaw === '') ? null : Number(manualPriceRaw);
+  if (manualPrice !== null && (!isFinite(manualPrice) || manualPrice <= 0)) { tradeFormError('Manual price must be > 0.'); return; }
+  var from = currency;
+  // proceed() re-reads state so a slow ECB fetch cannot clobber newer writes.
+  function proceed(lock) {
+    var st = loadState();
+    if (manualPrice !== null) {
+      st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
+      st.priceOverrides[symbol] = manualPrice;
+    }
+    var trade = {
+      id: uid(),
+      type: side,
+      symbol: symbol,
+      qty: qty,
+      total: total,
+      currency: from,
+      date: date,
+      fee: fee,
+      feeCurrency: feeCurrency,
+      note: note,
+      fxLock: lock,
+      createdAt: new Date().toISOString()
+    };
+    var err = validateTrade(trade, heldQtyFor(st.trades, symbol));
+    if (err) { tradeFormError(err); return; }
+    st.trades.push(trade);
+    saveState(st);
+    uiSetVal('t-qty', '');
+    uiSetVal('t-total', '');
+    uiSetVal('t-note', '');
+    uiSetVal('t-manual-rate', '');
+    uiSetVal('t-manual-price', '');
+    var d = document.getElementById('t-date');
+    if (d) d.value = todayStr();
+    tradeFormError(null);
+    refreshPrices(); // recompute + render when fresh prices land (renders sync too)
+    render();
+  }
+  if (from === String(main).toUpperCase()) {
+    proceed({ pair: from + '/' + main, rate: 1, source: '1:1', interpolated: false });
+    return;
+  }
+  if (manualRate !== null) {
+    proceed({ pair: from + '/' + main, rate: manualRate, source: 'manual', interpolated: false });
+    return;
+  }
+  fetchEcbRate(date, from, main).then(function (r) {
+    proceed({ pair: from + '/' + main, rate: r.rate, source: r.source, interpolated: !!r.interpolated });
+  }, function () {
+    showBanner('FX rate unavailable for ' + from + ' → ' + main + ' on ' + date + ' — open “Manual FX rate” and enter a rate to save this trade.');
+    tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
+  });
+}
+
+// --- Settings drawer ---
+// Main-currency select, cost-method toggle, override editor, download/upload,
+// clear-with-confirm, demo trade. A main-currency switch re-fetches prices
+// only; trade fxLocks are never rewritten.
+
+function buildSettings() {
+  var host = document.getElementById('settings');
+  if (!host || document.getElementById('s-main')) return;
+  var wrap = document.createElement('div');
+  wrap.innerHTML =
+    '<label for="s-main">Main currency</label>' +
+    '<select id="s-main">' +
+    '<option value="EUR">EUR</option><option value="USD">USD</option>' +
+    '<option value="GBP">GBP</option><option value="CHF">CHF</option>' +
+    '</select>' +
+    '<fieldset><legend>Cost method</legend>' +
+    '<label><input type="radio" name="cost" value="average"> Average cost</label>' +
+    '<label><input type="radio" name="cost" value="fifo"> FIFO</label>' +
+    '</fieldset>' +
+    '<h3>Manual price overrides</h3>' +
+    '<label for="o-symbol">Symbol</label>' +
+    '<input id="o-symbol" autocomplete="off" spellcheck="false" placeholder="BTC">' +
+    '<label for="o-price">Price (main currency)</label>' +
+    '<input id="o-price" inputmode="decimal" placeholder="e.g. 67000">' +
+    '<button id="o-add" type="button">Save override</button>' +
+    '<ul id="o-list"></ul>' +
+    '<h3>Backup</h3>' +
+    '<button id="s-download" type="button">Download backup</button>' +
+    '<label for="s-upload">Restore from file</label>' +
+    '<input id="s-upload" type="file" accept="application/json,.json">' +
+    '<h3>Data</h3>' +
+    '<button id="s-demo" type="button">Load demo trade</button>' +
+    '<button id="s-clear" type="button">Clear all data</button>';
+  host.appendChild(wrap);
+  document.getElementById('s-main').addEventListener('change', function (e) {
+    var st = loadState();
+    st.settings.mainCurrency = e.target.value;
+    saveState(st);
+    clearBanner();
+    refreshPrices(); // re-fetch in the new currency; fxLocks untouched
+  });
+  var radios = wrap.querySelectorAll('input[name="cost"]');
+  for (var i = 0; i < radios.length; i++) {
+    radios[i].addEventListener('change', function (e) {
+      var st = loadState();
+      st.settings.costMethod = (e.target.value === 'fifo') ? 'fifo' : 'average';
+      saveState(st);
+      render(); // no refetch: cost view needs no new prices
+    });
+  }
+  document.getElementById('o-add').addEventListener('click', function () {
+    var sym = uiVal('o-symbol', '').trim().toUpperCase();
+    var price = Number(uiVal('o-price', ''));
+    if (!sym) { showBanner('Override needs a symbol (e.g. BTC).'); return; }
+    if (!isFinite(price) || price <= 0) { showBanner('Override price must be > 0.'); return; }
+    var st = loadState();
+    st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
+    st.priceOverrides[sym] = price;
+    saveState(st);
+    uiSetVal('o-symbol', '');
+    uiSetVal('o-price', '');
+    clearBanner();
+    refreshPrices(); // override wins over network; recompute + render
+  });
+  document.getElementById('o-list').addEventListener('click', function (e) {
+    var btn = e && e.target && e.target.closest ? e.target.closest('[data-override-del]') : null;
+    if (!btn) return;
+    var st = loadState();
+    if (st.priceOverrides && Object.prototype.hasOwnProperty.call(st.priceOverrides, btn.getAttribute('data-override-del'))) {
+      delete st.priceOverrides[btn.getAttribute('data-override-del')];
+      saveState(st);
+    }
+    refreshPrices();
+  });
+  document.getElementById('s-download').addEventListener('click', downloadBackup);
+  document.getElementById('s-upload').addEventListener('change', function (e) {
+    var input = e.target;
+    var f = input && input.files && input.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        importState(String(reader.result));
+      } catch (err) {
+        showBanner('Import failed: ' + (err && err.message ? err.message : err));
+        input.value = '';
+        return;
+      }
+      input.value = '';
+      clearBanner();
+      refreshPrices();
+    };
+    reader.onerror = function () {
+      showBanner('Import failed: could not read file.');
+      input.value = '';
+    };
+    reader.readAsText(f);
+  });
+  document.getElementById('s-demo').addEventListener('click', addDemoTrade);
+  document.getElementById('s-clear').addEventListener('click', clearAllData);
+}
+
+function syncSettings(st) {
+  var main = document.getElementById('s-main');
+  if (main) main.value = st.settings.mainCurrency;
+  var radios = document.querySelectorAll('#settings input[name="cost"]');
+  for (var i = 0; i < radios.length; i++) {
+    radios[i].checked = (radios[i].value === st.settings.costMethod);
+  }
+  var list = document.getElementById('o-list');
+  if (list) {
+    list.innerHTML = '';
+    var ov = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
+    Object.keys(ov).sort().forEach(function (sym) {
+      var li = document.createElement('li');
+      var label = document.createElement('span');
+      label.textContent = sym + ' — ' + fmtMoney(ov[sym], st.settings.mainCurrency) + ' ';
+      li.appendChild(label);
+      var rm = document.createElement('button');
+      rm.type = 'button';
+      rm.textContent = 'Remove';
+      rm.setAttribute('data-override-del', sym);
+      rm.setAttribute('aria-label', 'Remove override for ' + sym);
+      li.appendChild(rm);
+      list.appendChild(li);
+    });
+  }
+}
+
+function downloadBackup() {
+  var json = exportState(loadState());
+  var blob = new Blob([json], { type: 'application/json' });
+  var n = new Date();
+  function p(x) { return (x < 10 ? '0' : '') + x; }
+  var name = 'inoculens-' + n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()) + '.json';
+  var urls = window.URL || window.webkitURL;
+  var url = urls.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () {
+    try { urls.revokeObjectURL(url); } catch (e) { /* ignore */ }
+    if (a.parentNode) a.parentNode.removeChild(a);
+  }, 1000);
+}
+
+function addDemoTrade() {
+  var st = loadState();
+  if ((st.trades || []).length) {
+    showBanner('Demo trade skipped — clear your data first to load it.');
+    return;
+  }
+  var m = st.settings.mainCurrency;
+  st.trades.push({
+    id: uid(),
+    type: 'buy',
+    symbol: 'BTC',
+    qty: 1,
+    total: 50000,
+    currency: m,
+    date: '2026-01-01',
+    fee: 0,
+    feeCurrency: m,
+    note: 'demo trade — remove with “Clear all data”',
+    fxLock: { pair: m + '/' + m, rate: 1, source: '1:1', interpolated: false },
+    createdAt: new Date().toISOString()
+  });
+  saveState(st);
+  clearBanner();
+  refreshPrices();
+}
+
+function clearAllData() {
+  if (typeof window.confirm === 'function' &&
+      !window.confirm('Delete all trades, overrides and settings? This cannot be undone.')) {
+    return;
+  }
+  livePrices = {};
+  saveState(defaultState());
+  clearBanner();
+  render();
+}
+
+// --- Render loop ---
+
+function refreshPrices() {
+  var st = loadState();
+  var syms = uniqueSymbols(st.trades);
+  if (!syms.length) {
+    render();
+    return Promise.resolve({});
+  }
+  return refreshAllPrices(syms, st.settings.mainCurrency).then(function (out) {
+    Object.keys(out).forEach(function (k) { livePrices[k] = out[k]; });
+    var missing = syms.filter(function (s) { return !isFinite(Number(livePrices[s])); });
+    if (missing.length) {
+      showBanner('Live price unavailable for ' + missing.join(', ') + ' — showing last/manual price.');
+    } else {
+      clearBanner();
+    }
+    render();
+    return out;
+  });
+}
+
+function render() {
+  var st;
+  try {
+    st = loadState();
+  } catch (e) {
+    st = defaultState();
+  }
+  if (!st || !st.settings) st = defaultState();
+  renderPositions(st);
+  renderTrades(st);
+  syncSettings(st);
+}
+
+function init() {
+  if (uiBooted) {
+    render();
+    return;
+  }
+  if (!document.getElementById('positions') || !document.getElementById('trades')) return;
+  buildPositions();
+  buildTradeForm();
+  buildTradesTable();
+  buildSettings();
+  var d = document.getElementById('t-date');
+  if (d && !d.value) d.value = todayStr();
+  uiBooted = true;
+  render();
+  refreshPrices();
+}
+
+// Expose Ui on window.Inoculens for tests.html; init/render are also bare
+// globals (classic script top-level functions) for the DOM checklist.
+if (typeof window !== 'undefined') {
+  window.Inoculens = window.Inoculens || {};
+  window.Inoculens.init = init;
+  window.Inoculens.render = render;
+  window.Inoculens.refreshPrices = refreshPrices;
+  window.Inoculens.getLivePrices = function () { return livePrices; };
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('DOMContentLoaded', init);
+  }
+}
