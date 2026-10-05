@@ -477,3 +477,147 @@ if (typeof window !== 'undefined') {
   window.Inoculens.computePositions = computePositions;
   window.Inoculens.validateTrade = validateTrade;
 }
+
+// === Prices ===
+// Live crypto prices via CoinGecko simple/price with manual fallback.
+// Resolution order per symbol: (1) manual override from live
+// loadState().priceOverrides (wins, no network), (2) CoinGecko
+// simple/price for mapped symbols with a 60s in-memory cache,
+// (3) null for unknown tickers or failed fetches (last cached price
+// is returned when available). Never throws to the UI — failures
+// resolve to cached-or-null. Read by Ui (Task 6) via refreshAllPrices.
+
+var SYMBOL_MAP = {
+  BTC: 'bitcoin',
+  ETH: 'ethereum',
+  SOL: 'solana',
+  BNB: 'binancecoin',
+  XRP: 'ripple',
+  ADA: 'cardano',
+  DOGE: 'dogecoin',
+  AVAX: 'avalanche-2',
+  LINK: 'chainlink',
+  DOT: 'polkadot',
+  LTC: 'litecoin',
+  BCH: 'bitcoin-cash',
+  XLM: 'stellar',
+  ATOM: 'cosmos',
+  UNI: 'uniswap',
+  TRX: 'tron',
+  NEAR: 'near',
+  ARB: 'arbitrum',
+  OP: 'optimism',
+  USDC: 'usd-coin',
+  USDT: 'tether',
+  DAI: 'dai'
+};
+
+var PRICE_CACHE_TTL_MS = 60000;
+var priceCache = {}; // key "SYM:VS" (uppercased) -> {price, at}
+
+function priceCacheKey(symbol, vs) {
+  return String(symbol).toUpperCase() + ':' + String(vs).toUpperCase();
+}
+
+function priceOverrideFor(symbol) {
+  var sym = String(symbol).toUpperCase();
+  var ov = null;
+  try {
+    var st = loadState();
+    ov = st ? st.priceOverrides : null;
+  } catch (e) {
+    ov = null;
+  }
+  if (!ov || typeof ov !== 'object') return null;
+  if (Object.prototype.hasOwnProperty.call(ov, sym)) {
+    var v = Number(ov[sym]);
+    if (isFinite(v)) return v;
+  }
+  // Tolerate differently-cased keys without touching stored data.
+  var keys = Object.keys(ov);
+  for (var i = 0; i < keys.length; i++) {
+    if (String(keys[i]).toUpperCase() === sym) {
+      var w = Number(ov[keys[i]]);
+      if (isFinite(w)) return w;
+    }
+  }
+  return null;
+}
+
+function priceDefaultVs(vs) {
+  if (typeof vs === 'string' && vs.length > 0) return vs;
+  try {
+    var st = loadState();
+    if (st && st.settings && typeof st.settings.mainCurrency === 'string' && st.settings.mainCurrency.length > 0) {
+      return st.settings.mainCurrency;
+    }
+  } catch (e) { /* fall through */ }
+  return 'EUR';
+}
+
+function fetchLivePrice(symbol, vs) {
+  var sym = String(symbol || '').toUpperCase();
+  var cur = priceDefaultVs(vs);
+  var curLow = String(cur).toLowerCase();
+  // (1) Manual override wins — no network.
+  var override = priceOverrideFor(sym);
+  if (override !== null) return Promise.resolve(override);
+  // (3a) Unknown ticker: null immediately, never throws, no network.
+  var id = SYMBOL_MAP[sym];
+  if (!id) return Promise.resolve(null);
+  // (2) Fresh cache (60s) avoids network.
+  var key = priceCacheKey(sym, cur);
+  var now = Date.now();
+  var cached = priceCache[key];
+  if (cached && (now - cached.at) < PRICE_CACHE_TTL_MS && isFinite(Number(cached.price))) {
+    return Promise.resolve(Number(cached.price));
+  }
+  var url = 'https://api.coingecko.com/api/v3/simple/price?ids=' +
+    encodeURIComponent(id) + '&vs_currencies=' + encodeURIComponent(curLow);
+  return fetch(url).then(function (res) {
+    if (!res.ok) throw new Error('price-http-' + res.status);
+    return res.json();
+  }).then(function (data) {
+    var p = data && data[id] && data[id][curLow];
+    p = Number(p);
+    if (isFinite(p)) {
+      priceCache[key] = { price: p, at: Date.now() };
+      return p;
+    }
+    if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+    return null;
+  }).then(null, function () {
+    // Network error / 429 / bad payload: last cached or null, never throw.
+    if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+    return null;
+  });
+}
+
+function refreshAllPrices(symbols, vs) {
+  var cur = priceDefaultVs(vs);
+  var seen = {};
+  var uniq = [];
+  (symbols || []).forEach(function (s) {
+    var sym = String(s || '').toUpperCase();
+    if (!sym || seen[sym]) return;
+    seen[sym] = true;
+    uniq.push(sym);
+  });
+  var out = {};
+  var jobs = uniq.map(function (sym) {
+    return fetchLivePrice(sym, cur).then(function (p) {
+      out[sym] = p;
+    });
+  });
+  return Promise.all(jobs).then(function () { return out; });
+}
+
+// Expose Prices on window.Inoculens for tests.html and Ui (Task 6).
+if (typeof window !== 'undefined') {
+  window.Inoculens = window.Inoculens || {};
+  window.Inoculens.SYMBOL_MAP = SYMBOL_MAP;
+  window.Inoculens.PRICE_CACHE_TTL_MS = PRICE_CACHE_TTL_MS;
+  window.Inoculens.priceCache = priceCache;
+  window.Inoculens.fetchLivePrice = fetchLivePrice;
+  window.Inoculens.refreshAllPrices = refreshAllPrices;
+}

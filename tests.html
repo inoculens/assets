@@ -387,7 +387,115 @@
       });
     })();
 
-    // Later tasks (Prices, Ui) append new section IIFEs here.
+    // === Prices tests (Task 5: mapping/cache only, no network asserts) ===
+    (function pricesTests() {
+      var P = window.Inoculens || {};
+      var SYMBOL_MAP = P.SYMBOL_MAP;
+      var fetchLivePrice = P.fetchLivePrice;
+      var refreshAllPrices = P.refreshAllPrices;
+
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v1'); } catch (e) { backup = null; }
+      function setState(s) { try { localStorage.setItem('inoculens.v1', JSON.stringify(s)); } catch (e) { /* ignore */ } }
+      function restoreState() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v1');
+          else localStorage.setItem('inoculens.v1', backup);
+        } catch (e) { /* ignore */ }
+      }
+      function clearPriceCache() {
+        var c = (window.Inoculens || {}).priceCache;
+        if (c && typeof c === 'object') {
+          Object.keys(c).forEach(function (k) { delete c[k]; });
+        }
+      }
+
+      test('SYMBOL_MAP maps BTC/ETH/SOL', function () {
+        assert(SYMBOL_MAP['BTC'] === 'bitcoin', 'BTC should map to bitcoin');
+        assert(SYMBOL_MAP['ETH'] === 'ethereum', 'ETH should map to ethereum');
+        assert(SYMBOL_MAP['SOL'] === 'solana', 'SOL should map to solana');
+      });
+
+      test('override short-circuits network', function () {
+        var origFetch = window.fetch;
+        var called = 0;
+        window.fetch = function () { called++; return Promise.reject(new Error('must not fetch')); };
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: { BTC: 67000 } });
+        function restore() { window.fetch = origFetch; restoreState(); }
+        return fetchLivePrice('BTC', 'EUR').then(function (p) {
+          restore();
+          assert(p === 67000, 'override should win, got ' + p);
+          assert(called === 0, 'override must not hit network');
+        }, function (e) { restore(); throw e; });
+      });
+
+      test('unknown symbol returns null, never throws, no network', function () {
+        var origFetch = window.fetch;
+        var called = 0;
+        window.fetch = function () { called++; return Promise.reject(new Error('must not fetch')); };
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        function restore() { window.fetch = origFetch; restoreState(); }
+        return fetchLivePrice('XYZ123', 'EUR').then(function (p) {
+          restore();
+          assert(p === null, 'unknown symbol should be null, got ' + p);
+          assert(called === 0, 'unknown symbol must not hit network');
+        }, function (e) { restore(); throw e; });
+      });
+
+      test('60s cache survives network failure', function () {
+        var origFetch = window.fetch;
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        clearPriceCache();
+        window.fetch = function () {
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ ethereum: { usd: 2222 } }); } });
+        };
+        function restore() { window.fetch = origFetch; restoreState(); }
+        // ETH/USD key: no other test touches it, so interleaved async
+        // continuations cannot clobber this cache entry.
+        return fetchLivePrice('ETH', 'USD').then(function (first) {
+          assert(first === 2222, 'live fetch should return 2222, got ' + first);
+          // Re-establish isolation before re-reading: the harness runs all
+          // test fns synchronously, so later tests overwrite localStorage
+          // and window.fetch before this continuation runs.
+          setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+          window.fetch = function () { return Promise.reject(new Error('net down')); };
+          return fetchLivePrice('ETH', 'USD');
+        }).then(function (second) {
+          restore();
+          assert(second === 2222, 'cached price should survive failure, got ' + second);
+        }, function (e) { restore(); throw e; });
+      });
+
+      test('default vs comes from settings.mainCurrency', function () {
+        var origFetch = window.fetch;
+        var urls = [];
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        clearPriceCache();
+        window.fetch = function (url) {
+          urls.push(String(url));
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ bitcoin: { eur: 50000 } }); } });
+        };
+        function restore() { window.fetch = origFetch; restoreState(); }
+        return fetchLivePrice('BTC').then(function (p) {
+          restore();
+          assert(p === 50000, 'expected 50000, got ' + p);
+          assert(urls.length === 1 && urls[0].indexOf('vs_currencies=eur') !== -1, 'default vs should be mainCurrency: ' + urls.join(','));
+        }, function (e) { restore(); throw e; });
+      });
+
+      test('refreshAllPrices dedupes + uppercases', function () {
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: { BTC: 67000, ETH: 3500 } });
+        function restore() { restoreState(); }
+        return refreshAllPrices(['btc', 'BTC', 'eth'], 'EUR').then(function (out) {
+          restore();
+          var keys = Object.keys(out).sort();
+          assert(keys.length === 2 && keys[0] === 'BTC' && keys[1] === 'ETH', 'should dedupe + uppercase, got ' + JSON.stringify(out));
+          assert(out.BTC === 67000 && out.ETH === 3500, 'bad values: ' + JSON.stringify(out));
+        }, function (e) { restore(); throw e; });
+      });
+    })();
+
+    // Later tasks (Ui) append new section IIFEs here.
 
     renderResults();
   </script>
