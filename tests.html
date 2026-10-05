@@ -1069,8 +1069,9 @@
           assert(document.getElementById('confirm-message').textContent.indexOf('Delete account') !== -1, 'delete must ask in-app');
           document.getElementById('confirm-ok').click();
           return new Promise(function (res) { setTimeout(res, 0); }).then(function () {
-            assert(defaultAccount(loadState()) !== null, 'default should fall back to remaining account');
-            assert(document.querySelector('#accounts .account-card') !== null, 'remaining card missing');
+            assert(defaultAccount(loadState()).id === 'a2', 'default should fall back to a2 after deleting default with trades');
+            assert(loadState().trades.every(function (t) { return t.accountId !== 'a1-default-id'; }), 'deleted account trades must go too');
+            assert(document.querySelectorAll('#accounts .account-card').length === 1, 'only survivor card should remain');
             saveState(defaultState()); render();
             assert(document.getElementById('accounts').textContent.indexOf('Create your first account') !== -1, 'empty-state prompt missing');
             restoreState();

@@ -1489,15 +1489,15 @@ function deleteAccount(id) {
   var st = loadState();
   var acc = accountById(st, id);
   if (!acc) return; // unknown id: no write, no dialog
-  confirmAction('Delete account', 'Delete account "' + acc.name + '" (' + acc.ticker + ')? Its trades must go first — this cannot be undone.', 'Delete', true).then(function (ok) {
+  var n = accountTrades(st, id).length;
+  var msg = 'Delete account "' + acc.name + '" (' + acc.ticker + ')' +
+    (n ? ' and its ' + n + ' trade' + (n === 1 ? '' : 's') : '') +
+    '? This cannot be undone.';
+  confirmAction('Delete account', msg, 'Delete', true).then(function (ok) {
     if (!ok) return;
     var s2 = loadState();
     if (!accountById(s2, id)) return;
-    if (accountTrades(s2, id).length) {
-      showBanner('Delete its trades first — an account with trades cannot be deleted.');
-      render();
-      return;
-    }
+    s2.trades = (s2.trades || []).filter(function (t) { return !t || t.accountId !== id; });
     s2.accounts = (s2.accounts || []).filter(function (a) { return !a || a.id !== id; });
     if (s2.settings.defaultAccountId === id) {
       s2.settings.defaultAccountId = s2.accounts.length ? s2.accounts[0].id : null;
