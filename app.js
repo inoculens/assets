@@ -1381,21 +1381,18 @@ function renderAccounts(st) {
   });
   renderSummaryCards(st, grandRows);
   host.innerHTML = '';
-  if (!accounts.length) {
-    var empty = document.createElement('div');
-    empty.className = 'account-empty';
-    var h = document.createElement('h2');
-    h.textContent = 'Accounts';
-    empty.appendChild(h);
-    var p = document.createElement('p');
-    p.textContent = 'Create your first account to get started.';
-    empty.appendChild(p);
-    empty.appendChild(buildAccountCreateRow());
-    var hint = document.createElement('p');
-    hint.className = 'muted';
-    hint.textContent = 'Trades belong to an account — create one to enable Add trade.';
-    empty.appendChild(hint);
-    host.appendChild(empty);
+  var landing = document.getElementById('landing');
+  var hero = document.getElementById('hero');
+  var overview = document.getElementById('overview');
+  var fab = document.getElementById('fab-trade');
+  var emptyState = !accounts.length;
+  if (landing) landing.hidden = !emptyState;
+  if (hero) hero.hidden = emptyState;
+  if (overview) overview.hidden = emptyState;
+  if (fab) fab.hidden = emptyState;
+  document.body.classList.toggle('is-empty', emptyState);
+  if (emptyState) {
+    wireLanding();
     return;
   }
   var h2 = document.createElement('h2');
@@ -1945,6 +1942,47 @@ function buildAccountCreateRow() {
   row.appendChild(ft);
   row.appendChild(create);
   return row;
+}
+
+function seedDemoData() {
+  var st = loadState();
+  if ((st.accounts || []).length) return;
+  var now = new Date().toISOString();
+  var btc = { id: uid(), name: 'Cold wallet', ticker: 'BTC', createdAt: now };
+  var eth = { id: uid(), name: 'Trading stack', ticker: 'ETH', createdAt: now };
+  st.accounts = [btc, eth];
+  st.settings.defaultAccountId = btc.id;
+  st.trades = [
+    { id: uid(), type: 'buy', symbol: 'BTC', qty: 0.5, total: 20000, currency: 'EUR', date: '2026-01-10', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, accountId: btc.id, createdAt: now },
+    { id: uid(), type: 'buy', symbol: 'ETH', qty: 5, total: 12000, currency: 'EUR', date: '2026-02-14', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, accountId: eth.id, createdAt: now }
+  ];
+  st.priceOverrides = {};
+  if (!saveStateGuarded(st)) return;
+  clearBanner();
+  render();
+  refreshPrices();
+}
+
+function wireLanding() {
+  var c = document.getElementById('landing-create');
+  if (c && !c.getAttribute('data-wired')) {
+    c.setAttribute('data-wired', '1');
+    c.addEventListener('click', function () { openAccountDialog(); });
+  }
+  var d = document.getElementById('landing-demo');
+  if (d && !d.getAttribute('data-wired')) {
+    d.setAttribute('data-wired', '1');
+    d.addEventListener('click', seedDemoData);
+  }
+  var r = document.getElementById('landing-restore');
+  if (r && !r.getAttribute('data-wired')) {
+    r.setAttribute('data-wired', '1');
+    r.addEventListener('click', function () {
+      buildSettings();
+      showSettingsTab('backup');
+      openDialog('settings-dialog');
+    });
+  }
 }
 
 function buildAccounts() {

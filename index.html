@@ -82,9 +82,24 @@
 
   <main id="main">
     <div id="view-home">
+      <section id="landing" aria-label="Welcome" hidden>
+        <p class="landing-eyebrow">Private · Local-first · No account</p>
+        <h2 class="landing-title">Know exactly what your crypto and stocks are worth.</h2>
+        <p class="landing-sub">Live prices, ECB-locked currency conversion, and clean average-cost / FIFO profit — all computed in your browser. Nothing ever leaves your device.</p>
+        <div class="landing-ctas">
+          <button type="button" id="landing-create" class="primary">Create your first account</button>
+          <button type="button" id="landing-demo" class="ghost">Explore with demo data</button>
+          <button type="button" id="landing-restore" class="quiet">Restore from backup</button>
+        </div>
+        <ul class="landing-feats">
+          <li><strong>Private by design</strong><span>localStorage only, export anytime</span></li>
+          <li><strong>Live prices</strong><span>CoinGecko + manual overrides</span></li>
+          <li><strong>Honest FX</strong><span>ECB rate locked at trade date</span></li>
+        </ul>
+      </section>
       <section id="hero" aria-label="Portfolio total">
         <p class="hero-label">Total balance</p>
-        <p class="hero-value" id="hero-value" aria-live="polite"><span class="skeleton" aria-hidden="true">—</span></p>
+        <p class="hero-value" id="hero-value" aria-live="polite">—</p>
         <p class="hero-pl" id="hero-pl" aria-live="polite"></p>
         <p id="tb-totals" class="hero-sub" aria-live="polite"></p>
       </section>
