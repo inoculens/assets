@@ -1,6 +1,24 @@
-# Netlify: the app uses History-API routing (/account/<id>), so deep links
-# must serve index.html instead of 404. Everything else stays static.
+# Netlify: static, no build. History-API (/account/<id>) falls back to index.html.
+[build]
+  publish = "."
+  command = "echo 'static — no build'"
+
 [[redirects]]
   from = "/account/*"
   to = "/index.html"
   status = 200
+
+[[redirects]]
+  from = "/account"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/app.js"
+  [headers.values]
+    Cache-Control = "public, max-age=3600"
+
+[[headers]]
+  for = "/styles.css"
+  [headers.values]
+    Cache-Control = "public, max-age=3600"

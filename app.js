@@ -24,24 +24,54 @@ function defaultState() {
   };
 }
 
+var MAIN_CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF', 'RON'];
+
+function isValidDateStr(d) {
+  if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  var p = d.slice(0, 10).split('-');
+  var y = Number(p[0]);
+  var m = Number(p[1]);
+  var day = Number(p[2]);
+  if (!isFinite(y) || !isFinite(m) || !isFinite(day)) return false;
+  if (m < 1 || m > 12 || day < 1 || day > 31) return false;
+  var t = Date.UTC(y, m - 1, day);
+  if (!isFinite(t)) return false;
+  var chk = new Date(t);
+  return chk.getUTCFullYear() === y && (chk.getUTCMonth() + 1) === m && chk.getUTCDate() === day;
+}
+
+function isFutureDateStr(d) {
+  if (!isValidDateStr(d)) return false;
+  var n = new Date();
+  var mm = n.getMonth() + 1;
+  var dd = n.getDate();
+  var today = n.getFullYear() + '-' + (mm < 10 ? '0' : '') + mm + '-' + (dd < 10 ? '0' : '') + dd;
+  return d.slice(0, 10) > today;
+}
+
 function isValidSettings(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v) &&
-    typeof v.mainCurrency === 'string' && v.mainCurrency.length > 0 &&
+    typeof v.mainCurrency === 'string' && MAIN_CURRENCIES.indexOf(v.mainCurrency.toUpperCase()) !== -1 &&
     (v.costMethod === 'average' || v.costMethod === 'fifo');
 }
 
 function isValidAccount(a) {
-  return !!a && typeof a === 'object' && !Array.isArray(a) &&
-    typeof a.id === 'string' && a.id.length > 0 &&
-    typeof a.name === 'string' &&
-    typeof a.ticker === 'string' && a.ticker.length > 0;
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return false;
+  if (typeof a.id !== 'string' || a.id.length === 0) return false;
+  if (typeof a.name !== 'string' || a.name.trim().length === 0) return false;
+  if (typeof a.ticker !== 'string') return false;
+  var tk = a.ticker.trim().toUpperCase();
+  if (!/^[A-Z0-9._-]{1,12}$/.test(tk)) return false;
+  return true;
 }
 
 function normalizeAccount(a) {
+  var tk = String(a.ticker || '').trim().toUpperCase();
+  var nm = String(a.name == null ? '' : a.name).trim() || tk;
   return {
     id: a.id,
-    name: a.name,
-    ticker: a.ticker,
+    name: nm,
+    ticker: tk,
     createdAt: (typeof a.createdAt === 'string' && a.createdAt.length > 0)
       ? a.createdAt
       : new Date().toISOString()
@@ -59,7 +89,7 @@ function normalizeSettings(s, fallback) {
     return { mainCurrency: fb.mainCurrency, costMethod: fb.costMethod, defaultAccountId: normalizeDefaultAccountId(fb.defaultAccountId) };
   }
   return {
-    mainCurrency: s.mainCurrency,
+    mainCurrency: String(s.mainCurrency).toUpperCase(),
     costMethod: s.costMethod,
     defaultAccountId: normalizeDefaultAccountId(s.defaultAccountId)
   };
@@ -81,15 +111,26 @@ function loadState() {
     return fallback;
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
+  var accounts = Array.isArray(parsed.accounts)
+    ? parsed.accounts.filter(isValidAccount).map(normalizeAccount)
+    : [];
+  var accountIds = accounts.map(function (a) { return a.id; });
+  var trades = Array.isArray(parsed.trades)
+    ? parsed.trades.filter(function (t) { return isValidImportTrade(t, accountIds.length ? accountIds : undefined); })
+    : [];
+  var priceOverrides = {};
+  if (parsed.priceOverrides && typeof parsed.priceOverrides === 'object' && !Array.isArray(parsed.priceOverrides) && isValidPriceOverrides(parsed.priceOverrides)) {
+    priceOverrides = parsed.priceOverrides;
+  }
+  var settings = normalizeSettings(parsed.settings, fallback.settings);
+  if (settings.defaultAccountId && accountIds.indexOf(settings.defaultAccountId) === -1) {
+    settings.defaultAccountId = accounts.length ? accounts[0].id : null;
+  }
   return {
-    settings: normalizeSettings(parsed.settings, fallback.settings),
-    accounts: Array.isArray(parsed.accounts)
-      ? parsed.accounts.filter(isValidAccount).map(normalizeAccount)
-      : [],
-    trades: Array.isArray(parsed.trades) ? parsed.trades : [],
-    priceOverrides: (parsed.priceOverrides && typeof parsed.priceOverrides === 'object' && !Array.isArray(parsed.priceOverrides))
-      ? parsed.priceOverrides
-      : {}
+    settings: settings,
+    accounts: accounts,
+    trades: trades,
+    priceOverrides: priceOverrides
   };
 }
 
@@ -105,14 +146,24 @@ function isValidImportTrade(t, accountIds) {
   if (!t || typeof t !== 'object' || Array.isArray(t)) return false;
   if (t.type !== 'buy' && t.type !== 'sell') return false;
   if (typeof t.symbol !== 'string' || t.symbol.trim().length === 0) return false;
+  if (typeof t.qty !== 'number' && typeof t.qty !== 'string') return false;
   var qty = Number(t.qty);
   if (!isFinite(qty) || qty <= 0) return false;
+  if (t.total === undefined || t.total === null) return false;
+  if (typeof t.total !== 'number' && typeof t.total !== 'string') return false;
+  if (String(t.total).trim() === '') return false;
   var total = Number(t.total);
   if (!isFinite(total) || total < 0) return false;
-  if (typeof t.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(t.date)) return false;
-  if (t.fee !== undefined && t.fee !== null) {
+  if (!isValidDateStr(t.date)) return false;
+  if (isFutureDateStr(t.date)) return false;
+  if (typeof t.currency !== 'string' || !/^[A-Z]{2,10}$/.test(t.currency.trim().toUpperCase())) return false;
+  if (t.fee !== undefined && t.fee !== null && String(t.fee).trim() !== '') {
+    if (typeof t.fee !== 'number' && typeof t.fee !== 'string') return false;
     var fee = Number(t.fee);
     if (!isFinite(fee) || fee < 0) return false;
+  }
+  if (t.feeCurrency !== undefined && t.feeCurrency !== null && String(t.feeCurrency).trim() !== '') {
+    if (typeof t.feeCurrency !== 'string' || !/^[A-Z]{2,10}$/.test(String(t.feeCurrency).trim().toUpperCase())) return false;
   }
   // Strict v2 membership: when the account roster is supplied, the trade
   // must name one of its accounts. Legacy v1 callers omit it (their trades
@@ -129,26 +180,32 @@ function isValidPriceOverrides(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   var keys = Object.keys(v);
   for (var i = 0; i < keys.length; i++) {
-    var n = Number(v[keys[i]]);
-    if (typeof v[keys[i]] !== 'number' || !isFinite(n)) return false;
+    if (typeof v[keys[i]] !== 'number' || !isFinite(Number(v[keys[i]])) || Number(v[keys[i]]) <= 0) return false;
   }
   return true;
 }
 
 function exportState(s) {
   var st = s || {};
+  var accounts = Array.isArray(st.accounts)
+    ? st.accounts.filter(isValidAccount).map(normalizeAccount)
+    : [];
+  var accountIds = accounts.map(function (a) { return a.id; });
+  var trades = Array.isArray(st.trades)
+    ? st.trades.filter(function (t) { return isValidImportTrade(t, accountIds.length ? accountIds : undefined); })
+    : [];
+  var priceOverrides = {};
+  if (st.priceOverrides && typeof st.priceOverrides === 'object' && !Array.isArray(st.priceOverrides) && isValidPriceOverrides(st.priceOverrides)) {
+    priceOverrides = st.priceOverrides;
+  }
   var envelope = {
     app: APP_ID,
     version: STORE_VERSION,
     exportedAt: new Date().toISOString(),
     settings: normalizeSettings(st.settings, defaultState().settings),
-    accounts: Array.isArray(st.accounts)
-      ? st.accounts.filter(isValidAccount).map(normalizeAccount)
-      : [],
-    trades: Array.isArray(st.trades) ? st.trades : [],
-    priceOverrides: (st.priceOverrides && typeof st.priceOverrides === 'object' && !Array.isArray(st.priceOverrides))
-      ? st.priceOverrides
-      : {}
+    accounts: accounts,
+    trades: trades,
+    priceOverrides: priceOverrides
   };
   return JSON.stringify(envelope);
 }
@@ -199,6 +256,16 @@ function importState(json) {
       throw new Error('import failed: invalid trade at index ' + ti);
     }
   }
+  var seenTradeIds = {};
+  for (var tdi = 0; tdi < data.trades.length; tdi++) {
+    var tid = data.trades[tdi] && data.trades[tdi].id;
+    if (typeof tid === 'string' && tid.length > 0) {
+      if (Object.prototype.hasOwnProperty.call(seenTradeIds, tid)) {
+        throw new Error('import failed: duplicate trade id ' + tid);
+      }
+      seenTradeIds[tid] = true;
+    }
+  }
   var priceOverrides = {};
   if (data.priceOverrides !== undefined) {
     if (!isValidPriceOverrides(data.priceOverrides)) {
@@ -207,8 +274,12 @@ function importState(json) {
     priceOverrides = data.priceOverrides;
   }
   // All validation passed — only now replace stored state (never partial).
+  var normalizedSettings = normalizeSettings(data.settings, defaultState().settings);
+  if (normalizedSettings.defaultAccountId && accountIds.indexOf(normalizedSettings.defaultAccountId) === -1) {
+    throw new Error('import failed: unknown defaultAccountId');
+  }
   var next = {
-    settings: normalizeSettings(data.settings, defaultState().settings),
+    settings: normalizedSettings,
     accounts: data.accounts.map(normalizeAccount),
     trades: data.trades,
     priceOverrides: priceOverrides
@@ -242,7 +313,7 @@ function importStateV1(data) {
   var accounts = [];
   var bySymbol = {};
   var trades = data.trades.map(function (t) {
-    var sym = String(t.symbol).toUpperCase();
+    var sym = String(t.symbol).trim().toUpperCase();
     if (!Object.prototype.hasOwnProperty.call(bySymbol, sym)) {
       var acc = { id: uid(), name: sym, ticker: sym, createdAt: new Date().toISOString() };
       bySymbol[sym] = acc;
@@ -252,6 +323,7 @@ function importStateV1(data) {
     for (var k in t) {
       if (Object.prototype.hasOwnProperty.call(t, k)) copy[k] = t[k];
     }
+    copy.symbol = sym;
     copy.accountId = bySymbol[sym].id;
     return copy;
   });
@@ -332,8 +404,10 @@ function normalizeToMain(total, fee, rate) {
 }
 
 function fxShiftDate(dateStr, deltaDays) {
-  var parts = String(dateStr).split('-');
+  if (!isValidDateStr(dateStr)) return null;
+  var parts = String(dateStr).slice(0, 10).split('-');
   var t = Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  if (!isFinite(t)) return null;
   t += deltaDays * 86400000;
   var d = new Date(t);
   var m = d.getUTCMonth() + 1;
@@ -358,14 +432,40 @@ function pickRate(ratesByDate, date) {
 }
 
 function fxFetchOnce(url, fetchImpl) {
-  var f = fetchImpl || ((typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : fetch);
-  return f(url).then(function (res) {
-    if (!res.ok) {
-      var err = new Error('fx-http-' + res.status);
-      err.fxStatus = res.status;
+  var f = fetchImpl || ((typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : null);
+  if (!f) return Promise.reject(new Error('fx-unavailable'));
+  var timeoutMs = 10000;
+  var timer = null;
+  var raced = false;
+  function cleanup() { if (timer) { try { clearTimeout(timer); } catch (e) { /* ignore */ } timer = null; } }
+  var attempt;
+  try {
+    attempt = f(url);
+  } catch (e) {
+    return Promise.reject(new Error('fx-unavailable'));
+  }
+  if (!attempt || typeof attempt.then !== 'function') return Promise.reject(new Error('fx-unavailable'));
+  var timeoutP = new Promise(function (_, reject) {
+    timer = setTimeout(function () {
+      if (!raced) { raced = true; reject(new Error('fx-unavailable')); }
+    }, timeoutMs);
+    if (timer && typeof timer.unref === 'function') { try { timer.unref(); } catch (e) { /* ignore */ } }
+  });
+  return Promise.race([attempt, timeoutP]).then(function (res) {
+    if (raced) throw new Error('fx-unavailable');
+    raced = true;
+    cleanup();
+    if (!res || !res.ok) {
+      var err = new Error('fx-http-' + (res && res.status));
+      err.fxStatus = res && res.status;
       throw err;
     }
     return res.json();
+  }, function (e) {
+    cleanup();
+    if (e && (e.message === 'fx-unavailable' || e.fxStatus)) throw e;
+    var err2 = new Error('fx-unavailable');
+    throw err2;
   });
 }
 
@@ -377,8 +477,13 @@ function fxFetchWithRetry(url, fetchImpl) {
 }
 
 function fetchEcbRate(date, from, to) {
-  var f = (typeof from === 'string') ? from.toUpperCase() : from;
-  var t = (typeof to === 'string') ? to.toUpperCase() : to;
+  if (!isValidDateStr(date)) return Promise.reject(new Error('fx-unavailable'));
+  if (isFutureDateStr(date)) return Promise.reject(new Error('fx-unavailable'));
+  var f = (typeof from === 'string') ? from.trim().toUpperCase() : from;
+  var t = (typeof to === 'string') ? to.trim().toUpperCase() : to;
+  if (!/^[A-Z]{2,10}$/.test(f || '') || !/^[A-Z]{2,10}$/.test(t || '')) {
+    return Promise.reject(new Error('fx-unavailable'));
+  }
   var effFrom = stableToUsd(f) ? 'USD' : f; // USDC->USD 1.0, then ECB USD->main
   var effTo = stableToUsd(t) ? 'USD' : t;
   if (effFrom === effTo) {
@@ -386,21 +491,26 @@ function fetchEcbRate(date, from, to) {
   }
   // Hermetic async: capture window.fetch once per operation so concurrent
   // tests.html stubs (or later restores) cannot clobber retry/walkBack fetches.
-  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : fetch;
+  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : null;
   function attempt(d, back) {
+    if (!d || !isValidDateStr(d)) return Promise.reject(new Error('fx-unavailable'));
     var url = FX_BASE_URL + '/' + d +
       '?from=' + encodeURIComponent(effFrom) + '&to=' + encodeURIComponent(effTo);
     function walkBack() {
       if (back >= FX_MAX_LOOKBACK_DAYS) throw new Error('fx-unavailable');
-      return attempt(fxShiftDate(d, -1), back + 1);
+      var prev = fxShiftDate(d, -1);
+      if (!prev) throw new Error('fx-unavailable');
+      return attempt(prev, back + 1);
     }
     return fxFetchWithRetry(url, capturedFetch).then(
       function (data) {
         var rate = data && data.rates && data.rates[effTo];
-        if (typeof rate === 'number' && isFinite(rate)) {
+        if (typeof rate === 'number' && isFinite(rate) && rate > 0) {
           // Frankfurter answers with the latest available fixing, which may
           // predate the requested date: pin provenance to its actual date.
-          var dd = (data && typeof data.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.date)) ? data.date : d;
+          // Guard lookahead: never accept a fixing after the requested date.
+          var dd = (data && typeof data.date === 'string' && isValidDateStr(data.date)) ? data.date.slice(0, 10) : d;
+          if (dd > d) return walkBack();
           return { rate: rate, interpolated: back > 0 || dd !== d, source: 'ECB-' + dd };
         }
         return walkBack(); // 200 but no fixing for this date: previous close
@@ -411,7 +521,7 @@ function fetchEcbRate(date, from, to) {
       }
     );
   }
-  return attempt(date, 0);
+  return attempt(date.slice(0, 10), 0);
 }
 
 // --- Display conversion (main-currency switching) ---
@@ -591,12 +701,14 @@ function ledgerFxRate(lock) {
 function normalizeTrade(t) {
   t = t || {};
   var rate = ledgerFxRate(t.fxLock);
-  var totalMain = Number(t.total || 0) * rate;
-  var fee = Number(t.fee || 0);
+  var totalRaw = (t.total === '' || t.total === null || t.total === undefined) ? 0 : Number(t.total);
+  var feeRaw = (t.fee === '' || t.fee === null || t.fee === undefined) ? 0 : Number(t.fee);
+  var totalMain = (isFinite(totalRaw) && totalRaw >= 0 ? totalRaw : 0) * rate;
+  var fee = (isFinite(feeRaw) && feeRaw >= 0 ? feeRaw : 0);
   var feeRate = rate;
   var feeFxAssumedSameRate = false;
-  var ccy = typeof t.currency === 'string' ? t.currency.toUpperCase() : null;
-  var feeCcy = typeof t.feeCurrency === 'string' ? t.feeCurrency.toUpperCase() : null;
+  var ccy = typeof t.currency === 'string' ? t.currency.trim().toUpperCase() : null;
+  var feeCcy = typeof t.feeCurrency === 'string' && String(t.feeCurrency).trim() !== '' ? String(t.feeCurrency).trim().toUpperCase() : ccy;
   if (ccy && feeCcy && feeCcy !== ccy) {
     if (t.feeFxLock && isFinite(Number(t.feeFxLock.rate)) && Number(t.feeFxLock.rate) > 0) {
       feeRate = Number(t.feeFxLock.rate);
@@ -621,7 +733,7 @@ function ledgerSortByDate(trades) {
 
 function ledgerHoldingDays(openDate, closeDate) {
   function toUtc(d) {
-    if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(d)) return null;
+    if (!isValidDateStr(d)) return null;
     var p = d.slice(0, 10).split('-');
     var t = Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
     return isFinite(t) ? t : null;
@@ -632,35 +744,43 @@ function ledgerHoldingDays(openDate, closeDate) {
   return Math.round((b - a) / 86400000);
 }
 
+var LEDGER_EPS = 1e-9;
+
+function ledgerSym(t) {
+  return String((t && t.symbol) || '').trim().toUpperCase();
+}
+
 function computeAverage(trades) {
   var bySym = new Map();
   var list = ledgerSortByDate(trades);
   for (var i = 0; i < list.length; i++) {
     var t = list[i] || {};
-    var sym = String(t.symbol || '');
+    var sym = ledgerSym(t);
     if (!sym) continue;
-    if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
-    var e = bySym.get(sym);
     var qty = Number(t.qty);
     if (!isFinite(qty) || qty <= 0) continue;
+    if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
+    var e = bySym.get(sym);
     var n = normalizeTrade(t);
     if (t.type === 'buy') {
       e.qty += qty;
       e.cost += n.totalMain + n.feeMain;
     } else if (t.type === 'sell') {
-      if (e.qty <= 0) continue; // no inventory: ignore, never negative
+      if (e.qty <= LEDGER_EPS) continue; // no inventory: ignore, never negative
       var sellQty = Math.min(qty, e.qty);
       var avg = e.qty > 0 ? e.cost / e.qty : 0;
       var proceeds = n.totalMain - n.feeMain;
+      if (proceeds < 0) proceeds = 0;
       if (qty > e.qty && qty > 0) proceeds = proceeds * (sellQty / qty);
       e.realized += proceeds - avg * sellQty;
       e.cost -= avg * sellQty;
       e.qty -= sellQty;
-      if (e.qty === 0) e.cost = 0; // kill float dust
+      if (Math.abs(e.qty) < LEDGER_EPS) { e.qty = 0; e.cost = 0; } // kill float dust
     }
   }
   bySym.forEach(function (e) {
-    e.avgEntry = e.qty > 0 ? e.cost / e.qty : 0;
+    e.avgEntry = e.qty > LEDGER_EPS ? e.cost / e.qty : 0;
+    if (Math.abs(e.qty) < LEDGER_EPS) { e.qty = 0; e.cost = 0; }
   });
   return bySym;
 }
@@ -676,7 +796,7 @@ function computeFifo(trades) {
   }
   for (var i = 0; i < list.length; i++) {
     var t = list[i] || {};
-    var sym = String(t.symbol || '');
+    var sym = ledgerSym(t);
     if (!sym) continue;
     var qty = Number(t.qty);
     if (!isFinite(qty) || qty <= 0) continue;
@@ -686,14 +806,16 @@ function computeFifo(trades) {
     if (t.type === 'buy') {
       q.push({ qty: qty, unitCost: (n.totalMain + n.feeMain) / qty, date: t.date });
     } else if (t.type === 'sell') {
-      if (q.length === 0) continue; // no inventory: ignore, never negative
+      var heldFifo = q.reduce(function (s, l) { return s + l.qty; }, 0);
+      if (heldFifo <= LEDGER_EPS) continue; // no inventory: ignore, never negative
       var proceedsTotal = n.totalMain - n.feeMain;
+      if (proceedsTotal < 0) proceedsTotal = 0;
       var unitProceeds = qty > 0 ? proceedsTotal / qty : 0;
-      var sellQty = Math.min(qty, q.reduce(function (s, l) { return s + l.qty; }, 0));
+      var sellQty = Math.min(qty, heldFifo);
       // Scale proceeds when the sell is clamped (oversell ignored, no negative).
       if (qty > sellQty && qty > 0) unitProceeds = (proceedsTotal * (sellQty / qty)) / (sellQty || 1);
       var left = sellQty;
-      while (left > 0 && q.length > 0) {
+      while (left > LEDGER_EPS && q.length > 0) {
         var lot = q[0];
         var take = Math.min(lot.qty, left);
         var proceeds = take * unitProceeds;
@@ -710,7 +832,7 @@ function computeFifo(trades) {
         st.realized += proceeds - cost;
         lot.qty -= take;
         left -= take;
-        if (lot.qty <= 0) q.shift();
+        if (lot.qty <= LEDGER_EPS) q.shift();
       }
     }
   }
@@ -741,33 +863,38 @@ function computeFifo(trades) {
 function computePositions(trades, live, method) {
   var engine = method === 'fifo' ? computeFifo(trades) : computeAverage(trades);
   var buyCost = {}; // sym -> lifetime buy cost (denominator for returnPct)
+  var hasBuy = {};
   (trades || []).forEach(function (t) {
     if (!t || t.type !== 'buy') return;
-    var sym = String(t.symbol || '');
+    var sym = ledgerSym(t);
     if (!sym) return;
     var qty = Number(t.qty);
     if (!isFinite(qty) || qty <= 0) return;
     var n = normalizeTrade(t);
     buyCost[sym] = (buyCost[sym] || 0) + n.totalMain + n.feeMain;
+    hasBuy[sym] = true;
   });
   var rows = [];
   engine.forEach(function (v, sym) {
+    if (!hasBuy[sym] && !(v.qty > LEDGER_EPS) && !(Math.abs(v.realized || 0) > LEDGER_EPS)) return; // skip phantom sell-only rows
     // Unknown live price stays unknown (null) — never coerced to 0, which
     // fabricated a full loss (value 0, unrealized -cost, return -100%).
-    var raw = live ? live[sym] : undefined;
+    var lookup = String(sym).toUpperCase();
+    var raw = live ? (live[sym] !== undefined ? live[sym] : live[lookup]) : undefined;
     var num = Number(raw);
     var known = isFinite(num) && num > 0;
     var livePrice = known ? num : null;
     var qtyHeld = v.qty || 0;
+    if (Math.abs(qtyHeld) < LEDGER_EPS) qtyHeld = 0;
     var avgEntry = v.avgEntry || 0;
     var marketValue = known ? qtyHeld * num : (qtyHeld === 0 ? 0 : null);
     var unrealized = marketValue === null ? null : marketValue - avgEntry * qtyHeld;
     var realized = v.realized || 0;
     var totalPL = unrealized === null ? realized : unrealized + realized;
     var denom = buyCost[sym] || 0;
-    var returnPct = denom > 0
+    var returnPct = denom > LEDGER_EPS
       ? (unrealized === null ? (qtyHeld === 0 ? (realized / denom) * 100 : null) : (totalPL / denom) * 100)
-      : 0;
+      : null;
     rows.push({
       symbol: sym,
       qtyHeld: qtyHeld,
@@ -786,28 +913,29 @@ function computePositions(trades, live, method) {
 
 function validateTrade(t, heldQty) {
   t = t || {};
+  if (typeof t.qty !== 'number' && typeof t.qty !== 'string') return 'qty must be > 0';
+  if (typeof t.qty === 'string' && t.qty.trim() === '') return 'qty must be > 0';
   var qty = Number(t.qty);
   if (!isFinite(qty) || qty <= 0) return 'qty must be > 0';
-  if (t.total !== undefined && t.total !== null) {
+  if (t.total !== undefined && t.total !== null && String(t.total).trim() !== '') {
+    if (typeof t.total !== 'number' && typeof t.total !== 'string') return 'total must be >= 0';
     var total = Number(t.total);
     if (!isFinite(total) || total < 0) return 'total must be >= 0';
   }
-  if (t.fee !== undefined && t.fee !== null) {
+  if (t.fee !== undefined && t.fee !== null && String(t.fee).trim() !== '') {
+    if (typeof t.fee !== 'number' && typeof t.fee !== 'string') return 'fee must be >= 0';
     var fee = Number(t.fee);
     if (!isFinite(fee) || fee < 0) return 'fee must be >= 0';
   }
   if (t.type !== undefined && t.type !== 'buy' && t.type !== 'sell') {
     return 'type must be buy or sell';
   }
-  if (typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.date)) {
-    var now = new Date();
-    var m = now.getMonth() + 1;
-    var d = now.getDate();
-    var today = now.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (d < 10 ? '0' : '') + d;
-    if (t.date.slice(0, 10) > today) return 'date cannot be in the future';
+  if (typeof t.date === 'string' && t.date.length > 0) {
+    if (!isValidDateStr(t.date)) return 'date must be YYYY-MM-DD';
+    if (isFutureDateStr(t.date)) return 'date cannot be in the future';
   }
   if (t.type === 'sell' && typeof heldQty === 'number' && isFinite(heldQty)) {
-    if (qty > heldQty) return 'oversell: max sellable is ' + heldQty;
+    if (qty > heldQty + LEDGER_EPS) return 'oversell: max sellable is ' + heldQty;
   }
   return null;
 }
@@ -864,7 +992,7 @@ function priceCacheKey(symbol, vs) {
 }
 
 function priceOverrideFor(symbol) {
-  var sym = String(symbol).toUpperCase();
+  var sym = String(symbol).trim().toUpperCase();
   var ov = null;
   try {
     var st = loadState();
@@ -875,14 +1003,14 @@ function priceOverrideFor(symbol) {
   if (!ov || typeof ov !== 'object') return null;
   if (Object.prototype.hasOwnProperty.call(ov, sym)) {
     var v = Number(ov[sym]);
-    if (isFinite(v)) return v;
+    if (typeof ov[sym] === 'number' && isFinite(v) && v > 0) return v;
   }
   // Tolerate differently-cased keys without touching stored data.
   var keys = Object.keys(ov);
   for (var i = 0; i < keys.length; i++) {
     if (String(keys[i]).toUpperCase() === sym) {
       var w = Number(ov[keys[i]]);
-      if (isFinite(w)) return w;
+      if (typeof ov[keys[i]] === 'number' && isFinite(w) && w > 0) return w;
     }
   }
   return null;
@@ -900,8 +1028,10 @@ function priceDefaultVs(vs) {
 }
 
 function fetchLivePrice(symbol, vs) {
-  var sym = String(symbol || '').toUpperCase();
+  var sym = String(symbol || '').trim().toUpperCase();
   var cur = priceDefaultVs(vs);
+  cur = String(cur).trim().toUpperCase();
+  if (MAIN_CURRENCIES.indexOf(cur) === -1 && ['USDC', 'USDT', 'DAI'].indexOf(cur) === -1) cur = 'EUR';
   var curLow = String(cur).toLowerCase();
   // (1) Manual override wins — no network.
   var override = priceOverrideFor(sym);
@@ -913,21 +1043,25 @@ function fetchLivePrice(symbol, vs) {
   var key = priceCacheKey(sym, cur);
   var now = Date.now();
   var cached = priceCache[key];
-  if (cached && (now - cached.at) < PRICE_CACHE_TTL_MS && isFinite(Number(cached.price))) {
+  if (cached && (now - cached.at) < PRICE_CACHE_TTL_MS && isFinite(Number(cached.price)) && Number(cached.price) > 0) {
     return Promise.resolve(Number(cached.price));
   }
   var url = 'https://api.coingecko.com/api/v3/simple/price?ids=' +
     encodeURIComponent(id) + '&vs_currencies=' + encodeURIComponent(curLow);
   // Hermetic async: capture fetch at call time so a later stub restore
   // cannot clobber this operation's continuation.
-  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : fetch;
+  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : null;
+  if (!capturedFetch) {
+    if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Promise.resolve(Number(cached.price));
+    return Promise.resolve(null);
+  }
   return capturedFetch(url).then(function (res) {
     if (!res.ok) throw new Error('price-http-' + res.status);
     return res.json();
   }).then(function (data) {
     var p = data && data[id] && data[id][curLow];
     p = Number(p);
-    if (isFinite(p)) {
+    if (isFinite(p) && p > 0) {
       priceCache[key] = { price: p, at: Date.now() };
       return p;
     }
@@ -937,29 +1071,29 @@ function fetchLivePrice(symbol, vs) {
     if (curLow !== 'usd') {
       return fetchLivePrice(sym, 'USD').then(function (pu) {
         pu = Number(pu);
-        if (!isFinite(pu)) {
-          if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+        if (!isFinite(pu) || pu <= 0) {
+          if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Number(cached.price);
           return null;
         }
         return fetchEcbRate(todayStr(), 'USD', cur).then(function (r) {
           var bridged = pu * Number(r.rate);
-          if (!isFinite(bridged)) {
-            if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+          if (!isFinite(bridged) || bridged <= 0) {
+            if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Number(cached.price);
             return null;
           }
           priceCache[key] = { price: bridged, at: Date.now() };
           return bridged;
         }, function () {
-          if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+          if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Number(cached.price);
           return null;
         });
       });
     }
-    if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+    if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Number(cached.price);
     return null;
   }).then(null, function () {
     // Network error / 429 / bad payload: last cached or null, never throw.
-    if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+    if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Number(cached.price);
     return null;
   });
 }
@@ -1072,7 +1206,9 @@ function fmtPct(n) {
 function showBanner(msg) {
   var b = document.getElementById('banner');
   if (!b) return;
-  b.textContent = String(msg);
+  var t = document.getElementById('banner-text');
+  if (t) t.textContent = String(msg);
+  else b.textContent = String(msg);
   b.classList.add('error');
   b.hidden = false;
 }
@@ -1080,7 +1216,9 @@ function showBanner(msg) {
 function clearBanner() {
   var b = document.getElementById('banner');
   if (!b) return;
-  b.textContent = '';
+  var t = document.getElementById('banner-text');
+  if (t) t.textContent = '';
+  else b.textContent = '';
   b.classList.remove('error');
   b.hidden = true;
 }
@@ -1162,18 +1300,25 @@ function renderSummaryCards(st, rows) {
   var pl = 0;
   var mvKnown = false;
   var unKnown = false;
+  var hasRealized = false;
   var costKnown = 0; // remaining cost basis of positions with known prices
   rows.forEach(function (p) {
     rz += p.realized;
+    if (Math.abs(p.realized || 0) > 1e-9) hasRealized = true;
+    if (p.unrealized === null && Math.abs(p.realized || 0) <= 1e-9) {
+      if (p.marketValue !== null) { mv += p.marketValue; mvKnown = true; }
+      return; // unknown open position: value may count, P&L stays unknown
+    }
     pl += p.totalPL;
     if (p.marketValue !== null) { mv += p.marketValue; mvKnown = true; }
     if (p.unrealized !== null) { un += p.unrealized; unKnown = true; }
     if (p.marketValue !== null && p.unrealized !== null) costKnown += p.marketValue - p.unrealized;
   });
+  var plKnown = unKnown || hasRealized;
   var tb = document.getElementById('tb-totals');
   if (tb) {
     tb.textContent = rows.length
-      ? ('Portfolio value ' + (mvKnown ? fmtMoney(mv, main) : '—') + ' · total P&L ' + fmtMoney(pl, main) +
+      ? ('Portfolio value ' + (mvKnown ? fmtMoney(mv, main) : '—') + ' · total P&L ' + (plKnown ? fmtMoney(pl, main) : '—') +
         ' (' + st.settings.costMethod + ', ' + main + ')')
       : '';
   }
@@ -1203,9 +1348,10 @@ function renderSummaryCards(st, rows) {
   if (hv) hv.textContent = rows.length ? (mvKnown ? fmtMoney(mv, main) : '—') : '—';
   var hp = document.getElementById('hero-pl');
   if (hp) {
-    if (!rows.length) {
-      hp.textContent = '';
-      hp.className = 'hero-pl';
+    if (!rows.length || !plKnown) {
+      hp.textContent = plKnown && rows.length ? fmtMoney(pl, main) : '';
+      if (!plKnown) hp.textContent = '';
+      hp.className = 'hero-pl' + (plKnown && rows.length ? ' pill ' + plClass(pl) : '');
     } else {
       hp.textContent = fmtMoney(pl, main);
       hp.className = 'hero-pl pill ' + plClass(pl);
@@ -1262,17 +1408,11 @@ function renderAccounts(st) {
     card.className = 'account-card';
     card.setAttribute('data-account', acc.id);
     card.setAttribute('data-account-nav', acc.id);
-    card.setAttribute('tabindex', '0');
-    card.setAttribute('role', 'link');
     card.setAttribute('aria-label', 'Open ' + acc.name + ', ' + String(acc.ticker).toUpperCase());
     var avatar = document.createElement('span');
     avatar.className = 'acct-avatar';
     avatar.setAttribute('aria-hidden', 'true');
-    avatar.textContent = String(acc.ticker || '?').charAt(0).toUpperCase();
-    var hue = 0;
-    var tk0 = String(acc.ticker || '?');
-    for (var hi = 0; hi < tk0.length; hi++) hue = (hue * 31 + tk0.charCodeAt(hi)) % 360;
-    avatar.style.background = 'linear-gradient(135deg, hsl(' + hue + ', 55%, 38%), hsl(' + ((hue + 50) % 360) + ', 60%, 26%))';
+    avatar.textContent = String(acc.ticker || '?').substring(0, 4).toUpperCase();
     card.appendChild(avatar);
     var mid = document.createElement('span');
     mid.className = 'acct-mid';
@@ -1301,9 +1441,10 @@ function renderAccounts(st) {
     valv.textContent = mvKnown ? fmtMoney(mv, main) : (atrades.length ? '—' : 'New');
     figs.appendChild(valv);
     var plv = document.createElement('span');
+    var hasKnownPl = rows.some(function (r) { return r.unrealized !== null || Math.abs(r.realized || 0) > 1e-9; });
     plv.className = 'acct-pl ' + plClass(pl);
-    plv.textContent = fmtMoney(pl, main);
-    if (isFinite(Number(pl))) plv.setAttribute('data-value', String(Number(pl)));
+    plv.textContent = hasKnownPl ? fmtMoney(pl, main) : (atrades.length ? '—' : 'New');
+    if (isFinite(Number(pl)) && hasKnownPl) plv.setAttribute('data-value', String(Number(pl)));
     figs.appendChild(plv);
     card.appendChild(figs);
     var tradeBtn = document.createElement('button');
@@ -1313,11 +1454,13 @@ function renderAccounts(st) {
     tradeBtn.setAttribute('data-account-trade', acc.id);
     tradeBtn.setAttribute('aria-label', 'Add trade to ' + acc.name);
     card.appendChild(tradeBtn);
-    var chev = document.createElement('span');
-    chev.className = 'acct-chev';
-    chev.setAttribute('aria-hidden', 'true');
-    chev.textContent = '›';
-    card.appendChild(chev);
+    var openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'quiet acct-open';
+    openBtn.textContent = 'Open ›';
+    openBtn.setAttribute('data-account-open', acc.id);
+    openBtn.setAttribute('aria-label', 'Open ' + acc.name);
+    card.appendChild(openBtn);
     host.appendChild(card);
   });
 }
@@ -1465,7 +1608,7 @@ function tradeBlock(t, main) {
   del.addEventListener('click', function () { deleteTrade(del.getAttribute('data-del')); });
   head.appendChild(del);
   box.appendChild(head);
-  box.appendChild(statRow('Paid', fmtQty(t.total) + ' ' + String(t.currency || '').toUpperCase(), t.total, false));
+  box.appendChild(statRow('Paid', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
   box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
   var rate = document.createElement('div');
   rate.className = 'stat-row rate-line';
@@ -1635,9 +1778,19 @@ function route() {
     }
     if (!st || !st.settings) st = defaultState();
     renderAccountDetail(st, id);
+    var acc = accountById(st, id);
+    try { document.title = (acc ? acc.name + ' · ' + String(acc.ticker).toUpperCase() + ' — ' : '') + 'INOCULENS PLUTUS'; } catch (e) { /* ignore */ }
+    var back = document.getElementById('acct-back');
+    if (back && typeof back.focus === 'function') {
+      try {
+        if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.account-card')) back.focus({ preventScroll: true });
+      } catch (e) { /* ignore */ }
+    }
+    try { if (typeof window !== 'undefined' && window.scrollTo) window.scrollTo(0, 0); } catch (e) { /* ignore */ }
   } else {
     det.hidden = true;
     home.hidden = false;
+    try { document.title = 'INOCULENS PLUTUS — Local-First Portfolio Tracker'; } catch (e) { /* ignore */ }
   }
 }
 
@@ -1657,7 +1810,10 @@ function fxBadgeText(t) {
   if (!lock) return 'legacy rate';
   var r = Number(lock.rate);
   var bits = String(lock.source || 'rate');
-  if (isFinite(r)) bits += ' @ ' + r;
+  if (isFinite(r)) {
+    var rounded = Math.round(r * 10000) / 10000;
+    bits += ' @ ' + rounded;
+  }
   if (lock.interpolated) bits += ' (prev close)';
   if (t && stableToUsd(t.currency)) {
     return String(t.currency).toUpperCase() + '→USD 1.0 · ' + bits;
@@ -1803,7 +1959,11 @@ function buildAccounts() {
         return;
       }
       if (t.hasAttribute('data-account-trade')) {
-        openPrefillTrade(t.getAttribute('data-account-trade'));
+        openPrefillTrade(t.getAttribute('data-account-trade'), true);
+        return;
+      }
+      if (t.hasAttribute('data-account-open')) {
+        navTo(t.getAttribute('data-account-open'));
         return;
       }
       if (t.hasAttribute('data-account-rename')) {
@@ -1986,9 +2146,13 @@ function buildTradeForm() {
     var clabel = document.getElementById('t-custom-ccy-label');
     if (clabel) clabel.hidden = !needCustom;
     if (!needCustom && feeccy) {
-      ensureCustomFeeOption('');
-      feeccy.value = ccy.value; // fee usually in trade currency
-    } else {
+      var prevCcy = ccy.getAttribute('data-prev') || 'EUR';
+      if (feeccy.value === prevCcy) {
+        ensureCustomFeeOption('');
+        feeccy.value = ccy.value; // fee usually in trade currency (only if untouched)
+      }
+      ccy.setAttribute('data-prev', ccy.value);
+    } else if (feeccy) {
       ensureCustomFeeOption(String(custom.value || '').trim().toUpperCase());
     }
   });
@@ -2237,6 +2401,11 @@ function buildTopbar() {
   wireDialog('settings-dialog');
   wireDialog('account-dialog');
   wireDialog('confirm-dialog');
+  var bclose = document.getElementById('banner-close');
+  if (bclose && !bclose.getAttribute('data-wired')) {
+    bclose.setAttribute('data-wired', '1');
+    bclose.addEventListener('click', clearBanner);
+  }
   var cok = document.getElementById('confirm-ok');
   if (cok && !cok.getAttribute('data-wired')) {
     cok.setAttribute('data-wired', '1');
@@ -2302,6 +2471,15 @@ function buildTopbar() {
   if (gear && !gear.getAttribute('data-wired')) {
     gear.setAttribute('data-wired', '1');
     gear.addEventListener('click', function () { showSettingsTab('overrides'); openDialog('settings-dialog'); });
+  }
+  var fab = document.getElementById('fab-trade');
+  if (fab && !fab.getAttribute('data-wired')) {
+    fab.setAttribute('data-wired', '1');
+    fab.addEventListener('click', function () {
+      var tb = document.getElementById('tb-add');
+      if (tb) tb.click();
+      else openPrefillTrade(null);
+    });
   }
 }
 
@@ -2447,7 +2625,7 @@ function downloadBackup() {
   var blob = new Blob([json], { type: 'application/json' });
   var n = new Date();
   function p(x) { return (x < 10 ? '0' : '') + x; }
-  var name = 'inoculens-' + n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()) + '.json';
+  var name = 'plutus-' + n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()) + '.json';
   var urls = window.URL || window.webkitURL;
   var url = urls.createObjectURL(blob);
   var a = document.createElement('a');
@@ -2487,8 +2665,11 @@ function refreshPrices() {
     return Promise.resolve({});
   }
   return refreshAllPrices(syms, st.settings.mainCurrency).then(function (out) {
-    Object.keys(out).forEach(function (k) { livePrices[k] = out[k]; });
-    var missing = syms.filter(function (s) { return !isFinite(Number(livePrices[s])); });
+    Object.keys(out).forEach(function (k) {
+      var v = out[k];
+      if (isFinite(Number(v)) && Number(v) > 0) livePrices[k] = Number(v);
+    });
+    var missing = syms.filter(function (s) { return !(isFinite(Number(livePrices[s])) && Number(livePrices[s]) > 0); });
     if (missing.length) {
       showBanner('Live price unavailable for ' + missing.join(', ') + ' — showing last/manual price.');
     } else {

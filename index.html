@@ -2,11 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
   <title>INOCULENS PLUTUS — Local-First Portfolio Tracker</title>
   <meta name="description" content="INOCULENS PLUTUS is a private, local-first portfolio tracker. Track buys and sells per asset with live prices, ECB-locked FX normalization, and average-cost / FIFO P&L — all stored only in your browser. No account, no server, no tracking.">
   <link rel="canonical" href="https://plutus.inoculens.com/">
-  <meta name="theme-color" content="#0f0f0f">
+  <meta name="theme-color" content="#0b0e11">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0e11'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='18' fill='%23ffffff'%3EP%3C/text%3E%3C/svg%3E">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230b0e11'/%3E%3Ctext x='90' y='122' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='96' fill='%23ffffff'%3EP%3C/text%3E%3C/svg%3E">
 
   <!-- CSP: limit outbound data fetches to CoinGecko + Frankfurter (+ Fonts).
        connect-src only: scripts/styles/images/inline handlers unrestricted,
@@ -25,13 +28,13 @@
   <meta name="twitter:title" content="INOCULENS PLUTUS — Local-First Portfolio Tracker">
   <meta name="twitter:description" content="Private, local-first portfolio tracker with live prices, ECB-locked FX, and average-cost / FIFO P&L. No account, no server.">
 
-  <link rel="manifest" href="/manifest.json">
+  <link rel="manifest" href="./manifest.json">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="./styles.css">
 
   <script type="application/ld+json">
   {
@@ -47,9 +50,11 @@
   </script>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to portfolio</a>
   <header class="brand">
     <div class="brand-inner topbar">
       <div class="brand-id">
+        <span class="brand-mark" aria-hidden="true">P</span>
         <h1>INOCULENS <span>PLUTUS</span></h1>
       </div>
       <div class="topbar-controls">
@@ -67,19 +72,19 @@
           <button type="button" id="tb-fifo" aria-pressed="false">FIFO</button>
         </div>
         <button type="button" id="tb-add" class="primary">+ Trade</button>
-        <button type="button" id="tb-account">+ Account</button>
+        <button type="button" id="tb-account" class="ghost">+ Account</button>
         <button type="button" id="tb-settings" class="icon-btn" aria-haspopup="dialog" aria-label="Settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
       </div>
     </div>
   </header>
 
-  <div id="banner" role="status" aria-live="polite" hidden></div>
+  <div id="banner" role="alert" hidden><span id="banner-text"></span><button type="button" id="banner-close" aria-label="Dismiss">✕</button></div>
 
-  <main>
+  <main id="main">
     <div id="view-home">
       <section id="hero" aria-label="Portfolio total">
         <p class="hero-label">Total balance</p>
-        <p class="hero-value" id="hero-value">—</p>
+        <p class="hero-value" id="hero-value" aria-live="polite"><span class="skeleton" aria-hidden="true">—</span></p>
         <p class="hero-pl" id="hero-pl" aria-live="polite"></p>
         <p id="tb-totals" class="hero-sub" aria-live="polite"></p>
       </section>
@@ -94,6 +99,8 @@
       <section id="account-detail" aria-label="Account detail"></section>
     </div>
   </main>
+
+  <button type="button" id="fab-trade" aria-label="Add trade">+</button>
 
   <dialog id="trade-dialog" aria-labelledby="trade-dialog-title">
     <div class="dialog-head">
@@ -136,6 +143,6 @@
 
   <footer><p id="app-ver" class="muted"></p></footer>
 
-  <script src="/app.js" defer></script>
+  <script src="./app.js" defer></script>
 </body>
 </html>
