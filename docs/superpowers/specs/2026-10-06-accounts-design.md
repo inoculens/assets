@@ -1,4 +1,4 @@
-# INOCULENS ASSETS — Accounts (multi-account per ticker) — Design Spec
+# INOCULENS PLUTUS — Accounts (multi-account per ticker) — Design Spec
 
 Date: 2026-10-06
 Status: Approved design (approach A, sections 1-3)
@@ -40,7 +40,7 @@ Settings gains `defaultAccountId` (topbar/global Add-trade target;
 falls back to first account; none → Add-trade shows a hint).
 
 `localStorage` key: `inoculens.v2`.
-Export envelope: `{app:"inoculens-assets", version:2, exportedAt,
+Export envelope: `{app:"inoculens-plutus", version:2, exportedAt,
 settings, accounts, trades}`.
 Import v2: full validate (settings, accounts[], trades[] with accountId
 referencing a listed account), atomic reject otherwise.

@@ -1,4 +1,4 @@
-# INOCULENS ASSETS — Local-First Portfolio Tracker — Design Spec
+# INOCULENS PLUTUS — Local-First Portfolio Tracker — Design Spec
 
 Date: 2026-10-05
 Status: Approved design (approaches → sections 1-5 + styling amendment)
@@ -6,7 +6,7 @@ Approach: A — Split static + proxied ECB
 
 ## 1. Intent & Success Criteria
 
-**Outcome:** Private, local-first portfolio tracker named INOCULENS ASSETS.
+**Outcome:** Private, local-first portfolio tracker named INOCULENS PLUTUS.
 No server storage. User tracks buys/sells per asset ticker with auto-fetched
 live price plus manual fallback, mixed fiat entry currencies normalized to a
 main currency via ECB historical rates locked at trade date, average entry
@@ -15,7 +15,7 @@ tax-level detail.
 
 **Constraints:**
 - Static only, no build step, no backend, no keys, no analytics/cookies.
-- Repo: `assets/` currently empty `index.html` on `main`. Split static files.
+- Repo: `plutus/` currently empty `index.html` on `main`. Split static files.
 - Free public APIs only (CoinGecko, Frankfurter/ECB proxy).
 - User-approved fork-model sync: last imported file wins, no merge.
 
@@ -29,20 +29,20 @@ tax-level detail.
 
 ## 2. Architecture & Files
 
-- `assets/index.html` — shell + SEO head + app mount. Title:
-  `INOCULENS ASSETS — Local-First Portfolio Tracker`. Meta description,
+- `plutus/index.html` — shell + SEO head + app mount. Title:
+  `INOCULENS PLUTUS — Local-First Portfolio Tracker`. Meta description,
   canonical, OG/Twitter, JSON-LD `SoftwareApplication`, semantic
   header/main, single h1. Loads `./styles.css`, `./app.js` (defer).
-- `assets/styles.css` — full theme (see §7).
-- `assets/app.js` — vanilla JS modules in one file, namespaced:
+- `plutus/styles.css` — full theme (see §7).
+- `plutus/app.js` — vanilla JS modules in one file, namespaced:
   `Store`, `Prices`, `Fx`, `Ledger`, `Ui`. No framework, no router.
-- `assets/sitemap.xml`, `assets/robots.txt`, `assets/manifest.json`.
-- `assets/tests.html` — browser-native test harness (see §6).
+- `plutus/sitemap.xml`, `plutus/robots.txt`, `plutus/manifest.json`.
+- `plutus/tests.html` — browser-native test harness (see §6).
 
 **Persistence:**
 - `localStorage` key `inoculens.v1` autosaves on every mutation.
 - Download: versioned JSON
-  `{app:"inoculens-assets", version:1, exportedAt, settings, trades[], fxLocks{}}`.
+  `{app:"inoculens-plutus", version:1, exportedAt, settings, trades[], fxLocks{}}`.
 - Upload: parse → validate version/shape → full replace → recompute →
   render. Any validation failure rejects entirely with reason; existing
   data untouched.
@@ -105,7 +105,7 @@ Engine (both views computed from same list, UI toggle):
 
 ## 6. Testing
 
-- `assets/tests.html` imports pure functions
+- `plutus/tests.html` imports pure functions
   (`normalizeTrade, averageCost, fifoLots, fxForwardFill`) and asserts:
   mixed-currency normalization, avg example
   (1 BTC @50k + 1 @70k → avg 60k; sell 1 @80k → realized 20k avg /

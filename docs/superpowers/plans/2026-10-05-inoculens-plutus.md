@@ -1,4 +1,4 @@
-# INOCULENS ASSETS Implementation Plan
+# INOCULENS PLUTUS Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,20 +8,20 @@
 
 **Tech Stack:** Vanilla HTML/CSS/JS (ES2020), Google Fonts (Inter + Space Grotesk), CoinGecko free markets API, Frankfurter ECB proxy API, browser localStorage, no dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-10-05-inoculens-assets-design.md`
+**Spec:** `docs/superpowers/specs/2026-10-05-inoculens-plutus-design.md`
 
 ## Global Constraints
 
 - No backend, no keys, no analytics, no cookies.
 - No build step; works from `file://` and any static host.
 - `localStorage` key is exactly `inoculens.v1`.
-- Export shape is exactly `{app:"inoculens-assets", version:1, exportedAt, settings, trades}`.
+- Export shape is exactly `{app:"inoculens-plutus", version:1, exportedAt, settings, trades}`.
 - Failed import must reject entirely and leave existing data untouched.
 - `fxLock` is frozen at entry; later FX moves never rewrite history.
 - Oversell is blocked; no negative holdings.
 - Future trade dates are blocked.
 - CSP `connect-src` limited to CoinGecko + Frankfurter (+ Google Fonts).
-- Title is exactly `INOCULENS ASSETS — Local-First Portfolio Tracker`.
+- Title is exactly `INOCULENS PLUTUS — Local-First Portfolio Tracker`.
 
 ## Review Focus
 
@@ -36,11 +36,11 @@
 ### Task 1: Shell + SEO + glassy theme
 
 **Files:**
-- Create: `assets/index.html` (overwrite empty file)
-- Create: `assets/styles.css`
-- Create: `assets/manifest.json`
-- Create: `assets/robots.txt`
-- Create: `assets/sitemap.xml`
+- Create: `plutus/index.html` (overwrite empty file)
+- Create: `plutus/styles.css`
+- Create: `plutus/manifest.json`
+- Create: `plutus/robots.txt`
+- Create: `plutus/sitemap.xml`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -48,11 +48,11 @@
 
 - [ ] **Step 1: Write shell with failing load check**
 
-In `assets/index.html`, include head (title exact, meta description, canonical placeholder, OG/Twitter, JSON-LD SoftwareApplication `INOCULENS ASSETS`, fonts preconnect + Inter/Space Grotesk `display=swap`, link `styles.css`), body with `header.brand`, `div#banner`, `main` with `section#positions`, `section#trades`, `aside#settings`, script tag; verify `styles.css` link 404s until Task 1 code exists.
+In `plutus/index.html`, include head (title exact, meta description, canonical placeholder, OG/Twitter, JSON-LD SoftwareApplication `INOCULENS PLUTUS`, fonts preconnect + Inter/Space Grotesk `display=swap`, link `styles.css`), body with `header.brand`, `div#banner`, `main` with `section#positions`, `section#trades`, `aside#settings`, script tag; verify `styles.css` link 404s until Task 1 code exists.
 
 - [ ] **Step 2: Verify shell renders mounts**
 
-Run: `python3 -m http.server 8000 --directory assets` then open `http://localhost:8000/` and confirm header + empty mounts render (unstyled is OK at this step).
+Run: `python3 -m http.server 8000 --directory plutus` then open `http://localhost:8000/` and confirm header + empty mounts render (unstyled is OK at this step).
 Expected: PASS (mounts present).
 
 - [ ] **Step 3: Implement `styles.css` glassy YouTube-dark**
@@ -61,20 +61,20 @@ Tokens: `--bg:#0f0f0f; --glass:rgba(255,255,255,.06); --border:rgba(255,255,255,
 
 - [ ] **Step 4: Add `manifest.json`, `robots.txt`, `sitemap.xml`**
 
-manifest name `INOCULENS ASSETS`, display standalone, theme `#0f0f0f`. robots allow `/`. sitemap single URL placeholder (domain filled at deploy; must not break `file://`).
+manifest name `INOCULENS PLUTUS`, display standalone, theme `#0f0f0f`. robots allow `/`. sitemap single URL placeholder (domain filled at deploy; must not break `file://`).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add assets/index.html assets/styles.css assets/manifest.json assets/robots.txt assets/sitemap.xml
-git commit -m "feat: add INOCULENS ASSETS shell, SEO head, and glassy theme"
+git add plutus/index.html plutus/styles.css plutus/manifest.json plutus/robots.txt plutus/sitemap.xml
+git commit -m "feat: add INOCULENS PLUTUS shell, SEO head, and glassy theme"
 ```
 
 ### Task 2: Store (localStorage + export/import)
 
 **Files:**
-- Create: `assets/app.js` (skeleton + Store section)
-- Test: `assets/tests.html` (create harness skeleton; grows in later tasks)
+- Create: `plutus/app.js` (skeleton + Store section)
+- Test: `plutus/tests.html` (create harness skeleton; grows in later tasks)
 
 **Interfaces:**
 - Consumes: DOM mounts from Task 1 (not needed for pure functions).
@@ -86,14 +86,14 @@ git commit -m "feat: add INOCULENS ASSETS shell, SEO head, and glassy theme"
 
 `State = { settings:{mainCurrency:string, costMethod:'average'|'fifo'}, trades: Trade[], priceOverrides: Record<string,number> }`
 
-- [ ] **Step 1: Write failing Store tests in `assets/tests.html`**
+- [ ] **Step 1: Write failing Store tests in `plutus/tests.html`**
 
 ```js
 // round-trip
 let s = {settings:{mainCurrency:'EUR',costMethod:'average'}, trades:[], priceOverrides:{}};
 saveState(s); assert(JSON.stringify(loadState())===JSON.stringify(s));
 // export shape
-let out = JSON.parse(exportState(s)); assert(out.app==="inoculens-assets" && out.version===1 && Array.isArray(out.trades));
+let out = JSON.parse(exportState(s)); assert(out.app==="inoculens-plutus" && out.version===1 && Array.isArray(out.trades));
 // corrupt import rejects
 let before = loadState();
 try { importState('not-json'); assert(false); } catch(e){ assert(true); }
@@ -103,10 +103,10 @@ try { importState(JSON.stringify({app:'x',version:99})); assert(false); } catch(
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: serve `assets/` and open `http://localhost:8000/tests.html`.
+Run: serve `plutus/` and open `http://localhost:8000/tests.html`.
 Expected: FAIL (`saveState is not defined` / red list).
 
-- [ ] **Step 3: Implement Store in `assets/app.js`**
+- [ ] **Step 3: Implement Store in `plutus/app.js`**
 
 `loadState` reads `localStorage['inoculens.v1']`, falls back to `{settings:{mainCurrency:'EUR',costMethod:'average'},trades:[],priceOverrides:{}}`. `saveState` writes. `exportState` stringifies versioned envelope. `importState` parses, validates `app/version/trades[]/settings`, throws on any mismatch, writes + returns on success only. Expose on `window.Inoculens` for tests.
 
@@ -118,15 +118,15 @@ Expected: PASS (Store section green).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add assets/app.js assets/tests.html
+git add plutus/app.js plutus/tests.html
 git commit -m "feat: add localStorage store with versioned export/import"
 ```
 
 ### Task 3: Fx (ECB lock via Frankfurter)
 
 **Files:**
-- Modify: `assets/app.js` (Fx section)
-- Modify: `assets/tests.html` (Fx tests)
+- Modify: `plutus/app.js` (Fx section)
+- Modify: `plutus/tests.html` (Fx tests)
 
 **Interfaces:**
 - Consumes: `loadState/saveState` (for nothing yet; Fx is pure + fetch).
@@ -150,7 +150,7 @@ assert(stableToUsd('USDC')===true && stableToUsd('EUR')===false);
 Run: open `http://localhost:8000/tests.html`.
 Expected: FAIL (`normalizeToMain is not defined`).
 
-- [ ] **Step 3: Implement Fx in `assets/app.js`**
+- [ ] **Step 3: Implement Fx in `plutus/app.js`**
 
 `fetchEcbRate` GETs `https://api.frankfurter.app/{date}?from={from}&to={to}`; if `from===to` return 1. Stablecoins map to USD first (`USDC→USD 1.0`), then ECB USD→main. On missing-date response, walk back up to 5 days, set `interpolated:true`, `source:'ECB-'+actualDate`. Retry once, then throw `Error('fx-unavailable')` so UI can ask manual rate. Same-currency returns `{rate:1, interpolated:false, source:'1:1'}` without network.
 
@@ -162,15 +162,15 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add assets/app.js assets/tests.html
+git add plutus/app.js plutus/tests.html
 git commit -m "feat: add ECB FX lock with forward-fill and stablecoin path"
 ```
 
 ### Task 4: Ledger (normalize + average + FIFO)
 
 **Files:**
-- Modify: `assets/app.js` (Ledger section)
-- Modify: `assets/tests.html` (Ledger tests)
+- Modify: `plutus/app.js` (Ledger section)
+- Modify: `plutus/tests.html` (Ledger tests)
 
 **Interfaces:**
 - Consumes: `normalizeToMain` from Task 3.
@@ -201,7 +201,7 @@ assert(validateTrade({type:'sell',symbol:'BTC',qty:1}, 1) === null);
 Run: open `http://localhost:8000/tests.html`.
 Expected: FAIL (`computeAverage is not defined`).
 
-- [ ] **Step 3: Implement Ledger in `assets/app.js`**
+- [ ] **Step 3: Implement Ledger in `plutus/app.js`**
 
 `normalizeTrade` = `(total+fee-in-trade-ccy)*fxLock.rate` (fee converted at same lock; if `feeCurrency!==currency`, fee converted via its own lock if present else same rate and flagged). `computeAverage` accumulates cost/qty buys, proportional relief on sells. `computeFifo` keeps queue of buy lots, consumes oldest, records per-lot gain + holdingDays. `validateTrade` blocks qty<=0, total<0, future date, oversell. No DOM here.
 
@@ -213,15 +213,15 @@ Expected: PASS (avg 60k / realized 20k avg / 30k FIFO).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add assets/app.js assets/tests.html
+git add plutus/app.js plutus/tests.html
 git commit -m "feat: add ledger with average-cost and FIFO engines"
 ```
 
 ### Task 5: Prices (CoinGecko + manual + main-currency)
 
 **Files:**
-- Modify: `assets/app.js` (Prices section)
-- Modify: `assets/tests.html` (Prices tests: pure mapping/cache only, no network asserts)
+- Modify: `plutus/app.js` (Prices section)
+- Modify: `plutus/tests.html` (Prices tests: pure mapping/cache only, no network asserts)
 
 **Interfaces:**
 - Consumes: live `State.priceOverrides` (read internally, no extra param) + `State.settings.mainCurrency` as default `vs`.
@@ -244,7 +244,7 @@ assert((await fetchLivePrice('XYZ123','EUR'))===null); // unknown → null, neve
 Run: open `http://localhost:8000/tests.html`.
 Expected: FAIL (`SYMBOL_MAP is not defined`).
 
-- [ ] **Step 3: Implement Prices in `assets/app.js`**
+- [ ] **Step 3: Implement Prices in `plutus/app.js`**
 
 In-memory `priceCache {key:{price,at}}` 60s. Override wins. Unknown symbol (no map entry) returns null immediately. Otherwise GET `https://api.coingecko.com/api/v3/simple/price?ids={id}&vs_currencies={vs}`; on error/429 return last cached or null, never throw to UI. `refreshAllPrices` dedupes symbols, uppercases.
 
@@ -256,15 +256,15 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add assets/app.js assets/tests.html
+git add plutus/app.js plutus/tests.html
 git commit -m "feat: add CoinGecko live prices with manual fallback"
 ```
 
 ### Task 6: UI (positions + trades + settings + import/export)
 
 **Files:**
-- Modify: `assets/app.js` (Ui section + boot/wiring)
-- Modify: `assets/index.html` (only if mounts missing attributes; no restyle)
+- Modify: `plutus/app.js` (Ui section + boot/wiring)
+- Modify: `plutus/index.html` (only if mounts missing attributes; no restyle)
 
 **Interfaces:**
 - Consumes: all prior interfaces (`loadState/saveState/exportState/importState`, `fetchEcbRate`, `computePositions/validateTrade`, `refreshAllPrices`).
@@ -301,15 +301,15 @@ Expected: PASS + manual matrix done.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add assets/app.js assets/index.html
+git add plutus/app.js plutus/index.html
 git commit -m "feat: add portfolio UI with positions, trades, and settings"
 ```
 
 ### Task 7: Polish + verify (a11y, SEO, tests green)
 
 **Files:**
-- Modify: any of `assets/index.html`, `assets/styles.css`, `assets/app.js` (small fixes only)
-- Test: `assets/tests.html` (final)
+- Modify: any of `plutus/index.html`, `plutus/styles.css`, `plutus/app.js` (small fixes only)
+- Test: `plutus/tests.html` (final)
 
 **Interfaces:**
 - Consumes: everything.

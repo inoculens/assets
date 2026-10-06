@@ -1,5 +1,5 @@
 'use strict';
-/* INOCULENS ASSETS — app.js
+/* INOCULENS PLUTUS — app.js
  * Vanilla JS, no framework, no build step. Organized in sections:
  * Store, Prices, Fx, Ledger, Ui. Tasks 3-6 append their sections below.
  */
@@ -8,11 +8,11 @@
 // Local-first persistence: localStorage + versioned export/import.
 // Key: exactly 'inoculens.v2' (v1 is never read at runtime; v1 files import
 // via the grouping branch in importState). Export envelope: exactly
-// {app:"inoculens-assets", version:2, exportedAt, settings, accounts, trades, priceOverrides}.
+// {app:"inoculens-plutus", version:2, exportedAt, settings, accounts, trades, priceOverrides}.
 // Failed imports throw Error(reason) and leave stored data untouched.
 
 var STORAGE_KEY = 'inoculens.v2';
-var APP_ID = 'inoculens-assets';
+var APP_ID = 'inoculens-plutus';
 var STORE_VERSION = 2;
 
 function defaultState() {
@@ -2510,7 +2510,7 @@ function render() {
   renderAccounts(st);
   syncTopbar(st);
   var ver = document.getElementById('app-ver');
-  if (ver) ver.textContent = 'INOCULENS ASSETS v' + APP_VERSION + ' · local-only, no account, no server';
+  if (ver) ver.textContent = 'INOCULENS PLUTUS v' + APP_VERSION + ' · local-only, no account, no server';
   route(); // show home or the routed account page
   refreshDisplayRates(st); // fill missing historical pairs, then repaint once
 }
