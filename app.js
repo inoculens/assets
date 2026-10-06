@@ -17,7 +17,7 @@ var STORE_VERSION = 2;
 
 function defaultState() {
   return {
-    settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null },
+    settings: { mainCurrency: 'EUR', costMethod: 'average' },
     accounts: [],
     trades: [],
     priceOverrides: {}
@@ -78,20 +78,14 @@ function normalizeAccount(a) {
   };
 }
 
-function normalizeDefaultAccountId(v) {
-  if (v === null || v === undefined) return null;
-  return (typeof v === 'string' && v.length > 0) ? v : null;
-}
-
 function normalizeSettings(s, fallback) {
-  var fb = fallback || { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null };
+  var fb = fallback || { mainCurrency: 'EUR', costMethod: 'average' };
   if (!isValidSettings(s)) {
-    return { mainCurrency: fb.mainCurrency, costMethod: fb.costMethod, defaultAccountId: normalizeDefaultAccountId(fb.defaultAccountId) };
+    return { mainCurrency: fb.mainCurrency, costMethod: fb.costMethod };
   }
   return {
     mainCurrency: String(s.mainCurrency).toUpperCase(),
-    costMethod: s.costMethod,
-    defaultAccountId: normalizeDefaultAccountId(s.defaultAccountId)
+    costMethod: s.costMethod
   };
 }
 
@@ -123,9 +117,6 @@ function loadState() {
     priceOverrides = parsed.priceOverrides;
   }
   var settings = normalizeSettings(parsed.settings, fallback.settings);
-  if (settings.defaultAccountId && accountIds.indexOf(settings.defaultAccountId) === -1) {
-    settings.defaultAccountId = accounts.length ? accounts[0].id : null;
-  }
   return {
     settings: settings,
     accounts: accounts,
@@ -274,10 +265,8 @@ function importState(json) {
     priceOverrides = data.priceOverrides;
   }
   // All validation passed — only now replace stored state (never partial).
+  // Note: legacy files may carry settings.defaultAccountId; it is ignored.
   var normalizedSettings = normalizeSettings(data.settings, defaultState().settings);
-  if (normalizedSettings.defaultAccountId && accountIds.indexOf(normalizedSettings.defaultAccountId) === -1) {
-    throw new Error('import failed: unknown defaultAccountId');
-  }
   var next = {
     settings: normalizedSettings,
     accounts: data.accounts.map(normalizeAccount),
@@ -338,8 +327,7 @@ function importStateV1(data) {
   var next = {
     settings: {
       mainCurrency: data.settings.mainCurrency,
-      costMethod: data.settings.costMethod,
-      defaultAccountId: accounts.length ? accounts[0].id : null
+      costMethod: data.settings.costMethod
     },
     accounts: accounts,
     trades: trades,
@@ -358,14 +346,6 @@ function accountById(st, id) {
   return null;
 }
 
-function defaultAccount(st) {
-  var list = (st && Array.isArray(st.accounts)) ? st.accounts : [];
-  if (!list.length) return null;
-  var want = (st && st.settings) ? st.settings.defaultAccountId : null;
-  var hit = (typeof want === 'string' && want.length > 0) ? accountById(st, want) : null;
-  return hit || list[0];
-}
-
 // Expose pure functions for tests.html via window.Inoculens.
 if (typeof window !== 'undefined') {
   window.Inoculens = window.Inoculens || {};
@@ -375,7 +355,6 @@ if (typeof window !== 'undefined') {
   window.Inoculens.importState = importState;
   window.Inoculens.defaultState = defaultState;
   window.Inoculens.accountById = accountById;
-  window.Inoculens.defaultAccount = defaultAccount;
 }
 
 // === Fx ===
@@ -1317,9 +1296,10 @@ function renderSummaryCards(st, rows) {
   var plKnown = unKnown || hasRealized;
   var tb = document.getElementById('tb-totals');
   if (tb) {
+    var nAccts = (st.accounts || []).length;
     tb.textContent = rows.length
-      ? ('Portfolio value ' + (mvKnown ? fmtMoney(mv, main) : '—') + ' · total P&L ' + (plKnown ? fmtMoney(pl, main) : '—') +
-        ' (' + st.settings.costMethod + ', ' + main + ')')
+      ? (nAccts + (nAccts === 1 ? ' account' : ' accounts') + ' · ' +
+        (st.settings.costMethod === 'fifo' ? 'FIFO' : 'Average cost') + ' · in ' + main)
       : '';
   }
   var host = document.getElementById('summary-cards');
@@ -1404,7 +1384,6 @@ function renderAccounts(st) {
   h2.textContent = 'Accounts';
   h2.className = 'section-title';
   host.appendChild(h2);
-  var def = defaultAccount(st);
   accounts.forEach(function (acc, ai) {
     var card = document.createElement('article');
     card.className = 'account-card';
@@ -1424,7 +1403,7 @@ function renderAccounts(st) {
     mid.appendChild(nameEl);
     var tickEl = document.createElement('span');
     tickEl.className = 'account-ticker';
-    tickEl.textContent = String(acc.ticker).toUpperCase() + ((def && def.id === acc.id) ? ' · Default' : '');
+    tickEl.textContent = String(acc.ticker).toUpperCase();
     mid.appendChild(tickEl);
     card.appendChild(mid);
     var atrades = accountTrades({ trades: dtrades }, acc.id);
@@ -1604,7 +1583,7 @@ function tradeBlock(t, main) {
   var del = document.createElement('button');
   del.type = 'button';
   del.className = 'quiet danger trade-del';
-  del.textContent = '×';
+  del.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
   del.setAttribute('data-del', t.id || '');
   del.setAttribute('aria-label', 'Delete trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
   del.addEventListener('click', function () { deleteTrade(del.getAttribute('data-del')); });
@@ -1661,13 +1640,6 @@ function renderAccountDetail(st, id) {
   var lvNum = Number(lv);
   chip.textContent = String(acc.ticker).toUpperCase() + ((isFinite(lvNum) && lvNum > 0) ? ' · ' + fmtMoney(lvNum, main) : '');
   head.appendChild(chip);
-  var def = defaultAccount(st);
-  if (def && def.id === acc.id) {
-    var badge = document.createElement('span');
-    badge.className = 'account-default-badge';
-    badge.textContent = 'Default';
-    head.appendChild(badge);
-  }
   var menu = document.createElement('details');
   menu.className = 'menu';
   var sum = document.createElement('summary');
@@ -1689,9 +1661,6 @@ function renderAccountDetail(st, id) {
     return b;
   }
   menuBtn('+ Trade', 'Add trade to', function () { openPrefillTrade(acc.id, true); });
-  if (!def || def.id !== acc.id) {
-    menuBtn('Make default', 'Make default account', function () { setDefaultAccount(acc.id); });
-  }
   menuBtn('Rename', 'Rename', function () { startInlineRename(acc.id, head, nameEl); });
   menuBtn('Delete', 'Delete', function () { deleteAccount(acc.id); });
   menu.appendChild(mbox);
@@ -1830,10 +1799,8 @@ function createAccount(name, ticker) {
   if (!tk) { showBanner('Ticker is required (e.g. BTC).'); return null; }
   if (!/^[A-Z0-9._-]{1,12}$/.test(tk)) { showBanner('Ticker looks invalid — letters/numbers, up to 12 chars.'); return null; }
   if (!nm) nm = tk; // name defaults to ticker
-  var first = !Array.isArray(st.accounts) || st.accounts.length === 0;
   var acc = { id: uid(), name: nm, ticker: tk, createdAt: new Date().toISOString() };
   st.accounts.push(acc);
-  if (first) st.settings.defaultAccountId = acc.id; // set default if first
   if (!saveStateGuarded(st)) return null;
   clearBanner();
   render();
@@ -1859,15 +1826,6 @@ function renameAccount(id, name) {
   render();
 }
 
-function setDefaultAccount(id) {
-  if (!id) return;
-  var st = loadState();
-  if (!accountById(st, id)) return;
-  st.settings.defaultAccountId = id;
-  if (!saveStateGuarded(st)) return;
-  render();
-}
-
 function deleteAccount(id) {
   if (!id) return;
   var st = loadState();
@@ -1883,9 +1841,6 @@ function deleteAccount(id) {
     if (!accountById(s2, id)) return;
     s2.trades = (s2.trades || []).filter(function (t) { return !t || t.accountId !== id; });
     s2.accounts = (s2.accounts || []).filter(function (a) { return !a || a.id !== id; });
-    if (s2.settings.defaultAccountId === id) {
-      s2.settings.defaultAccountId = s2.accounts.length ? s2.accounts[0].id : null;
-    }
     if (!saveStateGuarded(s2)) return;
     clearBanner();
     render();
@@ -1935,7 +1890,7 @@ function buildAccountCreateRow() {
   inTick.id = 'acct-ticker';
   inTick.setAttribute('autocomplete', 'off');
   inTick.setAttribute('spellcheck', 'false');
-  inTick.setAttribute('placeholder', 'BTC');
+  inTick.setAttribute('placeholder', 'e.g. BTC');
   ft.appendChild(lt);
   ft.appendChild(inTick);
   var create = document.createElement('button');
@@ -1974,35 +1929,7 @@ function buildGuidePanel() {
   go.setAttribute('data-guide-trade', '1');
   ctas.appendChild(go);
   box.appendChild(ctas);
-  var alt = document.createElement('p');
-  alt.className = 'guide-alt';
-  var demo = document.createElement('button');
-  demo.type = 'button';
-  demo.className = 'linklike';
-  demo.textContent = 'or see a demo first';
-  demo.setAttribute('data-guide-demo', '1');
-  alt.appendChild(demo);
-  box.appendChild(alt);
   return box;
-}
-
-function seedDemoData() {
-  var st = loadState();
-  if ((st.trades || []).length) return;
-  var now = new Date().toISOString();
-  var btc = { id: uid(), name: 'Cold wallet', ticker: 'BTC', createdAt: now };
-  var eth = { id: uid(), name: 'Trading stack', ticker: 'ETH', createdAt: now };
-  st.accounts = [btc, eth];
-  st.settings.defaultAccountId = btc.id;
-  st.trades = [
-    { id: uid(), type: 'buy', symbol: 'BTC', qty: 0.5, total: 20000, currency: 'EUR', date: '2026-01-10', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, accountId: btc.id, createdAt: now },
-    { id: uid(), type: 'buy', symbol: 'ETH', qty: 5, total: 12000, currency: 'EUR', date: '2026-02-14', fee: 0, feeCurrency: 'EUR', note: '', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, accountId: eth.id, createdAt: now }
-  ];
-  st.priceOverrides = {};
-  if (!saveStateGuarded(st)) return;
-  clearBanner();
-  render();
-  refreshPrices();
 }
 
 function wireLanding() {
@@ -2037,10 +1964,6 @@ function buildAccounts() {
         openPrefillTrade(null);
         return;
       }
-      if (t.hasAttribute('data-guide-demo')) {
-        seedDemoData();
-        return;
-      }
       if (t.hasAttribute('data-account-trade')) {
         openPrefillTrade(t.getAttribute('data-account-trade'), true);
         return;
@@ -2059,10 +1982,6 @@ function buildAccounts() {
       }
       if (t.hasAttribute('data-account-delete')) {
         deleteAccount(t.getAttribute('data-account-delete'));
-        return;
-      }
-      if (t.hasAttribute('data-account-default')) {
-        setDefaultAccount(t.getAttribute('data-account-default'));
         return;
       }
       var del = e.target && e.target.closest ? e.target.closest('[data-del]') : null;
@@ -2136,7 +2055,7 @@ function buildAccountDialog() {
     '<label for="na-name">Account name</label>' +
     '<input id="na-name" autocomplete="off" spellcheck="false" placeholder="e.g. Cold wallet">' +
     '<label for="na-ticker">Ticker</label>' +
-    '<input id="na-ticker" autocomplete="off" spellcheck="false" placeholder="BTC">' +
+    '<input id="na-ticker" autocomplete="off" spellcheck="false" placeholder="e.g. BTC">' +
     '<p id="na-error" class="banner-error" role="alert" hidden></p>' +
     '<button id="na-create" class="primary" type="button">Create account</button>';
   host.appendChild(wrap);
@@ -2195,9 +2114,9 @@ function buildTradeForm() {
     '<select id="t-account"></select></div>' +
     '<div class="fld-locked"><span class="fld-label">Symbol (locked to account)</span> <span id="t-symbol-locked" role="status"></span></div>' +
     '<label for="t-qty">Quantity</label>' +
-    '<input id="t-qty" inputmode="decimal" placeholder="1">' +
+    '<input id="t-qty" inputmode="decimal" placeholder="e.g. 1">' +
     '<label for="t-total">Total (native currency)</label>' +
-    '<input id="t-total" inputmode="decimal" placeholder="50000">' +
+    '<input id="t-total" inputmode="decimal" placeholder="e.g. 50000">' +
     '<label for="t-currency">Currency</label>' +
     '<select id="t-currency">' + ccyOptions('EUR') + '</select>' +
     '<label for="t-custom-ccy" id="t-custom-ccy-label" hidden>Custom currency code</label>' +
@@ -2206,11 +2125,11 @@ function buildTradeForm() {
     '<input id="t-date" type="date">' +
     '<details class="adv"><summary>Details</summary>' +
     '<label for="t-fee">Fee</label>' +
-    '<input id="t-fee" inputmode="decimal" placeholder="0">' +
+    '<input id="t-fee" inputmode="decimal" placeholder="e.g. 0">' +
     '<label for="t-feeccy">Fee currency</label>' +
     '<select id="t-feeccy">' + ccyOptions('EUR', false) + '</select>' +
     '<label for="t-note">Note</label>' +
-    '<input id="t-note" autocomplete="off" placeholder="optional">' +
+    '<input id="t-note" autocomplete="off" placeholder="e.g. monthly savings">' +
     '<label for="t-manual-rate">Manual FX rate (fallback when ECB is unavailable)</label>' +
     '<input id="t-manual-rate" inputmode="decimal" placeholder="e.g. 0.92">' +
     '<label for="t-manual-price">Manual live price (override, in main currency)</label>' +
@@ -2274,7 +2193,7 @@ function openPrefillTrade(accountId, lockIt) {
     return null;
   }
   var target = ((typeof accountId === 'string' && accountId.length > 0) && accountById(st, accountId)) ||
-    defaultAccount(st) || accounts[0];
+    accounts[0];
   buildTradeForm(); // ensure the form exists (init normally builds it)
   var sel = document.getElementById('t-account');
   if (sel) {
@@ -2317,7 +2236,8 @@ function onTradeSubmit(ev) {
   var st0 = loadState();
   var main = st0.settings.mainCurrency;
   var side = uiVal('t-side', 'buy') === 'sell' ? 'sell' : 'buy';
-  var acc = accountById(st0, uiVal('t-account', '')) || defaultAccount(st0);
+  var list = Array.isArray(st0.accounts) ? st0.accounts : [];
+  var acc = accountById(st0, uiVal('t-account', '')) || list[0];
   if (!acc) { tradeFormError('Create your first account to enable Add trade.'); return; }
   var symbol = String(acc.ticker).toUpperCase();
   var accountId = acc.id;
@@ -2605,7 +2525,7 @@ function buildSettings() {
     '<div class="set-panels">' +
     '<section data-setpanel="overrides" role="tabpanel" aria-label="Price overrides">' +
     '<label for="o-symbol">Symbol</label>' +
-    '<input id="o-symbol" autocomplete="off" spellcheck="false" placeholder="BTC">' +
+    '<input id="o-symbol" autocomplete="off" spellcheck="false" placeholder="e.g. BTC">' +
     '<label for="o-price">Price (main currency)</label>' +
     '<input id="o-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '<button id="o-add" type="button">Save override</button>' +
@@ -2856,7 +2776,6 @@ if (typeof window !== 'undefined') {
   window.Inoculens.createAccount = createAccount;
   window.Inoculens.renameAccount = renameAccount;
   window.Inoculens.deleteAccount = deleteAccount;
-  window.Inoculens.setDefaultAccount = setDefaultAccount;
   window.Inoculens.accountTrades = accountTrades;
   window.Inoculens.heldQtyFor = heldQtyFor;
   window.Inoculens.openPrefillTrade = openPrefillTrade;

@@ -333,7 +333,7 @@ section h2, aside h2 {
 }
 
 .hero-value {
-  margin: 0.35rem 0 0.6rem;
+  margin: 0.35rem 0 0.75rem;
   font-family: var(--font-display);
   font-size: clamp(2.4rem, 6vw, 3.4rem);
   font-weight: 700;
@@ -342,7 +342,7 @@ section h2, aside h2 {
   line-height: 1.05;
 }
 
-.hero-pl { margin: 0; display: inline-block; }
+.hero-pl { margin: 0 0 0.15rem; display: inline-block; }
 
 .pill {
   border-radius: 999px;
@@ -361,7 +361,7 @@ section h2, aside h2 {
 .pill.loss::before { content: "▼ "; font-size: 0.72em; }
 
 .hero-sub {
-  margin: 0.65rem 0 0;
+  margin: 0.75rem 0 0;
   color: var(--muted);
   font-size: 0.85rem;
 }
@@ -436,7 +436,7 @@ section h2, aside h2 {
 .account-card {
   display: flex;
   align-items: center;
-  gap: 0.95rem;
+  gap: 1rem;
   padding: 1rem 1.1rem;
   background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent), var(--surface);
   border: 1px solid var(--border);
@@ -448,6 +448,13 @@ section h2, aside h2 {
 .account-card:hover {
   border-color: var(--border-strong);
   background: linear-gradient(180deg, rgba(255,255,255,0.045), transparent), var(--surface-2);
+}
+
+@media (min-width: 721px) {
+  .acct-figs {
+    padding-right: 1.1rem;
+    border-right: 1px solid var(--border);
+  }
 }
 
 .acct-avatar {
@@ -547,17 +554,6 @@ section h2, aside h2 {
   border-radius: 999px;
   padding: 0.22rem 0.7rem;
   white-space: nowrap;
-}
-
-.account-default-badge {
-  font-size: 0.68rem;
-  font-weight: 650;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.2rem 0.6rem;
 }
 
 .menu { position: relative; margin-left: auto; }
@@ -822,7 +818,6 @@ body.has-no-trades #tb-account { display: none; }
 
 .guide-ctas { display: flex; gap: 0.75rem; flex-wrap: wrap; }
 .guide-ctas button { min-height: 3.1rem; padding: 0.75rem 1.6rem; font-size: 1rem; }
-.guide-alt { margin: 1rem 0 0; }
 
 button.linklike {
   background: none;

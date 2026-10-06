@@ -184,13 +184,13 @@
 
       try {
         test('store round-trip', function () {
-          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} };
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [], priceOverrides: {} };
           saveState(s);
           assert(JSON.stringify(loadState()) === JSON.stringify(s), 'loadState did not return saved state');
         });
 
         test('export shape', function () {
-          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} };
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [], priceOverrides: {} };
           var out = JSON.parse(exportState(s));
           assert(out.app === 'inoculens-plutus' && out.version === 2 && Array.isArray(out.trades), 'bad envelope: ' + JSON.stringify(out));
           assert(out.settings && out.settings.mainCurrency === 'EUR', 'envelope missing settings');
@@ -216,7 +216,7 @@
           try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
           var d = loadState();
           assert(d.settings.mainCurrency === 'EUR' && d.settings.costMethod === 'average', 'bad default settings');
-          assert(d.settings.defaultAccountId === null, 'default defaultAccountId should be null');
+          assert(!('defaultAccountId' in d.settings), 'settings must not carry defaultAccountId');
           assert(Array.isArray(d.accounts) && d.accounts.length === 0, 'default accounts not empty');
           assert(Array.isArray(d.trades) && d.trades.length === 0, 'default trades not empty');
           try { localStorage.setItem('inoculens.v2', '###corrupt###'); } catch (e) { /* ignore */ }
@@ -225,19 +225,19 @@
         });
 
         test('export/import round-trip identity', function () {
-          var s = { settings: { mainCurrency: 'USD', costMethod: 'fifo', defaultAccountId: 'a1' }, accounts: [{ id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [{ id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'USD', date: '2026-01-01', fee: 0, feeCurrency: 'USD', accountId: 'a1', fxLock: { pair: 'USD/USD', rate: 1, source: '1:1' } }], priceOverrides: {} };
+          var s = { settings: { mainCurrency: 'USD', costMethod: 'fifo' }, accounts: [{ id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [{ id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'USD', date: '2026-01-01', fee: 0, feeCurrency: 'USD', accountId: 'a1', fxLock: { pair: 'USD/USD', rate: 1, source: '1:1' } }], priceOverrides: {} };
           var json = exportState(s);
           try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
           var back = importState(json);
           assert(back.settings.mainCurrency === 'USD' && back.settings.costMethod === 'fifo', 'imported settings mismatch');
-          assert(back.settings.defaultAccountId === 'a1', 'imported defaultAccountId mismatch');
+          assert(!('defaultAccountId' in back.settings), 'settings must not carry defaultAccountId');
           assert(Array.isArray(back.accounts) && back.accounts.length === 1 && back.accounts[0].id === 'a1', 'imported accounts mismatch');
           assert(Array.isArray(back.trades) && back.trades.length === 1 && back.trades[0].accountId === 'a1', 'imported trades mismatch');
           assert(JSON.stringify(loadState()) === JSON.stringify(back), 'imported state was not persisted');
         });
 
         test('priceOverrides export/import round-trip', function () {
-          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: { BTC: 50000, ETH: 3000.5 } };
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [], priceOverrides: { BTC: 50000, ETH: 3000.5 } };
           var out = JSON.parse(exportState(s));
           assert(JSON.stringify(out.priceOverrides) === JSON.stringify(s.priceOverrides), 'envelope dropped priceOverrides');
           try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
@@ -247,7 +247,7 @@
         });
 
         test('v2 envelope without priceOverrides key imports with {}', function () {
-          var noKey = JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [] });
+          var noKey = JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [] });
           try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
           var back = importState(noKey);
           assert(JSON.stringify(back.priceOverrides) === '{}', 'missing key did not default priceOverrides to {}');
@@ -264,7 +264,7 @@
 
         test('invalid priceOverrides rejects, state untouched', function () {
           var before = loadState();
-          var bad = JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: { BTC: 'high' } });
+          var bad = JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [], priceOverrides: { BTC: 'high' } });
           try { importState(bad); assert(false, 'should have thrown on non-numeric override'); }
           catch (e) { assert(true); }
           assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
@@ -314,7 +314,7 @@
           } catch (e) { /* read-only storage: skip stub, still assert typed path exists */ }
           try {
             try {
-              saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} });
+              saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [], priceOverrides: {} });
             } catch (e) {
               threw = !!(e && e.message === 'storage-unavailable');
             }
@@ -322,7 +322,7 @@
             var guarded = (window.Inoculens || {}).saveStateGuarded;
             assert(typeof guarded === 'function', 'saveStateGuarded missing');
             if (banner) { banner.hidden = true; banner.textContent = ''; }
-            var ok = guarded({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} });
+            var ok = guarded({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [], priceOverrides: {} });
             assert(ok === false, 'saveStateGuarded should return false on storage failure');
             assert(banner && banner.hidden === false && banner.textContent.indexOf('Storage unavailable') !== -1, 'guarded failure must surface via banner');
           } finally {
@@ -343,7 +343,6 @@
       var exportState = Store.exportState;
       var importState = Store.importState;
       var accountById = Store.accountById;
-      var defaultAccount = Store.defaultAccount;
 
       var backup = null;
       try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
@@ -355,12 +354,20 @@
       }
 
       try {
-        test('accounts v2 round-trip incl. accounts + default', function () {
-          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a1' }, accounts: [{ id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [{ id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', accountId: 'a1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } }], priceOverrides: {} };
+        test('accounts v2 round-trip incl. accounts', function () {
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [{ id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [{ id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', accountId: 'a1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } }], priceOverrides: {} };
           saveState(s);
-          assert(loadState().accounts.length === 1 && loadState().settings.defaultAccountId === 'a1', 'accounts/default did not round-trip');
+          assert(loadState().accounts.length === 1 && loadState().accounts[0].id === 'a1', 'accounts did not round-trip');
           var out = JSON.parse(exportState(s));
           assert(out.version === 2 && Array.isArray(out.accounts), 'bad v2 envelope: ' + JSON.stringify(out));
+          assert(!('defaultAccountId' in out.settings), 'envelope settings must not carry defaultAccountId');
+        });
+
+        test('legacy defaultAccountId is tolerated and dropped', function () {
+          var legacy = JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a1' }, accounts: [{ id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [] });
+          try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
+          var back = importState(legacy);
+          assert(back.accounts.length === 1 && !('defaultAccountId' in back.settings), 'legacy defaultAccountId should be ignored: ' + JSON.stringify(back.settings));
         });
 
         test('accounts v1 import groups per symbol', function () {
@@ -371,25 +378,20 @@
 
         test('accounts unknown accountId rejects atomically', function () {
           var before = loadState();
-          try { importState(JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [{ id: 'z', type: 'buy', symbol: 'BTC', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', accountId: 'nope', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } }] })); assert(false, 'should have thrown on unknown accountId'); } catch (e) { assert(true); }
+          try { importState(JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [{ id: 'z', type: 'buy', symbol: 'BTC', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', accountId: 'nope', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } }] })); assert(false, 'should have thrown on unknown accountId'); } catch (e) { assert(true); }
           assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
         });
 
         test('accounts duplicate account ids reject atomically', function () {
           var before = loadState();
-          var dup = JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [{ id: 'a', name: 'A', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }, { id: 'a', name: 'B', ticker: 'ETH', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [] });
+          var dup = JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [{ id: 'a', name: 'A', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }, { id: 'a', name: 'B', ticker: 'ETH', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [] });
           try { importState(dup); assert(false, 'should have thrown on duplicate account id'); }
           catch (e) { assert(String((e && e.message) || e).indexOf('import failed') !== -1, 'wrong error: ' + ((e && e.message) || e)); }
           assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
         });
 
-        test('accounts defaultAccount fallback', function () {
-          assert(defaultAccount({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'gone' }, accounts: [{ id: 'a', name: 'A', ticker: 'BTC', createdAt: 'x' }], trades: [], priceOverrides: {} }).id === 'a', 'dangling default should fall back to first account');
-          assert(defaultAccount({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: null }, accounts: [], trades: [], priceOverrides: {} }) === null, 'empty accounts should give null');
-        });
-
         test('accounts accountById semantics', function () {
-          var st = { settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a' }, accounts: [{ id: 'a', name: 'A', ticker: 'BTC', createdAt: 'x' }], trades: [], priceOverrides: {} };
+          var st = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [{ id: 'a', name: 'A', ticker: 'BTC', createdAt: 'x' }], trades: [], priceOverrides: {} };
           assert(accountById(st, 'a') !== null && accountById(st, 'a').id === 'a', 'accountById should return the account');
           assert(accountById(st, 'missing') === null, 'accountById should return null for unknown id');
           assert(accountById(st, null) === null, 'accountById should return null for null id');
@@ -885,7 +887,7 @@
     function seedForUi() {
       var L = window.Inoculens;
       L.saveState({
-        settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'ui-acct' },
+        settings: { mainCurrency: 'EUR', costMethod: 'average' },
         accounts: [
           { id: 'ui-acct', name: 'Test BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
         ],
@@ -900,7 +902,7 @@
     function setCostMethod(m) {
       var L = window.Inoculens;
       var s = L.loadState();
-      s.settings = { mainCurrency: s.settings.mainCurrency, costMethod: m, defaultAccountId: s.settings.defaultAccountId };
+      s.settings = { mainCurrency: s.settings.mainCurrency, costMethod: m };
       L.saveState(s);
       render();
     }
@@ -1031,7 +1033,7 @@
 
       test('feeCurrency CUSTOM literal falls back to trade currency', function () {
         if (typeof init === 'function') init();
-        L.saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'fee-acct' }, accounts: [{ id: 'fee-acct', name: 'Fee BTC', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [], priceOverrides: {} });
+        L.saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [{ id: 'fee-acct', name: 'Fee BTC', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [], priceOverrides: {} });
         render();
         openPrefillTrade('fee-acct');
         assert(document.getElementById('t-symbol-locked').textContent === 'BTC', 'symbol should lock to account ticker');
@@ -1070,7 +1072,7 @@
 
       test('positions show unknowns, not a fictitious loss, when live price missing', function () {
         L.saveState({
-          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'dbg-acct' },
+          settings: { mainCurrency: 'EUR', costMethod: 'average' },
           accounts: [
             { id: 'dbg-acct', name: 'Dbg BTC', ticker: 'BTC', createdAt: '2026-10-05T00:00:00.000Z' }
           ],
@@ -1099,7 +1101,7 @@
 
       test('closed positions labelled Closed, data kept', function () {
         L.saveState({
-          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'cl-acct' },
+          settings: { mainCurrency: 'EUR', costMethod: 'average' },
           accounts: [
             { id: 'cl-acct', name: 'Closed BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
           ],
@@ -1140,13 +1142,13 @@
           Object.keys(lp).forEach(function (k) { delete lp[k]; });
         } catch (e) { /* ignore */ }
         L.saveState({
-          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a1-default-id' },
+          settings: { mainCurrency: 'EUR', costMethod: 'average' },
           accounts: [
-            { id: 'a1-default-id', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
+            { id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
             { id: 'a2', name: 'Hot', ticker: 'BTC', createdAt: '2026-10-06T00:00:01.000Z' }
           ],
           trades: [
-            { id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 30, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'a1-default-id', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-06T00:00:00.000Z' },
+            { id: 't1', type: 'buy', symbol: 'BTC', qty: 1, total: 30, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'a1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-06T00:00:00.000Z' },
             { id: 't2', type: 'buy', symbol: 'BTC', qty: 1, total: 70, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'a2', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-06T00:00:00.000Z' }
           ],
           priceOverrides: {}
@@ -1170,44 +1172,64 @@
           var btns = document.querySelectorAll('#accounts [data-account-trade]');
           assert(btns.length === 2, 'expected per-card + Trade buttons, got ' + btns.length);
           var ids = Array.prototype.map.call(btns, function (b) { return b.getAttribute('data-account-trade'); });
-          assert(ids.indexOf('a1-default-id') !== -1 && ids.indexOf('a2') !== -1, 'per-card Trade buttons must carry data-account-trade="<id>", got ' + JSON.stringify(ids));
+          assert(ids.indexOf('a1') !== -1 && ids.indexOf('a2') !== -1, 'per-card Trade buttons must carry data-account-trade="<id>", got ' + JSON.stringify(ids));
         });
 
-        testAsync('accounts default fallback + empty state', function () {
+        testAsync('accounts delete removes account and its trades', function () {
           seedTwoAccounts(); init(); render();
-          deleteAccount('a1-default-id');
+          deleteAccount('a1');
           assert(document.getElementById('confirm-message').textContent.indexOf('Delete account') !== -1, 'delete must ask in-app');
           document.getElementById('confirm-ok').click();
           return new Promise(function (res) { setTimeout(res, 0); }).then(function () {
-            assert(defaultAccount(loadState()).id === 'a2', 'default should fall back to a2 after deleting default with trades');
-            assert(loadState().trades.every(function (t) { return t.accountId !== 'a1-default-id'; }), 'deleted account trades must go too');
+            var st = loadState();
+            assert(st.accounts.length === 1 && st.accounts[0].id === 'a2', 'only survivor a2 should remain, got ' + JSON.stringify(st.accounts));
+            assert(st.trades.every(function (t) { return t.accountId !== 'a1'; }), 'deleted account trades must go too');
             assert(document.querySelectorAll('#accounts .account-card').length === 1, 'only survivor card should remain');
             saveState(defaultState()); render();
-            assert(document.getElementById('accounts').textContent.indexOf('Create your first account') !== -1, 'empty-state prompt missing');
+            assert(document.getElementById('hero').hidden === true, 'hero should hide when no accounts remain');
+            assert(document.getElementById('overview').hidden === true, 'overview should hide when no accounts remain');
+            assert(document.body.classList.contains('is-empty'), 'body should carry is-empty with no accounts');
             restoreState();
           });
         });
 
-        testAsync('accounts deleting empty default falls back to survivor', function () {
+        testAsync('accounts deleting empty account leaves survivor', function () {
           L.saveState({
-            settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'empty-default' },
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
             accounts: [
-              { id: 'empty-default', name: 'Empty', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
+              { id: 'gone', name: 'Empty', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
               { id: 'survivor', name: 'Keeper', ticker: 'ETH', createdAt: '2026-10-06T00:00:01.000Z' }
             ],
             trades: [],
             priceOverrides: {}
           });
           init(); render();
-          deleteAccount('empty-default');
+          deleteAccount('gone');
           document.getElementById('confirm-ok').click();
           return new Promise(function (res) { setTimeout(res, 0); }).then(function () {
-            assert(defaultAccount(loadState()).id === 'survivor', 'default should fall back to survivor, got ' + JSON.stringify(defaultAccount(loadState())));
+            assert(loadState().accounts.length === 1 && loadState().accounts[0].id === 'survivor', 'survivor should remain');
             var cards = document.querySelectorAll('#accounts .account-card');
             assert(cards.length === 1, 'only survivor card should render, got ' + cards.length);
             assert(cards[0].getAttribute('data-account') === 'survivor', 'survivor card missing');
             restoreState();
           });
+        });
+
+        test('accounts with no trades show guide and hide numbers', function () {
+          L.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [
+              { id: 'fresh', name: 'Fresh', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }
+            ],
+            trades: [],
+            priceOverrides: {}
+          });
+          init(); render();
+          assert(document.body.classList.contains('has-no-trades'), 'body should carry has-no-trades before first trade');
+          assert(document.getElementById('hero').hidden === true, 'hero should hide before first trade');
+          assert(document.getElementById('overview').hidden === true, 'overview should hide before first trade');
+          assert(document.querySelector('#accounts .guide-panel') !== null, 'guide panel should lead Step 2');
+          restoreState();
         });
       } finally {
         restoreState();
@@ -1233,7 +1255,7 @@
           Object.keys(lp).forEach(function (k) { delete lp[k]; });
         } catch (e) { /* ignore */ }
         L.saveState({
-          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'r1' },
+          settings: { mainCurrency: 'EUR', costMethod: 'average' },
           accounts: [
             { id: 'r1', name: 'Cold', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' },
             { id: 'r2', name: 'Hot', ticker: 'BTC', createdAt: '2026-01-01T00:00:01.000Z' }
@@ -1290,7 +1312,7 @@
           navHome();
           render();
           document.getElementById('tb-add').click();
-          assert(document.getElementById('t-account').value === 'r1', 'trade should default to default account r1');
+          assert(document.getElementById('t-account').value === 'r1', 'trade should preselect the first account r1');
           assert(document.getElementById('t-account-row').style.display !== 'none', 'account select should show on home');
         });
 
@@ -1358,7 +1380,7 @@
           Object.keys(lp).forEach(function (k) { delete lp[k]; });
         } catch (e) { /* ignore */ }
         L.saveState({
-          settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a1' },
+          settings: { mainCurrency: 'EUR', costMethod: 'average' },
           accounts: [
             { id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
             { id: 'a2', name: 'Hot', ticker: 'BTC', createdAt: '2026-10-06T00:00:01.000Z' }
@@ -1392,17 +1414,17 @@
           assert(validateTrade({type:'sell',symbol:'BTC',qty:1}, heldQtyFor(accountTrades('a2'),'BTC'))!==null, 'cross-account oversell not blocked');
         });
 
-        test('trade dialog null opens on default account', function () {
+        test('trade dialog null opens on first account', function () {
           seedTradeDialog();
           init();
           openPrefillTrade(null);
-          assert(document.getElementById('t-account').value==='a1', 'null should open default account, got ' + document.getElementById('t-account').value);
-          assert(document.getElementById('t-symbol-locked').textContent==='BTC', 'symbol not locked to default ticker');
+          assert(document.getElementById('t-account').value==='a1', 'null should open first account, got ' + document.getElementById('t-account').value);
+          assert(document.getElementById('t-symbol-locked').textContent==='BTC', 'symbol not locked to first account ticker');
         });
 
         test('trade dialog changing account relocks symbol', function () {
           L.saveState({
-            settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'a1' },
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
             accounts: [
               { id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
               { id: 'a3', name: 'Staking', ticker: 'ETH', createdAt: '2026-10-06T00:00:01.000Z' }
@@ -1500,7 +1522,7 @@
             Object.keys(lp).forEach(function (k) { delete lp[k]; });
           } catch (e) { /* ignore */ }
           L.saveState({
-            settings: { mainCurrency: 'EUR', costMethod: 'average', defaultAccountId: 'g1' },
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
             accounts: [
               { id: 'g1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
               { id: 'g2', name: 'Hot', ticker: 'BTC', createdAt: '2026-10-06T00:00:01.000Z' }
@@ -1525,7 +1547,8 @@
           });
           assert(realizedVal === '50', 'grand Realized card should aggregate per-account (50), got ' + realizedVal);
           var tb = document.getElementById('tb-totals');
-          assert(tb && tb.textContent.indexOf('50') !== -1, 'grand topbar should show summed total P&L 50, got ' + (tb && tb.textContent));
+          assert(tb && tb.textContent.indexOf('Average cost') !== -1, 'topbar line should name the cost method, got ' + (tb && tb.textContent));
+          assert(tb && tb.textContent.indexOf('2 accounts') !== -1, 'topbar line should count accounts, got ' + (tb && tb.textContent));
         });
       } finally {
         restoreState();
