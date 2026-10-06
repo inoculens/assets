@@ -981,7 +981,7 @@ if (typeof window !== 'undefined') {
 // DOMContentLoaded; render()/refreshPrices() are the recompute+render
 // entry points (also used by tests.html).
 
-var APP_VERSION = '2026-10-06.8';
+var APP_VERSION = '2026-10-06.9';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -1887,7 +1887,7 @@ function buildAccountDialog() {
 }
 
 // --- Trade form ---
-var TRADE_CCY_OPTIONS = ['EUR', 'USD', 'GBP', 'CHF', 'USDC', 'USDT', 'DAI'];
+var TRADE_CCY_OPTIONS = ['EUR', 'USD', 'GBP', 'CHF', 'RON', 'USDC', 'USDT', 'DAI'];
 
 function ccyOptions(selected, includeCustom) {
   var base = TRADE_CCY_OPTIONS.map(function (c) {

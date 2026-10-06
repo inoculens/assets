@@ -33,6 +33,7 @@
           <option value="USD">USD</option>
           <option value="GBP">GBP</option>
           <option value="CHF">CHF</option>
+          <option value="RON">RON</option>
         </select>
         <button type="button" id="tb-avg" aria-pressed="true">Average</button>
         <button type="button" id="tb-fifo" aria-pressed="false">FIFO</button>
@@ -587,6 +588,21 @@
         L.reloadFxCache();
       });
 
+      testAsync('fetchEcbRate serves RON through the ECB feed', function () {
+        var origFetch = window.fetch;
+        var urls = [];
+        window.fetch = function (url) {
+          urls.push(String(url));
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ date: '2026-10-05', rates: { RON: 5.3363 } }); } });
+        };
+        function restore() { window.fetch = origFetch; }
+        return fetchEcbRate('2026-10-05', 'EUR', 'RON').then(function (r) {
+          restore();
+          assert(r.rate === 5.3363, 'bad RON rate: ' + JSON.stringify(r));
+          assert(urls.length === 1 && urls[0].indexOf('to=RON') !== -1, 'bad fetch: ' + urls.join(','));
+        }, function (e) { restore(); throw e; });
+      });
+
       testAsync('fetchEcbRate failure throws fx-unavailable after retry', function () {
         var origFetch = window.fetch;
         var called = 0;
@@ -962,6 +978,17 @@
         var tradeOpts = Array.prototype.map.call(
           document.querySelectorAll('#t-currency option'), function (o) { return o.value; });
         assert(tradeOpts.indexOf('DAI') !== -1, 't-currency should offer DAI, got ' + tradeOpts.join(','));
+      });
+
+      test('RON available as main and trade currency (ECB rates cover RON)', function () {
+        assert(L.TRADE_CCY_OPTIONS && L.TRADE_CCY_OPTIONS.indexOf('RON') !== -1, 'TRADE_CCY_OPTIONS should include RON, got ' + JSON.stringify(L.TRADE_CCY_OPTIONS));
+        if (typeof init === 'function') init();
+        var tradeOpts = Array.prototype.map.call(
+          document.querySelectorAll('#t-currency option'), function (o) { return o.value; });
+        assert(tradeOpts.indexOf('RON') !== -1, 't-currency should offer RON, got ' + tradeOpts.join(','));
+        var mainOpts = Array.prototype.map.call(
+          document.querySelectorAll('#tb-main option'), function (o) { return o.value; });
+        assert(mainOpts.indexOf('RON') !== -1, 'main currency should offer RON, got ' + mainOpts.join(','));
       });
 
       test('fee select mirrors custom trade code + defaults to it', function () {
