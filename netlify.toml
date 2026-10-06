@@ -1,0 +1,6 @@
+# Netlify: the app uses History-API routing (/account/<id>), so deep links
+# must serve index.html instead of 404. Everything else stays static.
+[[redirects]]
+  from = "/account/*"
+  to = "/index.html"
+  status = 200

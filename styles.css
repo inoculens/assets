@@ -1128,3 +1128,35 @@ body {
     overflow-x: auto;
   }
 }
+
+/* Layout stability: fixed control widths so toggles never shift siblings */
+.tb-field select {
+  width: 6rem;
+}
+.segmented button {
+  min-width: 5.6rem;
+  text-align: center;
+}
+
+/* Settings: fixed panel size, internal scroll, no dialog resizing */
+.set-panels {
+  min-height: 19rem;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+/* Even form rhythm: full-width submit, matched input heights */
+#trade-form button.primary,
+#account-dialog-body button.primary {
+  width: 100%;
+  margin-top: 1.1rem;
+}
+input,
+textarea {
+  min-height: 2.5rem;
+}
+
+/* Home figures: breathing room between stacked numbers */
+.acct-figs {
+  gap: 0.2rem;
+}

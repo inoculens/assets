@@ -414,6 +414,148 @@ function fetchEcbRate(date, from, to) {
   return attempt(date, 0);
 }
 
+// --- Display conversion (main-currency switching) ---
+// Trades are stored native (total + currency never change). The fxLock is
+// the entry-time record. For DISPLAY, every trade is converted into the
+// CURRENT main currency at its HISTORICAL ECB rate (trade date), via a
+// persisted cache (ECB history never changes, so entries stay valid
+// forever). Live prices (current valuation) always come from refreshPrices
+// in the current main. P&L = live value − historical cost, as specified.
+// Fallback: if a pair is missing (offline, pre-ECB dates), the trade keeps
+// its stored fxLock so the page still paints; numbers then match the old
+// main and get corrected on the next online render.
+
+var FXCACHE_KEY = 'inoculens.fxcache.v1';
+var FXCACHE_MAX = 1000;
+var fxCacheStore = null; // key "date|FROM|TO" -> {rate, source}; lazy-loaded
+
+function fxCacheKey(date, from, to) {
+  return String(date) + '|' + String(from).toUpperCase() + '|' + String(to).toUpperCase();
+}
+
+function loadFxCache(reload) {
+  if (fxCacheStore !== null && !reload) return fxCacheStore;
+  fxCacheStore = {};
+  try {
+    var raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(FXCACHE_KEY) : null;
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') fxCacheStore = parsed;
+    }
+  } catch (e) { fxCacheStore = {}; }
+  return fxCacheStore;
+}
+
+function saveFxCache() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    var keys = Object.keys(fxCacheStore || {});
+    var store = fxCacheStore;
+    if (keys.length > FXCACHE_MAX) {
+      // Plain objects keep insertion order for string keys: keep newest.
+      store = {};
+      keys.slice(keys.length - 800).forEach(function (k) { store[k] = fxCacheStore[k]; });
+      fxCacheStore = store;
+    }
+    localStorage.setItem(FXCACHE_KEY, JSON.stringify(store));
+  } catch (e) { /* private mode / quota: memory cache still works */ }
+}
+
+function clearFxCache() {
+  fxCacheStore = {};
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(FXCACHE_KEY);
+  } catch (e) { /* ignore */ }
+}
+
+function getCachedRate(date, from, to) {
+  var f = String(from || '').toUpperCase();
+  var t = String(to || '').toUpperCase();
+  if (!f || !t) return null;
+  if (f === t || (stableToUsd(f) && stableToUsd(t))) return { rate: 1, source: '1:1' };
+  var cache = loadFxCache();
+  var hit = cache[fxCacheKey(date, f, t)];
+  if (hit && isFinite(Number(hit.rate)) && Number(hit.rate) > 0 && typeof hit.source === 'string') {
+    return { rate: Number(hit.rate), source: hit.source };
+  }
+  return null;
+}
+
+function cacheRate(date, from, to, rate, source) {
+  var f = String(from || '').toUpperCase();
+  var t = String(to || '').toUpperCase();
+  if (!f || !t || f === t || !isFinite(Number(rate)) || Number(rate) <= 0) return;
+  loadFxCache()[fxCacheKey(date, f, t)] = { rate: Number(rate), source: String(source || '') };
+}
+
+// Distinct (date, currency) pairs across trades that still need a rate
+// into `main`. Same-currency needs nothing (rate 1, no network).
+function displayPairs(trades, main) {
+  var m = String(main || '').toUpperCase();
+  var seen = {};
+  var out = [];
+  (trades || []).forEach(function (t) {
+    if (!t) return;
+    var c = (typeof t.currency === 'string') ? t.currency.toUpperCase() : '';
+    var d = (typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date)) ? t.date.slice(0, 10) : '';
+    if (!c || !d || c === m) return;
+    var k = d + '|' + c;
+    if (seen[k] || getCachedRate(d, c, m)) return;
+    seen[k] = true;
+    out.push({ date: d, from: c });
+  });
+  return out;
+}
+
+// Fill the cache for every pair the current paint needs. Never rejects:
+// a failed pair keeps its stored fxLock (degraded display, corrected later).
+function ensureDisplayRates(trades, main) {
+  var m = String(main || '').toUpperCase();
+  var pairs = displayPairs(trades, m);
+  if (!pairs.length) return Promise.resolve(false);
+  return Promise.all(pairs.map(function (p) {
+    return fetchEcbRate(p.date, p.from, m).then(function (r) {
+      cacheRate(p.date, p.from, m, r.rate, r.source);
+      return true;
+    }, function () { return false; });
+  })).then(function (flags) {
+    var changed = false;
+    flags.forEach(function (f) { if (f) changed = true; });
+    if (changed) saveFxCache();
+    return changed;
+  });
+}
+
+// Copy of a trade with fxLock rewritten into `main` at the historical rate.
+// Native total/currency untouched (fixed in stone). Falls back to the
+// stored lock when no rate is cached yet (first paint before fetch lands,
+// or offline) — see module comment.
+function convertTrade(t, main) {
+  var m = String(main || '').toUpperCase();
+  var c = (t && typeof t.currency === 'string') ? t.currency.toUpperCase() : '';
+  var d = (t && typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date)) ? t.date.slice(0, 10) : '';
+  if (!t || !c || !d || c === m) {
+    if (t && c && d && c === m) {
+      var same = {};
+      for (var k in t) { if (Object.prototype.hasOwnProperty.call(t, k)) same[k] = t[k]; }
+      same.fxLock = { pair: c + '/' + m, rate: 1, source: '1:1', interpolated: false };
+      return same;
+    }
+    return t;
+  }
+  var hit = getCachedRate(d, c, m);
+  if (!hit) return t; // not yet fetched: keep stored lock (corrected on re-render)
+  var fixDay = (/^ECB-(\d{4}-\d{2}-\d{2})$/.exec(hit.source) || [])[1] || d;
+  var out = {};
+  for (var k2 in t) { if (Object.prototype.hasOwnProperty.call(t, k2)) out[k2] = t[k2]; }
+  out.fxLock = { pair: c + '/' + m, rate: hit.rate, source: 'ECB-' + fixDay, interpolated: fixDay !== d };
+  return out;
+}
+
+function convertTrades(trades, main) {
+  return (trades || []).map(function (t) { return convertTrade(t, main); });
+}
+
 // Expose Fx on window.Inoculens for tests.html, Ledger (Task 4), Ui (Task 6).
 if (typeof window !== 'undefined') {
   window.Inoculens = window.Inoculens || {};
@@ -421,6 +563,13 @@ if (typeof window !== 'undefined') {
   window.Inoculens.stableToUsd = stableToUsd;
   window.Inoculens.normalizeToMain = normalizeToMain;
   window.Inoculens.pickRate = pickRate;
+  window.Inoculens.convertTrade = convertTrade;
+  window.Inoculens.convertTrades = convertTrades;
+  window.Inoculens.ensureDisplayRates = ensureDisplayRates;
+  window.Inoculens.getCachedRate = getCachedRate;
+  window.Inoculens.cacheRate = cacheRate;
+  window.Inoculens.clearFxCache = clearFxCache;
+  window.Inoculens.reloadFxCache = function () { loadFxCache(true); };
 }
 
 // === Ledger ===
@@ -1046,12 +1195,15 @@ function renderAccounts(st) {
   var method = st.settings.costMethod;
   var main = st.settings.mainCurrency;
   var accounts = Array.isArray(st.accounts) ? st.accounts : [];
+  // Display conversion: native amounts stay in stone; everything shown is
+  // converted into the CURRENT main at historical ECB rates (cached).
+  var dtrades = convertTrades(st.trades, main);
   // AGGREGATE-BEATS-GLOBAL: grand totals are the SUM of the per-account
   // computePositions runs (same method), never a separate global all-trades
   // engine run. Each account's run is computed once here and reused for its
   // card below, so cards and totals agree by construction.
   var perAcctRows = accounts.map(function (acc) {
-    return computePositions(accountTrades(st, acc.id), livePrices, method);
+    return computePositions(accountTrades({ trades: dtrades }, acc.id), livePrices, method);
   });
   var grandRows = [];
   perAcctRows.forEach(function (rows) {
@@ -1109,7 +1261,7 @@ function renderAccounts(st) {
     tickEl.textContent = String(acc.ticker).toUpperCase() + ((def && def.id === acc.id) ? ' · Default' : '');
     mid.appendChild(tickEl);
     card.appendChild(mid);
-    var atrades = accountTrades(st, acc.id);
+    var atrades = accountTrades({ trades: dtrades }, acc.id);
     var rows = perAcctRows[ai]; // computed once above; totals aggregate these same runs
     var pl = 0;
     var mv = 0;
@@ -1183,10 +1335,48 @@ function startInlineRename(accId, headEl, nameEl) {
 // Facts carry data-label/data-value, so numbers read top to bottom and the
 // FX conversion always gets its own line. Unknown account id routes home.
 
-function accountDetailId() {
+function historyOK() {
+  try {
+    return typeof history !== 'undefined' && !!history.pushState &&
+      String((typeof location !== 'undefined' && location.protocol) || '').indexOf('http') === 0;
+  } catch (e) { return false; }
+}
+
+// Current account route, history path first (clean production URLs), hash
+// fallback (file://, tests, legacy links).
+function currentRouteId() {
+  try {
+    var p = String((typeof location !== 'undefined' && location.pathname) || '');
+    var m = /^\/account\/([^\/?#]+)/.exec(p);
+    if (m) return decodeURIComponent(m[1]);
+  } catch (e) { /* fall through to hash */ }
+  return accountDetailIdHash();
+}
+
+function accountDetailIdHash() {
   var h = String((typeof location !== 'undefined' && location.hash) || '');
-  var m = /^#\/account\/([^\/?#]+)/.exec(h);
-  return m ? decodeURIComponent(m[1]) : null;
+  var hm = /^#\/account\/([^\/?#]+)/.exec(h);
+  return hm ? decodeURIComponent(hm[1]) : null;
+}
+
+function accountDetailId() {
+  return currentRouteId();
+}
+
+function navTo(id) {
+  if (historyOK()) {
+    try {
+      history.pushState({ accountId: id || null }, '', id ? '/account/' + encodeURIComponent(id) : '/');
+      route();
+      return;
+    } catch (e) { /* fall through to hash */ }
+  }
+  if (typeof location !== 'undefined') location.hash = id ? '#/account/' + encodeURIComponent(id) : '#/';
+  route();
+}
+
+function navHome() {
+  navTo(null);
 }
 
 // --- Stacked facts (minimalist detail layout) ---
@@ -1281,13 +1471,14 @@ function renderAccountDetail(st, id) {
   if (!host) return;
   var acc = accountById(st, id);
   if (!acc) {
-    if (typeof location !== 'undefined' && String(location.hash || '') !== '#/') location.hash = '#/';
+    navHome();
     return;
   }
   var main = st.settings.mainCurrency;
   var method = st.settings.costMethod;
-  var rows = computePositions(accountTrades(st, acc.id), livePrices, method);
-  var atrades = accountTrades(st, acc.id);
+  var dtrades = convertTrades(st.trades, main);
+  var rows = computePositions(accountTrades({ trades: dtrades }, acc.id), livePrices, method);
+  var atrades = accountTrades({ trades: dtrades }, acc.id);
   host.innerHTML = '';
   var head = document.createElement('div');
   head.className = 'account-head detail-head';
@@ -1645,8 +1836,8 @@ function buildAccounts() {
       if (!e || !e.target || !e.target.closest) return;
       if (e.target.closest('button')) return;
       var nav = e.target.closest('[data-account-nav]');
-      if (nav && nav.getAttribute('data-account-nav') && typeof location !== 'undefined') {
-        location.hash = '#/account/' + encodeURIComponent(nav.getAttribute('data-account-nav'));
+      if (nav && nav.getAttribute('data-account-nav')) {
+        navTo(nav.getAttribute('data-account-nav'));
       }
     });
     navHost.addEventListener('keydown', function (e) {
@@ -1656,7 +1847,7 @@ function buildAccounts() {
       var nav = e.target.closest('[data-account-nav]');
       if (nav && nav.getAttribute('data-account-nav')) {
         e.preventDefault();
-        if (typeof location !== 'undefined') location.hash = '#/account/' + encodeURIComponent(nav.getAttribute('data-account-nav'));
+        navTo(nav.getAttribute('data-account-nav'));
       }
     });
   }
@@ -1923,8 +2114,8 @@ function onTradeSubmit(ev) {
     if (d) d.value = todayStr();
     tradeFormError(null);
     refreshPrices(); // recompute + render when fresh prices land (renders sync too)
-    if (typeof location !== 'undefined') location.hash = '#/account/' + encodeURIComponent(accountId);
-    render(); // route() picks up the hash: the trade's account page shows the new rows
+    navTo(accountId);
+    render(); // route() picks up the URL: the trade's account page shows the new rows
     closeDialog('trade-dialog');
   }
   if (from === String(main).toUpperCase()) {
@@ -2055,7 +2246,8 @@ function buildTopbar() {
       st.settings.mainCurrency = e.target.value;
       if (!saveStateGuarded(st)) return;
       clearBanner();
-      refreshPrices(); // re-fetch in the new currency; fxLocks untouched
+      render(); // instant paint, then historical pairs fill in + repaint
+      refreshPrices(); // live valuation re-fetched in the new currency
     });
   }
   var methods = [['tb-avg', 'average'], ['tb-fifo', 'fifo']];
@@ -2101,8 +2293,8 @@ function buildTopbar() {
 // --- Settings dialog ---
 // Override editor, download/upload, clear-with-confirm, demo trade. Main
 // currency + cost method live in the sticky top bar (buildTopbar). A
-// main-currency switch re-fetches prices only; trade fxLocks are never
-// rewritten.
+// main-currency switch re-fetches live prices and refills historical display
+// rates; stored trades (native amounts, entry locks) are never rewritten.
 
 function showSettingsTab(name) {
   var host = document.getElementById('settings-dialog-body');
@@ -2340,6 +2532,28 @@ function render() {
   var ver = document.getElementById('app-ver');
   if (ver) ver.textContent = 'INOCULENS ASSETS v' + APP_VERSION + ' · local-only, no account, no server';
   route(); // show home or the routed account page
+  refreshDisplayRates(st); // fill missing historical pairs, then repaint once
+}
+
+// Fire-and-forget: fetch historical pairs the current paint still lacks,
+// then repaint a single time. Never rejects; offline keeps legacy display.
+function refreshDisplayRates(st) {
+  if (!st || !st.settings) return;
+  var main = st.settings.mainCurrency;
+  var trades = st.trades;
+  try {
+    ensureDisplayRates(trades, main).then(function (changed) {
+      if (!changed) return;
+      var s2;
+      try {
+        s2 = loadState();
+      } catch (e) { return; }
+      if (!s2 || !s2.settings) return;
+      renderAccounts(s2);
+      syncTopbar(s2);
+      route();
+    }, function () { /* offline: keep current paint */ });
+  } catch (e) { /* ignore */ }
 }
 
 var hashWired = false;
@@ -2357,7 +2571,16 @@ function init() {
   buildAccountDialog();
   if (!hashWired && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     hashWired = true;
-    window.addEventListener('hashchange', route);
+    window.addEventListener('hashchange', route); // hash mode (file://, legacy links)
+    window.addEventListener('popstate', route); // history mode (clean URLs)
+  }
+  var back = document.getElementById('acct-back');
+  if (back && !back.getAttribute('data-wired')) {
+    back.setAttribute('data-wired', '1');
+    back.addEventListener('click', function (e) {
+      if (e && e.preventDefault) e.preventDefault();
+      navHome();
+    });
   }
   var d = document.getElementById('t-date');
   if (d && !d.value) d.value = todayStr();
@@ -2393,6 +2616,9 @@ if (typeof window !== 'undefined') {
   window.Inoculens.route = route;
   window.Inoculens.renderAccountDetail = renderAccountDetail;
   window.Inoculens.accountDetailId = accountDetailId;
+  window.Inoculens.currentRouteId = currentRouteId;
+  window.Inoculens.navTo = navTo;
+  window.Inoculens.navHome = navHome;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
     document.addEventListener('DOMContentLoaded', init);
   }

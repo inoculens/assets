@@ -405,6 +405,8 @@
       var stableToUsd = Fx.stableToUsd;
       var pickRate = Fx.pickRate;
       var fetchEcbRate = Fx.fetchEcbRate;
+      var L = Fx;
+      var normalizeTrade = window.Inoculens.normalizeTrade;
 
       test('normalizeToMain scales total+fee', function () {
         assert(normalizeToMain(10, 0, 0.92) === 9.2, 'expected 9.2, got ' + normalizeToMain(10, 0, 0.92));
@@ -518,6 +520,71 @@
           assert(r.interpolated === true, 'previous-close fixing must flag interpolated: ' + JSON.stringify(r));
           assert(r.source === 'ECB-2026-10-05', 'source must pin actual fixing date: ' + JSON.stringify(r));
         }, function (e) { restore(); throw e; });
+      });
+
+      test('convertTrade keeps native fixed, converts via cached history', function () {
+        var fxBackup = null;
+        try { fxBackup = localStorage.getItem('inoculens.fxcache.v1'); } catch (e) { fxBackup = null; }
+        L.clearFxCache();
+        L.cacheRate('2026-10-01', 'USD', 'EUR', 0.9, 'ECB-2026-10-01');
+        var t = { id: 'x', type: 'buy', symbol: 'BTC', qty: 1, total: 100, currency: 'USD', date: '2026-10-01', fee: 0, feeCurrency: 'USD', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'manual', interpolated: false } };
+        var c = L.convertTrade(t, 'EUR');
+        assert(c.total === 100 && c.currency === 'USD', 'native must stay fixed in stone');
+        assert(c.fxLock.rate === 0.9 && c.fxLock.source === 'ECB-2026-10-01', 'must use cached history, got ' + JSON.stringify(c.fxLock));
+        assert(L.normalizeTrade(c).totalMain === 90, 'converted total wrong');
+        var s = L.convertTrade({ id: 'y', type: 'buy', symbol: 'BTC', qty: 1, total: 100, currency: 'EUR', date: '2026-10-01', fee: 0, feeCurrency: 'EUR' }, 'EUR');
+        assert(s.fxLock.rate === 1 && s.fxLock.source === '1:1', 'same-currency identity broken');
+        try {
+          if (fxBackup === null) localStorage.removeItem('inoculens.fxcache.v1');
+          else localStorage.setItem('inoculens.fxcache.v1', fxBackup);
+        } catch (e) { /* ignore */ }
+        L.reloadFxCache();
+      });
+
+      testAsync('ensureDisplayRates fills cache from Frankfurter-shaped responses', function () {
+        var fxBackup = null;
+        try { fxBackup = localStorage.getItem('inoculens.fxcache.v1'); } catch (e) { fxBackup = null; }
+        function restoreFx() {
+          try {
+            if (fxBackup === null) localStorage.removeItem('inoculens.fxcache.v1');
+            else localStorage.setItem('inoculens.fxcache.v1', fxBackup);
+          } catch (e) { /* ignore */ }
+          L.reloadFxCache();
+        }
+        L.clearFxCache();
+        var origFetch = window.fetch;
+        var urls = [];
+        window.fetch = function (url) {
+          urls.push(String(url));
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ date: '2026-10-05', rates: { EUR: 0.89 } }); } });
+        };
+        var trades = [{ id: 'x', type: 'buy', symbol: 'BTC', qty: 1, total: 100, currency: 'USD', date: '2026-10-06', fee: 0, feeCurrency: 'USD' }];
+        return L.ensureDisplayRates(trades, 'EUR').then(function (changed) {
+          window.fetch = origFetch;
+          assert(changed === true, 'should report newly cached');
+          var hit = L.getCachedRate('2026-10-06', 'USD', 'EUR');
+          assert(hit && hit.rate === 0.89 && hit.source === 'ECB-2026-10-05', 'bad cache entry: ' + JSON.stringify(hit));
+          assert(urls.length === 1 && urls[0].indexOf('from=USD') !== -1, 'bad fetch: ' + urls.join(','));
+          restoreFx();
+        }, function (e) { window.fetch = origFetch; restoreFx(); throw e; });
+      });
+
+      test('convertTrades re-expresses history when main switches', function () {
+        var fxBackup2 = null;
+        try { fxBackup2 = localStorage.getItem('inoculens.fxcache.v1'); } catch (e) { fxBackup2 = null; }
+        L.clearFxCache();
+        L.cacheRate('2026-10-01', 'USD', 'EUR', 0.9, 'ECB-2026-10-01');
+        var t = { id: 'x', type: 'buy', symbol: 'BTC', qty: 1, total: 100, currency: 'USD', date: '2026-10-01', fee: 0, feeCurrency: 'USD', fxLock: { pair: 'USD/EUR', rate: 0.9, source: 'ECB-2026-10-01', interpolated: false } };
+        var eur = L.convertTrades([t], 'EUR')[0];
+        assert(L.normalizeTrade(eur).totalMain === 90, 'EUR view wrong');
+        var usd = L.convertTrades([t], 'USD')[0];
+        assert(usd.total === 100 && usd.currency === 'USD', 'native must not move');
+        assert(L.normalizeTrade(usd).totalMain === 100, 'USD view must be nominal');
+        try {
+          if (fxBackup2 === null) localStorage.removeItem('inoculens.fxcache.v1');
+          else localStorage.setItem('inoculens.fxcache.v1', fxBackup2);
+        } catch (e) { /* ignore */ }
+        L.reloadFxCache();
       });
 
       testAsync('fetchEcbRate failure throws fx-unavailable after retry', function () {
@@ -818,7 +885,7 @@
         test('ui positions checklist (detail view)', function () {
           seedForUi();
           init();
-          location.hash = '#/account/ui-acct';
+          navTo('ui-acct');
           route();
           assert(document.querySelector('#account-detail .trade-block, #account-detail .facts') !== null, 'detail shows no rows after seed');
           setCostMethod('fifo');
@@ -831,13 +898,12 @@
           cell = document.querySelector('#account-detail [data-label="Realized"]');
           assert(cell && cell.getAttribute('data-value') === '20000',
             'average realized cell should carry data-value 20000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
-          location.hash = '#/';
-          route();
+          navHome();
         });
         test('home cards stay minimal (no tables)', function () {
           seedForUi();
           init();
-          location.hash = '#/';
+          navHome();
           render();
           assert(document.querySelector('#accounts .account-card') !== null, 'home card missing');
           assert(document.querySelector('#accounts table') === null, 'home cards must stay table-free');
@@ -971,7 +1037,7 @@
         var lp = (L.getLivePrices && L.getLivePrices()) || {};
         Object.keys(lp).forEach(function (k) { delete lp[k]; });
         if (typeof init === 'function') init();
-        location.hash = '#/account/dbg-acct';
+        navTo('dbg-acct');
         route();
         render();
         function cell(label) { return document.querySelector('#account-detail [data-label="' + label + '"]'); }
@@ -981,8 +1047,7 @@
         assert(un && un.textContent === '—', 'Unrealized should be —, got ' + (un && un.textContent));
         assert(ret && ret.textContent === '—', 'Return should be —, got ' + (ret && ret.textContent));
         assert(tot && tot.getAttribute('data-value') === '0', 'Total P&L should be realized-only 0, got ' + (tot && tot.getAttribute('data-value')));
-        location.hash = '#/';
-        route();
+        navHome();
         restoreState();
       });
 
@@ -999,15 +1064,14 @@
           priceOverrides: {}
         });
         if (typeof init === 'function') init();
-        location.hash = '#/account/cl-acct';
+        navTo('cl-acct');
         route();
         render();
         var rows = L.computePositions(L.loadState().trades, {}, 'average');
         assert(rows.length === 1 && rows[0].qtyHeld === 0, 'qty-0 row must be kept, got ' + JSON.stringify(rows));
         var txt = document.getElementById('account-detail').textContent;
         assert(txt.indexOf('Closed') !== -1, 'closed position should be labelled Closed: ' + txt);
-        location.hash = '#/';
-        route();
+        navHome();
         restoreState();
       });
     })();
@@ -1114,7 +1178,7 @@
           if (backup === null) localStorage.removeItem('inoculens.v2');
           else localStorage.setItem('inoculens.v2', backup);
         } catch (e) { /* ignore */ }
-        try { location.hash = '#/'; } catch (e) { /* ignore */ }
+        try { navHome(); } catch (e) { /* ignore */ }
         try { route(); render(); } catch (e) { /* ignore */ }
       }
       function seedSplit() {
@@ -1136,7 +1200,7 @@
           priceOverrides: {}
         });
       }
-      function go(id) { location.hash = '#/account/' + id; route(); }
+      function go(id) { navTo(id); }
       try {
         test('routing opens detail with name, tables, separated realized', function () {
           seedSplit(); init(); go('r1');
@@ -1153,9 +1217,9 @@
 
         test('routing unknown account falls back home', function () {
           seedSplit(); init();
-          location.hash = '#/account/nope';
+          navTo('nope');
           route();
-          assert(location.hash === '#/', 'unknown account should reset hash home, got ' + location.hash);
+          assert(currentRouteId() === null, 'unknown account should route home, got ' + currentRouteId());
           route();
           assert(document.getElementById('view-home').hidden === false, 'home should show after fallback');
         });
@@ -1163,8 +1227,7 @@
         test('home shows after navigating back', function () {
           seedSplit(); init(); go('r1');
           assert(document.getElementById('view-account').hidden === false, 'detail should show');
-          location.hash = '#/';
-          route();
+          navHome();
           assert(document.getElementById('view-home').hidden === false, 'home should show after back');
           assert(document.getElementById('view-account').hidden === true, 'detail should hide after back');
         });
@@ -1178,8 +1241,7 @@
         });
 
         test('header Trade on home keeps the account selectable', function () {          seedSplit(); init();
-          location.hash = '#/';
-          route();
+          navHome();
           render();
           document.getElementById('tb-add').click();
           assert(document.getElementById('t-account').value === 'r1', 'trade should default to default account r1');
@@ -1205,8 +1267,7 @@
 
         test('submit navigates to the trade account so rows show', function () {
           seedSplit(); init();
-          location.hash = '#/';
-          route();
+          navHome();
           openPrefillTrade(null);
           document.getElementById('t-side').value = 'buy';
           document.getElementById('t-qty').value = '2';
@@ -1221,7 +1282,7 @@
           onTradeSubmit({ preventDefault: function () {} });
           var st = L.loadState();
           assert(st.trades.length === 4, 'trade should save, got ' + st.trades.length);
-          assert(location.hash === '#/account/r1', 'should land on the trade account, got ' + location.hash);
+          assert(currentRouteId() === 'r1', 'should land on the trade account, got ' + currentRouteId());
           route();
           var det = document.getElementById('account-detail');
           assert(det.querySelector('.trade-block') !== null, 'new trade rows should render in the account');
