@@ -304,6 +304,15 @@ main {
   gap: 1.5rem;
 }
 
+/* Sections stack inside view wrappers, so the gap must live there —
+   otherwise hero / summary / accounts glue together with zero space. */
+#view-home, #view-account {
+  display: grid;
+  gap: 1.75rem;
+  align-content: start;
+  min-width: 0;
+}
+
 section, aside { background: transparent; border: none; padding: 0; }
 section h2, aside h2 {
   margin: 0 0 0.8rem;
