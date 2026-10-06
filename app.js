@@ -1386,14 +1386,19 @@ function renderAccounts(st) {
   var overview = document.getElementById('overview');
   var fab = document.getElementById('fab-trade');
   var emptyState = !accounts.length;
+  var noTrades = !emptyState && !(st.trades || []).length;
   if (landing) landing.hidden = !emptyState;
-  if (hero) hero.hidden = emptyState;
-  if (overview) overview.hidden = emptyState;
-  if (fab) fab.hidden = emptyState;
+  if (hero) hero.hidden = emptyState || noTrades;
+  if (overview) overview.hidden = emptyState || noTrades;
+  if (fab) fab.hidden = emptyState || noTrades;
   document.body.classList.toggle('is-empty', emptyState);
+  document.body.classList.toggle('has-no-trades', noTrades);
   if (emptyState) {
     wireLanding();
     return;
+  }
+  if (noTrades) {
+    host.appendChild(buildGuidePanel());
   }
   var h2 = document.createElement('h2');
   h2.textContent = 'Accounts';
@@ -1944,9 +1949,46 @@ function buildAccountCreateRow() {
   return row;
 }
 
+function buildGuidePanel() {
+  var box = document.createElement('section');
+  box.className = 'guide-panel';
+  box.setAttribute('aria-label', 'Next step');
+  var step = document.createElement('p');
+  step.className = 'guide-step';
+  step.textContent = 'Step 2 of 3';
+  box.appendChild(step);
+  var title = document.createElement('h2');
+  title.className = 'guide-title';
+  title.textContent = 'Add your first trade';
+  box.appendChild(title);
+  var sub = document.createElement('p');
+  sub.className = 'guide-sub';
+  sub.textContent = 'Tell Plutus what you bought — how much, what you paid, and when. Prices and currency math are automatic.';
+  box.appendChild(sub);
+  var ctas = document.createElement('div');
+  ctas.className = 'guide-ctas';
+  var go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'primary';
+  go.textContent = 'Add my first trade';
+  go.setAttribute('data-guide-trade', '1');
+  ctas.appendChild(go);
+  box.appendChild(ctas);
+  var alt = document.createElement('p');
+  alt.className = 'guide-alt';
+  var demo = document.createElement('button');
+  demo.type = 'button';
+  demo.className = 'linklike';
+  demo.textContent = 'or see a demo first';
+  demo.setAttribute('data-guide-demo', '1');
+  alt.appendChild(demo);
+  box.appendChild(alt);
+  return box;
+}
+
 function seedDemoData() {
   var st = loadState();
-  if ((st.accounts || []).length) return;
+  if ((st.trades || []).length) return;
   var now = new Date().toISOString();
   var btc = { id: uid(), name: 'Cold wallet', ticker: 'BTC', createdAt: now };
   var eth = { id: uid(), name: 'Trading stack', ticker: 'ETH', createdAt: now };
@@ -1969,11 +2011,6 @@ function wireLanding() {
     c.setAttribute('data-wired', '1');
     c.addEventListener('click', function () { openAccountDialog(); });
   }
-  var d = document.getElementById('landing-demo');
-  if (d && !d.getAttribute('data-wired')) {
-    d.setAttribute('data-wired', '1');
-    d.addEventListener('click', seedDemoData);
-  }
   var r = document.getElementById('landing-restore');
   if (r && !r.getAttribute('data-wired')) {
     r.setAttribute('data-wired', '1');
@@ -1994,6 +2031,14 @@ function buildAccounts() {
       if (!t) return;
       if (t.id === 'acct-create') {
         createAccount(uiVal('acct-name', ''), uiVal('acct-ticker', ''));
+        return;
+      }
+      if (t.hasAttribute('data-guide-trade')) {
+        openPrefillTrade(null);
+        return;
+      }
+      if (t.hasAttribute('data-guide-demo')) {
+        seedDemoData();
         return;
       }
       if (t.hasAttribute('data-account-trade')) {
@@ -2100,11 +2145,15 @@ function buildAccountDialog() {
     var tk = uiVal('na-ticker', '').trim().toUpperCase();
     if (!tk) { naError('Ticker is required (e.g. BTC).'); return; }
     if (!/^[A-Z0-9._-]{1,12}$/.test(tk)) { naError('Ticker looks invalid — letters/numbers, up to 12 chars.'); return; }
+    var hadTrades = (loadState().trades || []).length > 0;
     var acc = createAccount(uiVal('na-name', ''), tk);
     if (!acc) { naError('Could not create the account — storage unavailable.'); return; }
     uiSetVal('na-name', '');
     uiSetVal('na-ticker', '');
     closeDialog('account-dialog');
+    // Story guidance: first account + no trades yet → continue straight
+    // to Step 2 instead of leaving the user on a quiet screen.
+    if (!hadTrades) openPrefillTrade(acc.id, true);
   });
 }
 
