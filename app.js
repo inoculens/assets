@@ -1342,11 +1342,11 @@ function renderSummaryCards(st, rows) {
   var hp = document.getElementById('hero-pl');
   if (hp) {
     if (!rows.length || !plKnown) {
-      hp.textContent = plKnown && rows.length ? fmtMoney(pl, main) : '';
-      if (!plKnown) hp.textContent = '';
-      hp.className = 'hero-pl' + (plKnown && rows.length ? ' pill ' + plClass(pl) : '');
+      hp.textContent = '';
+      hp.className = 'hero-pl';
     } else {
-      hp.textContent = fmtMoney(pl, main);
+      // Arrow carries the direction; show magnitude so signs never glue (▼-€0.14).
+      hp.textContent = fmtMoney(Math.abs(pl), main);
       hp.className = 'hero-pl pill ' + plClass(pl);
     }
   }

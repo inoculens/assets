@@ -366,9 +366,9 @@ section h2, aside h2 {
 }
 
 .pill.gain { color: var(--gain); background: var(--gain-bg); border-color: rgba(52,211,153,0.25); }
-.pill.gain::before { content: "▲ "; font-size: 0.72em; }
+.pill.gain::before { content: "▲"; margin-right: 0.45em; font-size: 0.72em; }
 .pill.loss { color: var(--loss); background: var(--loss-bg); border-color: rgba(248,113,113,0.25); }
-.pill.loss::before { content: "▼ "; font-size: 0.72em; }
+.pill.loss::before { content: "▼"; margin-right: 0.45em; font-size: 0.72em; }
 
 .hero-sub {
   margin: 0.75rem 0 0;
