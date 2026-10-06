@@ -1761,14 +1761,9 @@ function buildAccountCreateRow() {
   create.id = 'acct-create';
   create.className = 'primary';
   create.textContent = 'Create account';
-  var demo = document.createElement('button');
-  demo.type = 'button';
-  demo.id = 'acct-demo';
-  demo.textContent = 'Load demo';
   row.appendChild(fn);
   row.appendChild(ft);
   row.appendChild(create);
-  row.appendChild(demo);
   return row;
 }
 
@@ -1781,10 +1776,6 @@ function buildAccounts() {
       if (!t) return;
       if (t.id === 'acct-create') {
         createAccount(uiVal('acct-name', ''), uiVal('acct-ticker', ''));
-        return;
-      }
-      if (t.id === 'acct-demo') {
-        addDemoTrade();
         return;
       }
       if (t.hasAttribute('data-account-trade')) {
@@ -2291,10 +2282,10 @@ function buildTopbar() {
 }
 
 // --- Settings dialog ---
-// Override editor, download/upload, clear-with-confirm, demo trade. Main
-// currency + cost method live in the sticky top bar (buildTopbar). A
-// main-currency switch re-fetches live prices and refills historical display
-// rates; stored trades (native amounts, entry locks) are never rewritten.
+// Override editor, download/upload, clear-with-confirm. Main currency +
+// cost method live in the sticky top bar (buildTopbar). A main-currency
+// switch re-fetches live prices and refills historical display rates;
+// stored trades (native amounts, entry locks) are never rewritten.
 
 function showSettingsTab(name) {
   var host = document.getElementById('settings-dialog-body');
@@ -2338,7 +2329,6 @@ function buildSettings() {
     '<input id="s-upload" type="file" accept="application/json,.json">' +
     '</section>' +
     '<section data-setpanel="danger" role="tabpanel" aria-label="Danger zone" hidden>' +
-    '<button id="s-demo" type="button">Load demo trade</button>' +
     '<button id="s-clear" type="button">Clear all data</button>' +
     '</section>' +
     '</div>';
@@ -2397,7 +2387,6 @@ function buildSettings() {
     };
     reader.readAsText(f);
   });
-  document.getElementById('s-demo').addEventListener('click', addDemoTrade);
   document.getElementById('s-clear').addEventListener('click', clearAllData);
 }
 
@@ -2446,39 +2435,6 @@ function downloadBackup() {
     try { urls.revokeObjectURL(url); } catch (e) { /* ignore */ }
     if (a.parentNode) a.parentNode.removeChild(a);
   }, 1000);
-}
-
-function addDemoTrade() {
-  var st = loadState();
-  if ((st.trades || []).length) {
-    showBanner('Demo trade skipped — clear your data first to load it.');
-    return;
-  }
-  var m = st.settings.mainCurrency;
-  var acc = defaultAccount(st);
-  if (!acc) {
-    acc = { id: uid(), name: 'Demo BTC', ticker: 'BTC', createdAt: new Date().toISOString() };
-    st.accounts.push(acc);
-    st.settings.defaultAccountId = acc.id;
-  }
-  st.trades.push({
-    id: uid(),
-    type: 'buy',
-    symbol: acc.ticker,
-    qty: 1,
-    total: 50000,
-    currency: m,
-    date: '2026-01-01',
-    fee: 0,
-    feeCurrency: m,
-    note: 'demo trade — remove with “Clear all data”',
-    fxLock: { pair: m + '/' + m, rate: 1, source: '1:1', interpolated: false },
-    accountId: acc.id,
-    createdAt: new Date().toISOString()
-  });
-  if (!saveStateGuarded(st)) return;
-  clearBanner();
-  refreshPrices();
 }
 
 function clearAllData() {
