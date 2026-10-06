@@ -1182,13 +1182,15 @@ function fmtPct(n) {
   return (Math.round(v * 100) / 100) + '%';
 }
 
-function showBanner(msg) {
+function showBanner(msg, kind) {
   var b = document.getElementById('banner');
   if (!b) return;
   var t = document.getElementById('banner-text');
   if (t) t.textContent = String(msg);
   else b.textContent = String(msg);
-  b.classList.add('error');
+  b.classList.remove('error', 'info');
+  b.classList.add(kind === 'info' ? 'info' : 'error');
+  try { b.dataset.kind = kind === 'info' ? 'info' : 'error'; } catch (e) { /* ignore */ }
   b.hidden = false;
 }
 
@@ -1198,8 +1200,19 @@ function clearBanner() {
   var t = document.getElementById('banner-text');
   if (t) t.textContent = '';
   else b.textContent = '';
-  b.classList.remove('error');
+  b.classList.remove('error', 'info');
+  try { delete b.dataset.kind; } catch (e) { /* ignore */ }
   b.hidden = true;
+}
+
+// Price notices are informational and transient: only clear the banner
+// when it shows a price notice, so FX/storage errors are never wiped.
+function clearPriceBanner() {
+  var b = document.getElementById('banner');
+  if (!b || b.hidden) return;
+  var kind = null;
+  try { kind = b.dataset.kind; } catch (e) { kind = null; }
+  if (kind === 'info') clearBanner();
 }
 
 // Guarded persistence for UI mutations: saveState throws
@@ -2677,13 +2690,29 @@ function refreshPrices() {
       if (isFinite(Number(v)) && Number(v) > 0) livePrices[k] = Number(v);
     });
     var missing = syms.filter(function (s) { return !(isFinite(Number(livePrices[s])) && Number(livePrices[s]) > 0); });
-    if (missing.length) {
-      showBanner('Live price unavailable for ' + missing.join(', ') + ' — showing last/manual price.');
-    } else {
-      clearBanner();
+    if (!missing.length) {
+      clearPriceBanner();
+      render();
+      return out;
     }
-    render();
-    return out;
+    // One gentle retry for transient failures (e.g. CoinGecko 429) before
+    // telling the user anything — most hiccups heal within seconds.
+    return new Promise(function (res) { setTimeout(res, 2500); }).then(function () {
+      return refreshAllPrices(missing, loadState().settings.mainCurrency);
+    }).then(function (out2) {
+      Object.keys(out2).forEach(function (k) {
+        var v = out2[k];
+        if (isFinite(Number(v)) && Number(v) > 0) livePrices[k] = Number(v);
+      });
+      var stillMissing = syms.filter(function (s) { return !(isFinite(Number(livePrices[s])) && Number(livePrices[s]) > 0); });
+      if (stillMissing.length) {
+        showBanner('Live prices are unreachable right now for ' + stillMissing.join(', ') + ' — your data is safe and numbers will fill in automatically.', 'info');
+      } else {
+        clearPriceBanner();
+      }
+      render();
+      return out;
+    });
   });
 }
 
