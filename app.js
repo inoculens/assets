@@ -931,6 +931,30 @@ function fetchLivePrice(symbol, vs) {
       priceCache[key] = { price: p, at: Date.now() };
       return p;
     }
+    // Unsupported vs_currency (e.g. RON is absent from CoinGecko's list):
+    // bridge via the USD pivot — USD price times live USD->main FX.
+    // Cached-or-null fallback preserved below on any failure.
+    if (curLow !== 'usd') {
+      return fetchLivePrice(sym, 'USD').then(function (pu) {
+        pu = Number(pu);
+        if (!isFinite(pu)) {
+          if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+          return null;
+        }
+        return fetchEcbRate(todayStr(), 'USD', cur).then(function (r) {
+          var bridged = pu * Number(r.rate);
+          if (!isFinite(bridged)) {
+            if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+            return null;
+          }
+          priceCache[key] = { price: bridged, at: Date.now() };
+          return bridged;
+        }, function () {
+          if (cached && isFinite(Number(cached.price))) return Number(cached.price);
+          return null;
+        });
+      });
+    }
     if (cached && isFinite(Number(cached.price))) return Number(cached.price);
     return null;
   }).then(null, function () {

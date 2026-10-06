@@ -588,6 +588,25 @@
         L.reloadFxCache();
       });
 
+      testAsync('unsupported vs_currency bridges via USD pivot', function () {
+        var origFetch = window.fetch;
+        window.fetch = function (url) {
+          var u = String(url);
+          if (u.indexOf('coingecko') !== -1) {
+            if (u.indexOf('vs_currencies=ron') !== -1) {
+              return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ bitcoin: {} }); } });
+            }
+            return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ bitcoin: { usd: 100000 } }); } });
+          }
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ date: '2026-10-05', rates: { RON: 5 } }); } });
+        };
+        function restore() { window.fetch = origFetch; }
+        return fetchLivePrice('BTC', 'RON').then(function (p) {
+          restore();
+          assert(p === 500000, 'bridged live price wrong: ' + p);
+        }, function (e) { restore(); throw e; });
+      });
+
       testAsync('fetchEcbRate serves RON through the ECB feed', function () {
         var origFetch = window.fetch;
         var urls = [];
