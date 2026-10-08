@@ -138,6 +138,10 @@ header.brand::after {
   box-shadow: 0 4px 14px rgba(227, 197, 124, 0.25);
 }
 
+img.brand-mark {
+  object-fit: cover;
+}
+
 .brand h1 {
   margin: 0;
   font-family: var(--font-display);
