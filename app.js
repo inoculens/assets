@@ -1908,7 +1908,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.13';
+var APP_VERSION = '2026-10-08.14';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2658,7 +2658,6 @@ function renderAccountDetail(st, id) {
     mbox.appendChild(b);
     return b;
   }
-  menuBtn('+ Record', 'Add record to', function () { openPrefillTrade(acc.id, true); });
   menuBtn('Rename', 'Rename', function () { startInlineRename(acc.id, head, nameEl); });
   menuBtn('Delete', 'Delete', function () { deleteAccount(acc.id); });
   menu.appendChild(mbox);
