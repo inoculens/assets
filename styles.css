@@ -558,6 +558,73 @@ section h2, aside h2 {
 
 .action-del:hover { background: rgba(248, 113, 113, 0.1); }
 
+.action-opt {
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 0.7rem 0.85rem;
+  min-height: 2.75rem;
+  border-radius: 9px;
+  white-space: nowrap;
+}
+
+.action-opt:hover { background: rgba(255, 255, 255, 0.06); }
+
+/* ————— Recolored account cards ————— */
+.account-card[data-colored="1"] {
+  border-color: color-mix(in srgb, var(--acct-color) 40%, transparent);
+}
+
+.account-card[data-colored="1"] .acct-avatar {
+  background: linear-gradient(135deg, var(--acct-color), color-mix(in srgb, var(--acct-color) 45%, #000));
+  border-color: transparent;
+}
+
+/* ————— Color dialog ————— */
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.swatches button {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.86rem;
+}
+
+.swatches .sw {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.color-custom {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.color-custom label { margin: 0; }
+
+input[type="color"] {
+  width: 2.9rem;
+  min-height: 2.9rem;
+  padding: 0.2rem;
+  cursor: pointer;
+}
+
+#c-hex { flex: 1; min-width: 0; }
+#c-apply { flex-shrink: 0; }
+
 .filter-wrap { position: relative; }
 
 .filter-panel {

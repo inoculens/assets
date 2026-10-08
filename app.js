@@ -85,6 +85,7 @@ function normalizeAccount(a) {
   };
   if (a && typeof a.address === 'string' && a.address.trim() !== '') out.address = a.address.trim().slice(0, 128);
   if (a && typeof a.note === 'string' && a.note.trim() !== '') out.note = a.note.trim().slice(0, 280);
+  if (a && isValidHexColor(a.color)) out.color = String(a.color).trim().toUpperCase();
   return out;
 }
 
@@ -176,6 +177,20 @@ function isValidSymbolCode(s) {
   if (typeof s !== 'string') return false;
   var u = s.trim().toUpperCase();
   return /^[A-Z0-9._-]{1,12}$/.test(u);
+}
+
+function isValidHexColor(v) {
+  return typeof v === 'string' && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v.trim());
+}
+
+function contrastText(hex) {
+  var h = String(hex || '').trim().replace('#', '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  var r = parseInt(h.slice(0, 2), 16);
+  var g = parseInt(h.slice(2, 4), 16);
+  var b = parseInt(h.slice(4, 6), 16);
+  if (!isFinite(r) || !isFinite(g) || !isFinite(b)) return '#1a1408';
+  return ((r * 299 + g * 587 + b * 114) / 1000) >= 128 ? '#1a1408' : '#ffffff';
 }
 
 function numGte0(v, allowEmpty) {
@@ -2068,7 +2083,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '78bb43a (#120)';
+var APP_VERSION = 'a042098 (#121)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2534,6 +2549,36 @@ function closeAccountAction() {
   if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
+function applyColorToSelection(hex) {
+  var st = loadState();
+  var ids = Object.keys(selectedAccounts).filter(function (id) { return !!accountById(st, id); });
+  if (!ids.length) return;
+  if (hex !== null) {
+    if (!isValidHexColor(hex)) {
+      showBanner('Pick a valid color, e.g. #F7931A.');
+      return;
+    }
+    hex = String(hex).trim().toUpperCase();
+  }
+  ids.forEach(function (id) {
+    var a = accountById(st, id);
+    if (!a) return;
+    if (hex === null) {
+      try {
+        delete a.color;
+      } catch (e) {
+        a.color = undefined;
+      }
+    } else {
+      a.color = hex;
+    }
+  });
+  if (!saveStateGuarded(st)) return;
+  clearBanner();
+  closeDialog('color-dialog');
+  render(); // stay in selection mode with the set intact
+}
+
 function buildAccountAction() {
   var wrap = document.createElement('div');
   wrap.className = 'filter-wrap';
@@ -2556,6 +2601,20 @@ function buildAccountAction() {
   panel.className = 'filter-panel';
   panel.setAttribute('data-action-panel', '1');
   panel.hidden = !accountActionOpen;
+  var col = document.createElement('button');
+  col.type = 'button';
+  col.className = 'action-opt';
+  col.textContent = 'Change color';
+  col.setAttribute('aria-label', 'Change color of selected accounts');
+  col.addEventListener('click', function () {
+    accountActionOpen = false;
+    panel.hidden = true;
+    var host = document.getElementById('accounts');
+    var tgl = host && host.querySelector ? host.querySelector('[data-action-btn]') : null;
+    if (tgl) tgl.setAttribute('aria-expanded', 'false');
+    openDialog('color-dialog');
+  });
+  panel.appendChild(col);
   var del = document.createElement('button');
   del.type = 'button';
   del.className = 'action-del';
@@ -2801,6 +2860,13 @@ function renderAccounts(st) {
     avatar.className = 'acct-avatar';
     avatar.setAttribute('aria-hidden', 'true');
     avatar.textContent = String(acc.ticker || '?').substring(0, 4).toUpperCase();
+    if (acc.color && isValidHexColor(acc.color)) {
+      card.setAttribute('data-colored', '1');
+      try {
+        card.style.setProperty('--acct-color', String(acc.color).trim().toUpperCase());
+        avatar.style.color = contrastText(acc.color);
+      } catch (e) { /* ignore */ }
+    }
     card.appendChild(avatar);
     var mid = document.createElement('span');
     mid.className = 'acct-mid';
@@ -4974,6 +5040,40 @@ function buildTopbar() {
   wireDialog('confirm-dialog');
   wireDialog('note-dialog');
   wireDialog('error-dialog');
+  wireDialog('color-dialog');
+  var cdlg = document.getElementById('color-dialog');
+  if (cdlg && !cdlg.getAttribute('data-color-wired')) {
+    cdlg.setAttribute('data-color-wired', '1');
+    cdlg.addEventListener('click', function (e) {
+      var pick = e.target && e.target.closest ? e.target.closest('[data-color-pick]') : null;
+      if (pick) {
+        applyColorToSelection(pick.getAttribute('data-color-pick'));
+        return;
+      }
+    });
+  }
+  var cApply = document.getElementById('c-apply');
+  if (cApply && !cApply.getAttribute('data-wired')) {
+    cApply.setAttribute('data-wired', '1');
+    cApply.addEventListener('click', function () {
+      var raw = uiVal('c-hex', '').trim();
+      if (raw !== '' && /^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$/.test(raw)) raw = '#' + raw;
+      if (raw !== '') {
+        if (!isValidHexColor(raw)) {
+          showBanner('Enter a hex color like #F7931A.');
+          return;
+        }
+        applyColorToSelection(raw);
+        return;
+      }
+      applyColorToSelection(uiVal('c-custom', '#e3c57c'));
+    });
+  }
+  var cReset = document.getElementById('c-reset');
+  if (cReset && !cReset.getAttribute('data-wired')) {
+    cReset.setAttribute('data-wired', '1');
+    cReset.addEventListener('click', function () { applyColorToSelection(null); });
+  }
   var bclose = document.getElementById('banner-close');
   if (bclose && !bclose.getAttribute('data-wired')) {
     bclose.setAttribute('data-wired', '1');
@@ -5603,6 +5703,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.openEditTrade = openEditTrade;
   window.Inoculens.openNoteDialog = openNoteDialog;
   window.Inoculens.openErrorDialog = openErrorDialog;
+  window.Inoculens.applyColorToSelection = applyColorToSelection;
   window.Inoculens.resetTradeForm = resetTradeForm;
   window.Inoculens.syncTradeButtons = syncTradeButtons;
   window.Inoculens.syncLockedSymbol = syncLockedSymbol;

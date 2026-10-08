@@ -34,7 +34,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/styles.css?v=50">
+  <link rel="stylesheet" href="/styles.css?v=51">
 
   <script type="application/ld+json">
   {
@@ -174,6 +174,30 @@
     <ul id="error-dialog-list"></ul>
   </dialog>
 
+  <dialog id="color-dialog" aria-labelledby="color-dialog-title">
+    <div class="dialog-head">
+      <h2 id="color-dialog-title">Change color</h2>
+      <button type="button" data-close aria-label="Close dialog">✕</button>
+    </div>
+    <div class="swatches" role="group" aria-label="Default colors">
+      <button type="button" data-color-pick="#F7931A"><span class="sw" style="background:#F7931A"></span>Bitcoin</button>
+      <button type="button" data-color-pick="#627EEA"><span class="sw" style="background:#627EEA"></span>Ethereum</button>
+      <button type="button" data-color-pick="#0033AD"><span class="sw" style="background:#0033AD"></span>Cardano</button>
+      <button type="button" data-color-pick="#FF6600"><span class="sw" style="background:#FF6600"></span>Monero</button>
+      <button type="button" data-color-pick="#9945FF"><span class="sw" style="background:#9945FF"></span>Solana</button>
+      <button type="button" data-color-pick="#E3C57C"><span class="sw" style="background:#E3C57C"></span>Gold</button>
+    </div>
+    <div class="color-custom">
+      <label for="c-custom">Custom</label>
+      <input type="color" id="c-custom" value="#e3c57c" aria-label="Pick a custom color">
+      <input id="c-hex" autocomplete="off" spellcheck="false" placeholder="#E3C57C" aria-label="Hex color code" maxlength="7">
+      <button id="c-apply" type="button">Apply</button>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" id="c-reset">Reset to default</button>
+    </div>
+  </dialog>
+
   <noscript>
     <p>INOCULENS PLUTUS needs JavaScript to compute your local-first portfolio. No data leaves your browser.</p>
   </noscript>
@@ -186,6 +210,6 @@
     </div>
   </footer>
 
-  <script src="/app.js?v=50" defer></script>
+  <script src="/app.js?v=51" defer></script>
 </body>
 </html>

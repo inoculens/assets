@@ -50,4 +50,6 @@ No framework, no bundler. Pushed to `main`, Netlify redeploys automatically.
 - Account list: 6 cards per page with sliding 6-number pager; dice-grip
   reorder and bulk selection persist across pages; totals always cover every
   visible (filtered) account, never just the page.
+- Accounts carry optional `color` (validated hex, avatar + border tint);
+  bulk Change color offers presets, custom picker/hex, and reset.
 - Commit each change separately with a clear message and push to `main`.
