@@ -2068,7 +2068,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '341572c (#117)';
+var APP_VERSION = '9a1704c (#118)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2738,7 +2738,15 @@ function buildAccountPager(pageCount) {
   pager.appendChild(pgBtn('‹ Prev', { 'data-page-prev': '1', 'aria-label': 'Previous account page' }, accountPage <= 0, function () {
     if (accountPage > 0) { accountPage--; render(); }
   }));
-  for (var i = 0; i < pageCount; i++) {
+  // Sliding window: at most 6 page numbers at once (1–6, then 2–7, …).
+  var PAGER_WINDOW = 6;
+  var winStart = 0;
+  if (pageCount > PAGER_WINDOW) {
+    winStart = accountPage - 4;
+    if (winStart < 0) winStart = 0;
+    if (winStart > pageCount - PAGER_WINDOW) winStart = pageCount - PAGER_WINDOW;
+  }
+  for (var i = winStart; i < Math.min(winStart + PAGER_WINDOW, pageCount); i++) {
     (function (p) {
       var nb = pgBtn(String(p + 1), { 'data-page-goto': String(p), 'aria-label': 'Go to account page ' + (p + 1) }, false, function () {
         if (accountPage !== p) { accountPage = p; render(); }
@@ -3731,6 +3739,17 @@ function visibleAccountIds(st) {
   }).map(function (a) { return a.id; });
 }
 
+function pagerTargetPage(btn) {
+  if (!btn || !btn.hasAttribute) return accountPage;
+  if (btn.hasAttribute('data-page-prev')) return accountPage - 1;
+  if (btn.hasAttribute('data-page-next')) return accountPage + 1;
+  if (btn.hasAttribute('data-page-goto')) {
+    var p = Number(btn.getAttribute('data-page-goto'));
+    return isFinite(p) ? p : accountPage;
+  }
+  return accountPage;
+}
+
 function acctDragCleanup() {
   if (acctDrag && acctDrag.flipTimer) {
     try { clearTimeout(acctDrag.flipTimer); } catch (e) {}
@@ -3740,6 +3759,14 @@ function acctDragCleanup() {
   }
   try {
     if (typeof document !== 'undefined' && document.body && document.body.style) document.body.style.userSelect = '';
+  } catch (e) {}
+  try {
+    var hintHost = (typeof document !== 'undefined') ? document.getElementById('accounts') : null;
+    if (hintHost && hintHost.querySelectorAll) {
+      Array.prototype.forEach.call(hintHost.querySelectorAll('[data-drag-hint]'), function (n) {
+        if (n.parentNode) n.parentNode.removeChild(n);
+      });
+    }
   } catch (e) {}
   clearDropMarks();
   acctDrag = null;
@@ -3769,10 +3796,26 @@ function acctStartDrag(src) {
   acctDrag.started = true;
   acctDrag.ghost = ghost;
   suppressCardClick = true;
+  acctShowDragHint();
   try {
     if (typeof document !== 'undefined' && document.body && document.body.style) document.body.style.userSelect = 'none';
   } catch (e) {}
   markAcctDragSrc();
+}
+
+function acctShowDragHint() {
+  try {
+    var host = document.getElementById('accounts');
+    if (!host) return;
+    var st = loadState();
+    if (visibleAccountIds(st).length <= ACCOUNT_PAGE_SIZE) return;
+    if (host.querySelector && host.querySelector('[data-drag-hint]')) return;
+    var hint = document.createElement('div');
+    hint.className = 'pager-hint';
+    hint.setAttribute('data-drag-hint', '1');
+    hint.textContent = 'Drop on ‹ Prev, a page number, or Next › to move the card there';
+    host.appendChild(hint);
+  } catch (e) {}
 }
 
 function acctDisarmFlip() {
@@ -3834,18 +3877,19 @@ function wireAccountDnD() {
     try {
       under = (typeof document !== 'undefined' && document.elementFromPoint) ? document.elementFromPoint(e.clientX, e.clientY) : null;
     } catch (err) { under = null; }
-    // Cross-page targets: the pager buttons glow blue; lingering flips the page.
-    var pgBtn = under && under.closest ? under.closest('[data-page-prev],[data-page-next]') : null;
-    if (pgBtn && !pgBtn.disabled && Date.now() >= (acctDrag.flipCoolUntil || 0)) {
+    // Cross-page targets: pager buttons (prev, numbers, next) glow blue;
+    // lingering on one flips the page while you keep holding.
+    var pgBtn = under && under.closest ? under.closest('[data-page-prev],[data-page-next],[data-page-goto]') : null;
+    var pgTarget = pgBtn ? pagerTargetPage(pgBtn) : accountPage;
+    if (pgBtn && !pgBtn.disabled && pgTarget !== accountPage && Date.now() >= (acctDrag.flipCoolUntil || 0)) {
       if (acctDrag.armedBtn !== pgBtn) {
         acctDisarmFlip();
         acctDrag.armedBtn = pgBtn;
         pgBtn.classList.add('hot');
-        var dir = pgBtn.hasAttribute('data-page-prev') ? -1 : 1;
         acctDrag.flipTimer = setTimeout(function () {
           if (!acctDrag) return;
           acctDisarmFlip();
-          acctFlipTo(accountPage + dir);
+          acctFlipTo(pgTarget);
         }, 650);
       }
     } else {
@@ -3872,7 +3916,7 @@ function wireAccountDnD() {
     if (wasStarted && e && typeof e.clientX === 'number') {
       try {
         var under = (typeof document !== 'undefined' && document.elementFromPoint) ? document.elementFromPoint(e.clientX, e.clientY) : null;
-        var pb = under && under.closest ? under.closest('[data-page-prev],[data-page-next]') : null;
+        var pb = under && under.closest ? under.closest('[data-page-prev],[data-page-next],[data-page-goto]') : null;
         if (pb && !pb.disabled) onPager = pb;
         else {
           var card = under && under.closest ? under.closest('.account-card') : null;
@@ -3894,15 +3938,17 @@ function wireAccountDnD() {
     var fullFrom = fullIds.indexOf(id);
     var insertFull = -1;
     if (onPager) {
-      var dir = onPager.hasAttribute('data-page-prev') ? -1 : 1;
+      var targetPage = pagerTargetPage(onPager);
       var pages = Math.max(1, Math.ceil(vis.length / ACCOUNT_PAGE_SIZE));
-      var targetPage = accountPage + dir;
       if (targetPage < 0) targetPage = 0;
       if (targetPage > pages - 1) targetPage = pages - 1;
+      if (targetPage === accountPage) { render(); return; } // dropped on the current page number
+      // Prev + page numbers land at the page start, Next at the page end.
+      var atEnd = onPager.hasAttribute && onPager.hasAttribute('data-page-next');
       accountPage = targetPage;
-      var visIx = dir < 0 ? targetPage * ACCOUNT_PAGE_SIZE : Math.min(vis.length, (targetPage + 1) * ACCOUNT_PAGE_SIZE);
+      var visIx = atEnd ? Math.min(vis.length, (targetPage + 1) * ACCOUNT_PAGE_SIZE) : targetPage * ACCOUNT_PAGE_SIZE;
       insertFull = visIx >= vis.length ? fullIds.length : fullIds.indexOf(vis[visIx]);
-      if (insertFull === -1) insertFull = dir < 0 ? 0 : fullIds.length;
+      if (insertFull === -1) insertFull = atEnd ? fullIds.length : 0;
     } else if (overId) {
       var visTo = vis.indexOf(overId);
       if (visTo === -1) { render(); return; }

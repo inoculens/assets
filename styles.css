@@ -630,9 +630,18 @@ section h2, aside h2 {
 .page-btn[disabled] { opacity: 0.35; cursor: default; }
 .page-btn[aria-current="page"] { color: var(--gold); border-color: var(--hairline-gold); }
 .page-btn.hot {
-  border-color: rgba(96, 165, 250, 0.7);
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35), 0 0 26px rgba(96, 165, 250, 0.3);
-  color: var(--text);
+  background: rgba(96, 165, 250, 0.2);
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.45), 0 0 30px rgba(96, 165, 250, 0.45);
+  color: #fff;
+  transform: scale(1.15);
+}
+
+.pager-hint {
+  text-align: center;
+  color: #93c5fd;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem 0;
 }
 
 .drag-ghost {
