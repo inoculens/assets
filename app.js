@@ -1908,7 +1908,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.9';
+var APP_VERSION = '2026-10-08.10';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -4076,8 +4076,12 @@ function buildSettings() {
     '<button id="s-download" type="button">Download backup</button>' +
     '<button id="s-csv-trades" type="button">Export trades CSV</button>' +
     '<button id="s-csv-lots" type="button">Export tax lots CSV (FIFO)</button>' +
-    '<label for="s-upload">Restore from file</label>' +
-    '<input id="s-upload" type="file" accept="application/json,.json">' +
+    '<span class="fld-label" id="s-upload-label">Restore from file</span>' +
+    '<div class="file-row">' +
+    '<button id="s-browse" type="button">Browse…</button>' +
+    '<span id="s-filename" class="muted" aria-live="polite">No file chosen</span>' +
+    '</div>' +
+    '<input id="s-upload" type="file" accept="application/json,.json" hidden>' +
     '</section>' +
     '<section data-setpanel="danger" role="tabpanel" aria-label="Danger zone" hidden>' +
     '<button id="s-clear" type="button">Clear all data</button>' +
@@ -4118,27 +4122,38 @@ function buildSettings() {
   if (csvT) csvT.addEventListener('click', downloadTradesCsv);
   var csvL = document.getElementById('s-csv-lots');
   if (csvL) csvL.addEventListener('click', downloadLotsCsv);
-  document.getElementById('s-upload').addEventListener('change', function (e) {
+  var sUpload = document.getElementById('s-upload');
+  var sFileName = document.getElementById('s-filename');
+  function resetUpload() {
+    if (sUpload) sUpload.value = '';
+    if (sFileName) sFileName.textContent = 'No file chosen';
+  }
+  var sBrowse = document.getElementById('s-browse');
+  if (sBrowse && sUpload) {
+    sBrowse.addEventListener('click', function () { sUpload.click(); });
+  }
+  sUpload.addEventListener('change', function (e) {
     var input = e.target;
     var f = input && input.files && input.files[0];
     if (!f) return;
+    if (sFileName) sFileName.textContent = f.name || 'Selected file';
     var reader = new FileReader();
     reader.onload = function () {
       try {
         importState(String(reader.result));
       } catch (err) {
         showBanner('Import failed: ' + (err && err.message ? err.message : err));
-        input.value = '';
+        resetUpload();
         return;
       }
-      input.value = '';
+      resetUpload();
       clearBanner();
       refreshPrices();
       closeDialog('settings-dialog');
     };
     reader.onerror = function () {
       showBanner('Import failed: could not read file.');
-      input.value = '';
+      resetUpload();
     };
     reader.readAsText(f);
   });
