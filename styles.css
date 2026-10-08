@@ -805,7 +805,7 @@ details.adv summary, details.opt summary { color: var(--muted); font-size: 0.88r
 details.opt + details.opt { margin-top: 0.65rem; }
 
 /* ————— Settings: fixed box, tabs + panels scroll independently ————— */
-#settings-dialog {
+#settings-dialog[open] {
   width: min(680px, 94vw);
   height: min(620px, 90vh);
   max-height: 90vh;
