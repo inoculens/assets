@@ -2068,7 +2068,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '1732819 (#115)';
+var APP_VERSION = '71c0d9b (#116)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2389,7 +2389,10 @@ function renderSummaryCards(st, rows, dtradesOpt, nAcctsOpt) {
     host.appendChild(cardEl);
   });
   var hv = document.getElementById('hero-value');
-  if (hv) hv.textContent = rows.length ? (mvKnown ? fmtMoney(mv, main) : '—') : '—';
+  if (hv) {
+    hv.textContent = rows.length ? (mvKnown ? fmtMoney(mv, main) : '—') : '—';
+    hv.title = hv.textContent;
+  }
   var hp = document.getElementById('hero-pl');
   if (hp) {
     if (!rows.length || !plKnown) {

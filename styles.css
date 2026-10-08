@@ -410,6 +410,9 @@ section h2, aside h2 {
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
   line-height: 1.05;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hero-pl { margin: 0 0 0.15rem; display: inline-block; }
