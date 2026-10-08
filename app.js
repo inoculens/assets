@@ -2435,19 +2435,21 @@ function tradeBlock(t, main, accountNameById) {
   side.className = 'side ' + meta.cls;
   side.textContent = meta.label;
   head.appendChild(side);
-  var what = document.createElement('span');
-  what.className = 'trade-what';
-  var qtyTxt = (t.qty === undefined || t.qty === null || String(t.qty).trim() === '') ? '' : fmtQty(t.qty) + ' ';
-  what.textContent = qtyTxt + String(t.symbol || '').toUpperCase();
+  var whatTxt = '';
   if (t.type === 'transfer' && t.toAccountId && accountNameById) {
     try {
       var fn = accountNameById(t.accountId);
       var tn = accountNameById(t.toAccountId);
-      if (fn || tn) what.textContent += ' · ' + (fn || '') + ' → ' + (tn || '');
+      if (fn || tn) whatTxt = (fn || '') + ' → ' + (tn || '');
     } catch (e) { /* ignore */ }
   }
-  if (t.swapId) what.textContent += ' · swap';
-  head.appendChild(what);
+  if (t.swapId) whatTxt += (whatTxt ? ' · ' : '') + 'swap';
+  if (whatTxt) {
+    var what = document.createElement('span');
+    what.className = 'trade-what';
+    what.textContent = whatTxt;
+    head.appendChild(what);
+  }
   var when = document.createElement('span');
   when.className = 'trade-when muted';
   when.textContent = t.date || '';
