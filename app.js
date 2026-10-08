@@ -2488,6 +2488,7 @@ function tradeBlock(t, main, accountNameById) {
       box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
     }
   } else {
+    box.appendChild(statRow('Amount', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
     box.appendChild(statRow('Paid', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
     box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
   }
@@ -2508,7 +2509,25 @@ function tradeBlock(t, main, accountNameById) {
   var feeRow = statRow('Fee', feeTxt, t.fee, false);
   if (n.feeFxAssumedSameRate) feeRow.title = 'Fee converted at the trade FX rate (*)';
   box.appendChild(feeRow);
-  if (t.note) box.appendChild(statRow('Note', String(t.note), null, false));
+  if (t.note) {
+    var noteRow = statRow('Note', String(t.note), null, false);
+    var noteVal = noteRow.querySelector('.stat-val');
+    if (noteVal) {
+      noteVal.classList.add('note-clamp');
+      noteVal.setAttribute('role', 'button');
+      noteVal.setAttribute('tabindex', '0');
+      noteVal.setAttribute('aria-label', 'Show full note');
+      noteVal.title = String(t.note);
+      noteVal.addEventListener('click', function () {
+        var isOpen = noteVal.classList.toggle('open');
+        noteVal.setAttribute('aria-label', isOpen ? 'Collapse note' : 'Show full note');
+      });
+      noteVal.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); noteVal.click(); }
+      });
+    }
+    box.appendChild(noteRow);
+  }
   return box;
 }
 

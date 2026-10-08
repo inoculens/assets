@@ -694,6 +694,14 @@ section h2, aside h2 {
 .trade-block .stat-label { flex: none; }
 .trade-block .stat-val { flex: none; text-align: left; }
 .trade-block .stat-row[data-label="Note"] { flex-basis: 100%; }
+.trade-block .stat-row[data-label="Note"] .stat-val {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.trade-block .stat-row[data-label="Note"] .stat-val.open { white-space: normal; }
 .trade-block .rate-line .stat-val { max-width: none; }
 .trade-foot { display: flex; justify-content: flex-end; padding: 0.5rem 0 0.35rem; }
 .trade-del { margin-left: 0.25rem; padding: 0.45rem 0.7rem; min-height: 2.5rem; font-size: 1.05rem; line-height: 1; }
