@@ -135,7 +135,7 @@ header.brand::after {
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 1.15rem;
-  box-shadow: 0 4px 14px rgba(227, 197, 124, 0.25);
+  box-shadow: none;
   overflow: hidden;
 }
 
