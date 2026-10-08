@@ -2044,7 +2044,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.25';
+var APP_VERSION = '2026-10-08.26';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -4415,7 +4415,7 @@ function downloadBackup() {
   var blob = new Blob([json], { type: 'application/json' });
   var n = new Date();
   function p(x) { return (x < 10 ? '0' : '') + x; }
-  var name = 'plutus-' + n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()) + '.json';
+  var name = 'plutus.inoculens.com-' + n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()) + '.json';
   var urls = window.URL || window.webkitURL;
   var url = urls.createObjectURL(blob);
   var a = document.createElement('a');
