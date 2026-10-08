@@ -2083,7 +2083,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2687a6b (#127)';
+var APP_VERSION = '9f5ca26 (#128)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2322,22 +2322,26 @@ function statCard(label, text, raw) {
   return d;
 }
 
-// Auto-fit hero digits: fixed box, fluid numbers. Starts from the CSS clamp
-// size and steps down until the amount fits one line (floor ~1.4rem);
-// ellipsis remains as the last resort. Re-run on render + resize.
+// Auto-fit hero digits: fixed box, fluid numbers. The digits live in an
+// inner span sized here; the outer line keeps its CSS size, so the strut —
+// and therefore the box — never moves. Starts from the CSS clamp size and
+// steps down until the amount fits one line (floor ~1.4rem); ellipsis
+// remains as the last resort. Re-run on render + resize.
 function fitHeroValue() {
   try {
-    var hv = document.getElementById('hero-value');
-    if (!hv || !hv.style) return;
-    hv.style.fontSize = '';
+    var el = null;
+    try { el = document.getElementById('hero-value-num'); } catch (e0) { el = null; }
+    if (!el) el = document.getElementById('hero-value');
+    if (!el || !el.style) return;
+    el.style.fontSize = '';
     if (typeof getComputedStyle !== 'function') return;
-    var size = parseFloat(getComputedStyle(hv).fontSize);
+    var size = parseFloat(getComputedStyle(el).fontSize);
     if (!isFinite(size) || size <= 0) return;
     var floor = 22;
     var guard = 0;
-    while (guard < 30 && size > floor && hv.scrollWidth > hv.clientWidth + 1) {
+    while (guard < 30 && size > floor && el.scrollWidth > el.clientWidth + 1) {
       size -= 2;
-      hv.style.fontSize = size + 'px';
+      el.style.fontSize = size + 'px';
       guard++;
     }
   } catch (e) { /* ignore */ }
@@ -2425,10 +2429,13 @@ function renderSummaryCards(st, rows, dtradesOpt, nAcctsOpt) {
     host.appendChild(cardEl);
   });
   var hv = document.getElementById('hero-value');
-  if (hv) {
-    hv.textContent = rows.length ? (mvKnown ? fmtMoney(mv, main) : '—') : '—';
-    hv.title = hv.textContent;
+  var hvn = null;
+  try { hvn = document.getElementById('hero-value-num'); } catch (e0) { hvn = null; }
+  var hvTarget = hvn || hv;
+  if (hvTarget) {
+    hvTarget.textContent = rows.length ? (mvKnown ? fmtMoney(mv, main) : '—') : '—';
   }
+  if (hv) hv.title = hvTarget ? hvTarget.textContent : '';
   fitHeroValue();
   var hp = document.getElementById('hero-pl');
   if (hp) {
@@ -5536,6 +5543,27 @@ function syncHeroAllocHeight() {
       if (sixRows > 0 && sixRows < cap) cap = sixRows;
     } catch (e2) { /* fall back to the measured block height */ }
     leg.style.maxHeight = cap + 'px';
+    // Pin the ring to exact pixels as well: percentage heights resolve
+    // against sibling-influenced layout and drift per content — pixels
+    // cannot. Cleared on narrow screens where the stylesheet size applies.
+    try {
+      var wide = true;
+      try {
+        if (typeof window !== 'undefined' && window.matchMedia) {
+          wide = window.matchMedia('(min-width: 721px)').matches;
+        }
+      } catch (e3) {}
+      var ring = host.querySelector('.donut-sm');
+      if (ring && ring.style) {
+        if (wide && h > 0) {
+          ring.style.width = h + 'px';
+          ring.style.height = h + 'px';
+        } else {
+          ring.style.width = '';
+          ring.style.height = '';
+        }
+      }
+    } catch (e4) { /* ring keeps its stylesheet size */ }
   } catch (e) { /* ignore */ }
 }
 

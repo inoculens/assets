@@ -1504,6 +1504,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
 }
 
+#hero-value-num {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: baseline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .hero-alloc-legend {
   list-style: none;
   margin: 0;
