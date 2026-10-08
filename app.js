@@ -2504,7 +2504,7 @@ function tradeBlock(t, main, accountNameById) {
     if (Number(t.networkFee) > 0) box.appendChild(statRow('Network fee', fmtQty(t.networkFee) + ' ' + String(t.symbol || '').toUpperCase(), t.networkFee, false));
     box.appendChild(statRow('Received', fmtQty(netQ) + ' ' + String(t.symbol || '').toUpperCase(), netQ, false));
     if ((Number(t.total) > 0 || Number(t.fee) > 0)) {
-      box.appendChild(statRow('Cash cost', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+      box.appendChild(statRow('Fiat cost', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
     }
   } else if (t.type === 'income') {
     box.appendChild(statRow('Received', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
@@ -2519,7 +2519,7 @@ function tradeBlock(t, main, accountNameById) {
       box.appendChild(statRow('Lost', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
     }
     if (t.total !== undefined && t.total !== null && String(t.total).trim() !== '' && Number(t.total) > 0) {
-      box.appendChild(statRow('Cash lost', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
+      box.appendChild(statRow('Fiat lost', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
       box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
     }
   } else {
@@ -3149,7 +3149,7 @@ function buildTradeForm() {
     '<div id="t-networkfee-row" hidden><label for="t-networkfee">Network fee (in same asset)</label>' +
     '<input id="t-networkfee" inputmode="decimal" placeholder="e.g. 0.0005">' +
     '<p class="fld-hint">On-chain gas / miner fee taken from the moved amount. Tracked as a real loss.</p></div>' +
-    '<label for="t-fee">Fee (in money)</label>' +
+    '<label for="t-fee">Fee (fiat)</label>' +
     '<input id="t-fee" inputmode="decimal" placeholder="e.g. 0">' +
     '<label for="t-feeccy">Fee currency</label>' +
     '<select id="t-feeccy">' + ccyOptions('EUR', false) + '</select>' +
@@ -3157,7 +3157,7 @@ function buildTradeForm() {
     '<input id="t-note" autocomplete="off" placeholder="e.g. monthly savings">' +
     '<label for="t-manual-rate">Manual FX rate (fallback when ECB is unavailable)</label>' +
     '<input id="t-manual-rate" inputmode="decimal" placeholder="e.g. 0.92">' +
-    '<label for="t-manual-price">Manual live price (override, in main currency)</label>' +
+    '<label for="t-manual-price">Manual live price (override, in fiat)</label>' +
     '<input id="t-manual-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '</details>' +
     '<p id="t-error" class="banner-error" role="alert" hidden></p>' +
@@ -3226,7 +3226,7 @@ function syncTradeTypeUI() {
     setLabel('t-total-label', 'Market value at receipt (optional, 0 = free)');
   } else if (isExpense) {
     setLabel('t-qty-label', 'Quantity lost (optional if cash-only)');
-    setLabel('t-total-label', 'Cash lost (optional if crypto-only)');
+    setLabel('t-total-label', 'Fiat lost (optional if crypto-only)');
   } else {
     setLabel('t-qty-label', 'Quantity');
     setLabel('t-total-label', 'Total (native currency)');
@@ -3539,7 +3539,7 @@ function onTradeSubmit(ev) {
     var hasT = !(String(totalRaw).trim() === '');
     if (!hasQ && !hasT) { tradeFormError('Expense needs a quantity or a cash amount.'); return; }
     if (hasQ && (!isFinite(qty) || qty <= 0)) { tradeFormError('Quantity must be > 0.'); return; }
-    if (hasT && (!isFinite(total) || total <= 0)) { tradeFormError('Cash amount must be > 0.'); return; }
+    if (hasT && (!isFinite(total) || total <= 0)) { tradeFormError('Fiat amount must be > 0.'); return; }
     if (!hasQ) qty = null;
     if (!hasT) { total = 0; currency = String(main).toUpperCase(); }
     else if (!isValidCurrencyCode(currency)) { tradeFormError('Currency code invalid.'); return; }
@@ -3935,7 +3935,7 @@ function buildSettings() {
     '<section data-setpanel="overrides" role="tabpanel" aria-label="Price overrides">' +
     '<label for="o-symbol">Symbol</label>' +
     '<input id="o-symbol" autocomplete="off" spellcheck="false" placeholder="e.g. BTC">' +
-    '<label for="o-price">Price (main currency)</label>' +
+    '<label for="o-price">Price (in fiat)</label>' +
     '<input id="o-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '<button id="o-add" type="button">Save override</button>' +
     '<ul id="o-list"></ul>' +
