@@ -2068,7 +2068,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2e915f6 (#113)';
+var APP_VERSION = '9118689 (#114)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -3074,9 +3074,18 @@ function renderAccountDetail(st, id) {
   head.appendChild(menu);
   host.appendChild(head);
   // Optional free-text label entered at creation (wallet, note, anything) —
-  // shown here with popup-on-overflow like trade notes.
-  if (acc.address) host.appendChild(detailMetaRow('Label', acc.address, 'Label'));
-  if (acc.note) host.appendChild(detailMetaRow('Note', acc.note, 'Account note'));
+  // shown inside the header box with popup-on-overflow like trade notes.
+  var metaBlock = null;
+  function addMeta(label, text, title) {
+    if (!metaBlock) {
+      metaBlock = document.createElement('div');
+      metaBlock.className = 'detail-meta-block';
+      head.appendChild(metaBlock);
+    }
+    metaBlock.appendChild(detailMetaRow(label, text, title));
+  }
+  if (acc.address) addMeta('Label', acc.address, 'Label');
+  if (acc.note) addMeta('Note', acc.note, 'Account note');
   var stats = document.createElement('div');
   stats.className = 'cards detail-stats';
   var pl = 0;
