@@ -136,10 +136,14 @@ header.brand::after {
   font-weight: 700;
   font-size: 1.15rem;
   box-shadow: 0 4px 14px rgba(227, 197, 124, 0.25);
+  overflow: hidden;
 }
 
-img.brand-mark {
+.brand-mark > img {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
+  display: block;
 }
 
 .brand h1 {
