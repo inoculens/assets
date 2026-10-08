@@ -197,17 +197,23 @@ function isValidImportTrade(t, accountIds) {
     if (t.currency !== undefined && t.currency !== null && String(t.currency).trim() !== '') {
       if (!isValidCurrencyCode(t.currency)) return false;
     }
+    // Destination is optional: without one the transfer is an on-chain move
+    // inside the same account (e.g. sweeping to a fresh address), where only
+    // the network fee is lost. With one it must be a different known account.
+    var hasTo = t.toAccountId !== undefined && t.toAccountId !== null && String(t.toAccountId).trim() !== '';
     if (accountIds !== undefined) {
       if (!Array.isArray(accountIds)) return false;
       if (typeof t.accountId !== 'string' || t.accountId.length === 0) return false;
-      if (typeof t.toAccountId !== 'string' || t.toAccountId.length === 0) return false;
-      if (t.accountId === t.toAccountId) return false;
+      if (hasTo && typeof t.toAccountId !== 'string') return false;
       if (accountIds.indexOf(t.accountId) === -1) return false;
-      if (accountIds.indexOf(t.toAccountId) === -1) return false;
+      if (hasTo) {
+        if (t.accountId === t.toAccountId) return false;
+        if (accountIds.indexOf(t.toAccountId) === -1) return false;
+      }
     } else {
       if (typeof t.accountId !== 'string' || !t.accountId) return false;
-      if (typeof t.toAccountId !== 'string' || !t.toAccountId) return false;
-      if (t.accountId === t.toAccountId) return false;
+      if (hasTo && typeof t.toAccountId !== 'string') return false;
+      if (hasTo && t.accountId === t.toAccountId) return false;
     }
     return true;
   }
@@ -1193,6 +1199,7 @@ function computePortfolio(allTrades, live, method) {
       sb.fees += n.feeMain;
       totals.invested += cb;
       totals.feesFiat += n.feeMain;
+      if (isFifo) sb.queue.push({ qty: qb, unitCost: qb > 0 ? cb / qb : 0, date: t.date });
     } else if (t.type === 'income') {
       var qi = Number(t.qty);
       if (!isFinite(qi) || qi <= 0) return;
@@ -1314,7 +1321,11 @@ function computePortfolio(allTrades, live, method) {
       var nft = (t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee);
       if (!isFinite(nft) || nft < 0 || nft >= qt) return;
       var from = stFor(t.accountId, sym);
-      var to = stFor(t.toAccountId, sym);
+      // No destination: on-chain move inside the same account (fresh address,
+      // same owner) — out and in cancel, only the network fee is lost.
+      var to = (t.toAccountId !== undefined && t.toAccountId !== null && String(t.toAccountId).trim() !== '')
+        ? stFor(t.toAccountId, sym)
+        : from;
       from.touched = true;
       to.touched = true;
       var fiatT = n.totalMain + n.feeMain;
@@ -1524,8 +1535,8 @@ function validateTrade(t, heldQty) {
     if (!isValidCurrencyCode(t.currency)) return 'currency invalid';
   }
   if (effType === 'transfer') {
-    if (typeof t.toAccountId !== 'string' || !t.toAccountId) return 'transfer needs a destination account';
-    if (t.accountId && t.toAccountId && t.accountId === t.toAccountId) return 'transfer needs two different accounts';
+    var hasToV = t.toAccountId !== undefined && t.toAccountId !== null && String(t.toAccountId).trim() !== '';
+    if (hasToV && t.accountId && t.toAccountId && t.accountId === t.toAccountId) return 'transfer needs two different accounts';
   }
   if (typeof t.date === 'string' && t.date.length > 0) {
     if (!isValidDateStr(t.date)) return 'date must be YYYY-MM-DD';
@@ -2033,7 +2044,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.17';
+var APP_VERSION = '2026-10-08.18';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -3508,6 +3519,15 @@ function syncTradeTypeUI() {
       var cur = toSel.value;
       toSel.innerHTML = '';
       var curKept = false;
+      var eligible = 0;
+      if (isTransfer) {
+        // No destination: plain on-chain move inside this account (new address,
+        // same owner) — only the network fee is recorded as lost.
+        var sameOpt = document.createElement('option');
+        sameOpt.value = '';
+        sameOpt.textContent = 'Same account — on-chain move';
+        toSel.appendChild(sameOpt);
+      }
       (st.accounts || []).forEach(function (a) {
         if (a.id === fromId) return;
         if (isTransfer && fromAcc && String(a.ticker).toUpperCase() !== String(fromAcc.ticker).toUpperCase()) return; // same asset only
@@ -3515,16 +3535,17 @@ function syncTradeTypeUI() {
         o.value = a.id;
         o.textContent = a.name + ' · ' + String(a.ticker).toUpperCase();
         toSel.appendChild(o);
+        eligible++;
         if (a.id === cur) curKept = true;
       });
       // Keep the previous pick only if still eligible; otherwise park on the
-      // first eligible destination so the select never shows a stale value.
+      // first entry (the on-chain move for transfers).
       if (cur && curKept) toSel.value = cur;
       else if (toSel.options.length) toSel.selectedIndex = 0;
       if (hint) {
-        if (!toSel.options.length) {
+        if (isTransfer && eligible === 0) {
           var need = fromAcc ? String(fromAcc.ticker).toUpperCase() : 'this asset';
-          hint.textContent = 'No other ' + need + ' account yet — create another ' + need + ' account first.';
+          hint.textContent = 'No other ' + need + ' account — recording as an on-chain move in this account.';
         } else {
           hint.textContent = 'Transfer moves cost basis — only the network + fiat fees count as losses.';
         }
@@ -3841,15 +3862,14 @@ function onTradeSubmit(ev) {
   } else if (side === 'transfer') {
     if (!isFinite(qty) || qty <= 0) { tradeFormError('Quantity must be > 0.'); return; }
     if (!isFinite(networkFee) || networkFee < 0 || networkFee >= qty) { tradeFormError('Network fee must be >= 0 and < qty.'); return; }
-    var eligibleDests = list.filter(function (a) {
-      return a && a.id !== accountId && String(a.ticker).toUpperCase() === symbol;
-    });
-    if (!eligibleDests.length) { tradeFormError('You need another ' + symbol + ' account to transfer to — create one first.'); return; }
-    if (!toAccId) { tradeFormError('Pick a destination account.'); return; }
-    var toAccT = accountById(st0, toAccId);
-    if (!toAccT) { tradeFormError('Destination account not found.'); return; }
-    if (toAccT.id === accountId) { tradeFormError('Transfer needs two different accounts.'); return; }
-    if (String(toAccT.ticker).toUpperCase() !== symbol) { tradeFormError('Transfer needs the same asset in both accounts — use Swap for different assets.'); return; }
+    // No destination: on-chain move inside this account (fresh address, same
+    // owner). With one: it must be a different account with the same asset.
+    var toAccT = toAccId ? accountById(st0, toAccId) : null;
+    if (toAccId && !toAccT) { tradeFormError('Destination account not found.'); return; }
+    if (toAccT) {
+      if (toAccT.id === accountId) { tradeFormError('Transfer needs two different accounts.'); return; }
+      if (String(toAccT.ticker).toUpperCase() !== symbol) { tradeFormError('Transfer needs the same asset in both accounts — use Swap for different assets.'); return; }
+    }
     if (String(totalRaw).trim() !== '' && (!isFinite(total) || total < 0)) { tradeFormError('Total must be >= 0.'); return; }
     if (String(totalRaw).trim() !== '' && !isValidCurrencyCode(currency)) { tradeFormError('Currency code invalid.'); return; }
     if (String(totalRaw).trim() === '') { total = 0; currency = String(main).toUpperCase(); }
@@ -3921,7 +3941,7 @@ function onTradeSubmit(ev) {
         accountId: accountId,
         createdAt: prev.createdAt || new Date().toISOString()
       };
-      if (side === 'transfer') { trade.toAccountId = toAccId; trade.networkFee = networkFee; }
+      if (side === 'transfer') { if (toAccId) trade.toAccountId = toAccId; trade.networkFee = networkFee; }
       else if (side === 'expense' && qty === null) { delete trade.qty; }
       if (prev.swapId) trade.swapId = prev.swapId;
       var errE = validateTrade(trade, 1e18); // structural only; held already checked directionally above
@@ -3962,7 +3982,7 @@ function onTradeSubmit(ev) {
       accountId: accountId,
       createdAt: new Date().toISOString()
     };
-    if (side === 'transfer') { trade.toAccountId = toAccId; trade.networkFee = networkFee; }
+    if (side === 'transfer') { if (toAccId) trade.toAccountId = toAccId; trade.networkFee = networkFee; }
     if (side === 'expense' && qty === null) { delete trade.qty; }
     var heldForCheck = 1e18;
     try {
