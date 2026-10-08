@@ -613,9 +613,37 @@ section h2, aside h2 {
 .drag-handle:hover { opacity: 1; }
 .drag-handle:active { cursor: grabbing; }
 
-.account-card.dragging { opacity: 0.45; }
+.account-card.drag-src { opacity: 0.35; }
 .account-card.drop-before { box-shadow: 0 -2px 0 var(--gold); }
 .account-card.drop-after { box-shadow: 0 2px 0 var(--gold); }
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.page-btn { min-width: 2.75rem; }
+.page-btn[disabled] { opacity: 0.35; cursor: default; }
+.page-btn[aria-current="page"] { color: var(--gold); border-color: var(--hairline-gold); }
+.page-btn.hot {
+  border-color: rgba(96, 165, 250, 0.7);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35), 0 0 26px rgba(96, 165, 250, 0.3);
+  color: var(--text);
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.95;
+  margin: 0;
+  border-color: var(--hairline-gold);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
 
 .acct-avatar {
   width: 2.9rem;

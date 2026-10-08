@@ -2068,7 +2068,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '71c0d9b (#116)';
+var APP_VERSION = '341572c (#117)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2584,6 +2584,14 @@ function renderAccounts(st) {
     rows.forEach(function (r) { grandRows.push(r); });
   });
   renderSummaryCards(st, grandRows, dtrades, visibleAccounts.length);
+  // Paged cards, global totals: only the current page renders, while hero,
+  // summary and counts always cover every visible account.
+  var rowsById = {};
+  visibleAccounts.forEach(function (acc, vi) { rowsById[acc.id] = perAcctRows[vi]; });
+  var pageCount = Math.max(1, Math.ceil(visibleAccounts.length / ACCOUNT_PAGE_SIZE));
+  if (accountPage > pageCount - 1) accountPage = pageCount - 1;
+  if (accountPage < 0) accountPage = 0;
+  var pageAccounts = visibleAccounts.slice(accountPage * ACCOUNT_PAGE_SIZE, accountPage * ACCOUNT_PAGE_SIZE + ACCOUNT_PAGE_SIZE);
   host.innerHTML = '';
   var landing = document.getElementById('landing');
   var hero = document.getElementById('hero');
@@ -2635,7 +2643,7 @@ function renderAccounts(st) {
     restoreAccountFilterFocus();
     return;
   }
-  visibleAccounts.forEach(function (acc, ai) {
+  pageAccounts.forEach(function (acc) {
     var card = document.createElement('article');
     card.className = 'account-card';
     card.setAttribute('data-account', acc.id);
@@ -2646,7 +2654,6 @@ function renderAccounts(st) {
     var grip = document.createElement('span');
     grip.className = 'drag-handle';
     grip.title = 'Drag to reorder';
-    grip.setAttribute('draggable', 'true');
     grip.setAttribute('aria-hidden', 'true');
     card.appendChild(grip);
     var avatar = document.createElement('span');
@@ -2666,7 +2673,7 @@ function renderAccounts(st) {
     mid.appendChild(tickEl);
     card.appendChild(mid);
     var atrades = accountTrades({ trades: dtrades }, acc.id);
-    var rows = perAcctRows[ai]; // computed once above; totals aggregate these same runs
+    var rows = rowsById[acc.id] || []; // joint run above, same data as the totals
     var pl = 0;
     var mv = 0;
     var mvKnown = false;
@@ -2707,7 +2714,43 @@ function renderAccounts(st) {
     card.appendChild(openBtn);
     host.appendChild(card);
   });
+  if (pageCount > 1) host.appendChild(buildAccountPager(pageCount));
   restoreAccountFilterFocus();
+}
+
+function buildAccountPager(pageCount) {
+  var pager = document.createElement('div');
+  pager.className = 'pager';
+  pager.setAttribute('role', 'navigation');
+  pager.setAttribute('aria-label', 'Account pages');
+  function pgBtn(label, attrs, disabled, fn) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ghost page-btn';
+    b.textContent = label;
+    for (var k in attrs) {
+      if (Object.prototype.hasOwnProperty.call(attrs, k)) b.setAttribute(k, attrs[k]);
+    }
+    if (disabled) b.disabled = true;
+    b.addEventListener('click', fn);
+    return b;
+  }
+  pager.appendChild(pgBtn('‹ Prev', { 'data-page-prev': '1', 'aria-label': 'Previous account page' }, accountPage <= 0, function () {
+    if (accountPage > 0) { accountPage--; render(); }
+  }));
+  for (var i = 0; i < pageCount; i++) {
+    (function (p) {
+      var nb = pgBtn(String(p + 1), { 'data-page-goto': String(p), 'aria-label': 'Go to account page ' + (p + 1) }, false, function () {
+        if (accountPage !== p) { accountPage = p; render(); }
+      });
+      if (p === accountPage) nb.setAttribute('aria-current', 'page');
+      pager.appendChild(nb);
+    })(i);
+  }
+  pager.appendChild(pgBtn('Next ›', { 'data-page-next': '1', 'aria-label': 'Next account page' }, accountPage >= pageCount - 1, function () {
+    if (accountPage < pageCount - 1) { accountPage++; render(); }
+  }));
+  return pager;
 }
 
 function startInlineRename(accId, headEl, nameEl) {
@@ -3611,6 +3654,7 @@ function buildAccounts() {
     });
     navHost.addEventListener('click', function (e) {
       if (!e || !e.target || !e.target.closest) return;
+      if (suppressCardClick) { suppressCardClick = false; return; } // just finished a drag
       if (e.target.closest('button')) return;
       var nav = e.target.closest('[data-account-nav]');
       if (nav && nav.getAttribute('data-account-nav')) {
@@ -3649,97 +3693,236 @@ function buildAccounts() {
 // and export/import preserve it, so a reorder survives backup + restore with
 // no extra fields. Drags start from the grip only; card clicks still open.
 
-var dragAcctId = null;
-var dropAfterCard = false;
-
-function dndCardOf(e) {
-  if (!e || !e.target || !e.target.closest) return null;
-  return e.target.closest('.account-card');
-}
+var ACCOUNT_PAGE_SIZE = 6;
+var accountPage = 0;
+var acctDrag = null; // {id,startX,startY,started,ghost,overId,after,flipTimer,flipCoolUntil,armedBtn}
+var suppressCardClick = false;
 
 function clearDropMarks() {
   var host = document.getElementById('accounts');
   if (!host || !host.querySelectorAll) return;
-  Array.prototype.forEach.call(host.querySelectorAll('.account-card.dragging,.account-card.drop-before,.account-card.drop-after'), function (el) {
-    el.classList.remove('dragging', 'drop-before', 'drop-after');
+  Array.prototype.forEach.call(host.querySelectorAll('.account-card.drag-src,.account-card.drop-before,.account-card.drop-after'), function (el) {
+    el.classList.remove('drag-src', 'drop-before', 'drop-after');
   });
 }
 
-function markDragging() {
-  if (!dragAcctId) return;
+function clearCardMarks() {
   var host = document.getElementById('accounts');
-  if (!host || !host.querySelector) return;
-  var src = null;
+  if (!host || !host.querySelectorAll) return;
+  Array.prototype.forEach.call(host.querySelectorAll('.account-card.drop-before,.account-card.drop-after'), function (el) {
+    el.classList.remove('drop-before', 'drop-after');
+  });
+}
+
+function acctDragCardEl(id) {
+  var host = document.getElementById('accounts');
+  if (!host || !host.querySelector) return null;
   try {
-    src = host.querySelector('[data-account="' + String(dragAcctId).replace(/"/g, '') + '"]');
+    return host.querySelector('[data-account="' + String(id).replace(/"/g, '') + '"]');
   } catch (e) {
-    src = null;
+    return null;
   }
-  if (src) src.classList.add('dragging');
+}
+
+function visibleAccountIds(st) {
+  var f = selectedTickers(st);
+  return (st.accounts || []).filter(function (a) {
+    return f === null || f.indexOf(String(a.ticker).toUpperCase()) !== -1;
+  }).map(function (a) { return a.id; });
+}
+
+function acctDragCleanup() {
+  if (acctDrag && acctDrag.flipTimer) {
+    try { clearTimeout(acctDrag.flipTimer); } catch (e) {}
+  }
+  if (acctDrag && acctDrag.ghost && acctDrag.ghost.parentNode) {
+    try { acctDrag.ghost.parentNode.removeChild(acctDrag.ghost); } catch (e) {}
+  }
+  try {
+    if (typeof document !== 'undefined' && document.body && document.body.style) document.body.style.userSelect = '';
+  } catch (e) {}
+  clearDropMarks();
+  acctDrag = null;
+}
+
+function markAcctDragSrc() {
+  if (!acctDrag) return;
+  var src = acctDragCardEl(acctDrag.id);
+  if (src) src.classList.add('drag-src');
+}
+
+function acctStartDrag(src) {
+  var r = null;
+  try { r = src.getBoundingClientRect(); } catch (e) { r = null; }
+  var ghost = null;
+  try {
+    ghost = src.cloneNode(true);
+    ghost.classList.remove('drop-before', 'drop-after', 'drag-src');
+    ghost.classList.add('drag-ghost');
+    ghost.removeAttribute('id');
+    ghost.style.width = (r && r.width ? r.width : 320) + 'px';
+    ghost.style.left = (r ? r.left : 0) + 'px';
+    ghost.style.top = (r ? r.top : 0) + 'px';
+    if (typeof document !== 'undefined' && document.body) document.body.appendChild(ghost);
+    else ghost = null;
+  } catch (e) { ghost = null; }
+  acctDrag.started = true;
+  acctDrag.ghost = ghost;
+  suppressCardClick = true;
+  try {
+    if (typeof document !== 'undefined' && document.body && document.body.style) document.body.style.userSelect = 'none';
+  } catch (e) {}
+  markAcctDragSrc();
+}
+
+function acctDisarmFlip() {
+  if (acctDrag && acctDrag.flipTimer) {
+    try { clearTimeout(acctDrag.flipTimer); } catch (e) {}
+    acctDrag.flipTimer = null;
+  }
+  var host = document.getElementById('accounts');
+  if (host && host.querySelectorAll) {
+    Array.prototype.forEach.call(host.querySelectorAll('.page-btn.hot'), function (b) { b.classList.remove('hot'); });
+  }
+  if (acctDrag) acctDrag.armedBtn = null;
+}
+
+function acctFlipTo(page) {
+  var st = loadState();
+  var vis = visibleAccountIds(st);
+  var pages = Math.max(1, Math.ceil(vis.length / ACCOUNT_PAGE_SIZE));
+  if (page < 0 || page > pages - 1) return false;
+  accountPage = page;
+  render();
+  if (acctDrag) {
+    acctDrag.flipCoolUntil = Date.now() + 900;
+    acctDrag.overId = null;
+    acctDrag.after = false;
+    markAcctDragSrc();
+  }
+  return true;
 }
 
 function wireAccountDnD() {
   var host = document.getElementById('accounts');
   if (!host || host.getAttribute('data-dnd-wired')) return;
   host.setAttribute('data-dnd-wired', '1');
-  host.addEventListener('dragstart', function (e) {
-    var card = dndCardOf(e);
+  host.addEventListener('pointerdown', function (e) {
     var grip = e.target && e.target.closest ? e.target.closest('.drag-handle') : null;
-    if (!grip || !card || !card.getAttribute('data-account')) {
-      if (e.preventDefault) e.preventDefault();
-      dragAcctId = null;
+    if (!grip) return;
+    var card = grip.closest('.account-card');
+    if (!card || !card.getAttribute('data-account')) return;
+    if (e.pointerType === 'mouse' && e.button !== undefined && e.button !== 0) return;
+    if (typeof e.clientX !== 'number') return;
+    acctDrag = { id: card.getAttribute('data-account'), startX: e.clientX, startY: e.clientY, started: false, ghost: null, overId: null, after: false, flipTimer: null, flipCoolUntil: 0, armedBtn: null };
+    try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  host.addEventListener('pointermove', function (e) {
+    if (!acctDrag || !e || typeof e.clientX !== 'number') return;
+    var dx = e.clientX - acctDrag.startX;
+    var dy = e.clientY - acctDrag.startY;
+    if (!acctDrag.started) {
+      if (dx * dx + dy * dy < 49) return;
+      var src = acctDragCardEl(acctDrag.id);
+      if (!src) { acctDragCleanup(); return; }
+      acctStartDrag(src);
+    }
+    if (acctDrag.ghost) {
+      acctDrag.ghost.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    }
+    var under = null;
+    try {
+      under = (typeof document !== 'undefined' && document.elementFromPoint) ? document.elementFromPoint(e.clientX, e.clientY) : null;
+    } catch (err) { under = null; }
+    // Cross-page targets: the pager buttons glow blue; lingering flips the page.
+    var pgBtn = under && under.closest ? under.closest('[data-page-prev],[data-page-next]') : null;
+    if (pgBtn && !pgBtn.disabled && Date.now() >= (acctDrag.flipCoolUntil || 0)) {
+      if (acctDrag.armedBtn !== pgBtn) {
+        acctDisarmFlip();
+        acctDrag.armedBtn = pgBtn;
+        pgBtn.classList.add('hot');
+        var dir = pgBtn.hasAttribute('data-page-prev') ? -1 : 1;
+        acctDrag.flipTimer = setTimeout(function () {
+          if (!acctDrag) return;
+          acctDisarmFlip();
+          acctFlipTo(accountPage + dir);
+        }, 650);
+      }
+    } else {
+      acctDisarmFlip();
+    }
+    clearCardMarks();
+    var card = under && under.closest ? under.closest('.account-card') : null;
+    acctDrag.overId = null;
+    if (card && card.getAttribute('data-account') !== acctDrag.id) {
+      var r = null;
+      try { r = card.getBoundingClientRect(); } catch (err2) { r = null; }
+      acctDrag.after = !!(r && (e.clientY - r.top) > r.height / 2);
+      acctDrag.overId = card.getAttribute('data-account');
+      card.classList.add(acctDrag.after ? 'drop-after' : 'drop-before');
+    }
+  });
+  function acctFinishDrop(e) {
+    if (!acctDrag) return;
+    var wasStarted = acctDrag.started;
+    var id = acctDrag.id;
+    var overId = null;
+    var after = false;
+    var onPager = null;
+    if (wasStarted && e && typeof e.clientX === 'number') {
+      try {
+        var under = (typeof document !== 'undefined' && document.elementFromPoint) ? document.elementFromPoint(e.clientX, e.clientY) : null;
+        var pb = under && under.closest ? under.closest('[data-page-prev],[data-page-next]') : null;
+        if (pb && !pb.disabled) onPager = pb;
+        else {
+          var card = under && under.closest ? under.closest('.account-card') : null;
+          if (card && card.getAttribute('data-account') !== id) {
+            overId = card.getAttribute('data-account');
+            var r = null;
+            try { r = card.getBoundingClientRect(); } catch (err) { r = null; }
+            after = !!(r && (e.clientY - r.top) > r.height / 2);
+          }
+        }
+      } catch (err2) {}
+    }
+    acctDragCleanup();
+    if (!wasStarted) return; // plain click: the nav handler opens the card
+    var st = loadState();
+    var vis = visibleAccountIds(st);
+    if (vis.indexOf(id) === -1) { render(); return; }
+    var fullIds = (st.accounts || []).map(function (a) { return a && a.id; });
+    var fullFrom = fullIds.indexOf(id);
+    var insertFull = -1;
+    if (onPager) {
+      var dir = onPager.hasAttribute('data-page-prev') ? -1 : 1;
+      var pages = Math.max(1, Math.ceil(vis.length / ACCOUNT_PAGE_SIZE));
+      var targetPage = accountPage + dir;
+      if (targetPage < 0) targetPage = 0;
+      if (targetPage > pages - 1) targetPage = pages - 1;
+      accountPage = targetPage;
+      var visIx = dir < 0 ? targetPage * ACCOUNT_PAGE_SIZE : Math.min(vis.length, (targetPage + 1) * ACCOUNT_PAGE_SIZE);
+      insertFull = visIx >= vis.length ? fullIds.length : fullIds.indexOf(vis[visIx]);
+      if (insertFull === -1) insertFull = dir < 0 ? 0 : fullIds.length;
+    } else if (overId) {
+      var visTo = vis.indexOf(overId);
+      if (visTo === -1) { render(); return; }
+      var wantVis = after ? visTo + 1 : visTo;
+      insertFull = wantVis >= vis.length ? fullIds.length : fullIds.indexOf(vis[wantVis]);
+      if (insertFull === -1) insertFull = fullIds.length;
+    } else {
+      render(); // released over nothing meaningful: snap back
       return;
     }
-    dragAcctId = card.getAttribute('data-account');
-    try {
-      e.dataTransfer.setData('text/plain', dragAcctId);
-      e.dataTransfer.effectAllowed = 'move';
-      if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(card, 24, 24);
-    } catch (err) { /* ignore */ }
-    setTimeout(function () { markDragging(); }, 0);
-  });
-  host.addEventListener('dragover', function (e) {
-    if (!dragAcctId) return;
-    var card = dndCardOf(e);
-    clearDropMarks();
-    markDragging();
-    if (!card || card.getAttribute('data-account') === dragAcctId) return;
-    if (e.preventDefault) e.preventDefault();
-    try { e.dataTransfer.dropEffect = 'move'; } catch (err) { /* ignore */ }
-    var r = null;
-    try {
-      r = card.getBoundingClientRect();
-    } catch (err) {
-      r = null;
-    }
-    dropAfterCard = !!(r && typeof e.clientY === 'number' && (e.clientY - r.top) > r.height / 2);
-    card.classList.add(dropAfterCard ? 'drop-after' : 'drop-before');
-  });
-  host.addEventListener('drop', function (e) {
-    if (!dragAcctId) return;
-    if (e.preventDefault) e.preventDefault();
-    var card = dndCardOf(e);
-    var st = loadState();
-    var ids = (st.accounts || []).map(function (a) { return a && a.id; });
-    var fromIx = ids.indexOf(dragAcctId);
-    var targetId = card ? card.getAttribute('data-account') : null;
-    var toIx = targetId ? ids.indexOf(targetId) : -1;
-    dragAcctId = null;
-    clearDropMarks();
-    if (fromIx === -1) { render(); return; }
-    var insertIx = toIx === -1 ? ids.length : (dropAfterCard ? toIx + 1 : toIx);
-    var moved = st.accounts.splice(fromIx, 1)[0];
-    if (fromIx < insertIx) insertIx--;
-    if (insertIx !== fromIx) {
-      st.accounts.splice(insertIx, 0, moved);
-      if (!saveStateGuarded(st)) return;
+    var moved = st.accounts.splice(fullFrom, 1)[0];
+    if (fullFrom < insertFull) insertFull--;
+    if (insertFull !== fullFrom) {
+      st.accounts.splice(insertFull, 0, moved);
+      if (!saveStateGuarded(st)) { render(); return; }
     }
     render();
-  });
-  host.addEventListener('dragend', function () {
-    dragAcctId = null;
-    clearDropMarks();
-  });
+  }
+  host.addEventListener('pointerup', acctFinishDrop);
+  host.addEventListener('pointercancel', function () { acctDragCleanup(); });
 }
 
 // --- New-account dialog ---
