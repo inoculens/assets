@@ -1057,8 +1057,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 .hero-alloc[hidden] { display: none; }
 
 .donut-sm {
-  width: 6rem;
-  height: 6rem;
+  width: clamp(2.4rem, 6vw, 3.4rem);
+  height: clamp(2.4rem, 6vw, 3.4rem);
   flex-shrink: 0;
   filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
 }
@@ -1109,6 +1109,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 @media (max-width: 720px) {
   #hero { flex-direction: column; align-items: stretch; }
   .hero-alloc { justify-content: flex-start; margin-left: 0; }
+  .donut-sm { width: 2.4rem; height: 2.4rem; }
 }
 
 @media print {
