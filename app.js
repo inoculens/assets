@@ -2044,7 +2044,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.23';
+var APP_VERSION = '2026-10-08.24';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -4576,9 +4576,10 @@ function renderHeroAlloc(st) {
   syncHeroAllocHeight();
 }
 
-// The legend never stretches its box: it scrolls inside the height of the
-// left amount block instead. Re-synced on render + viewport/font changes
-// because the amount scales with the viewport.
+// The legend never stretches its box: capped at six rows (the 7th asset
+// scrolls) and never taller than the left amount block, so the hero cannot
+// expand no matter how many assets exist. Re-synced on render + viewport
+// and font changes because the amount scales with the viewport.
 function syncHeroAllocHeight() {
   try {
     var host = document.getElementById('hero-alloc');
@@ -4588,7 +4589,14 @@ function syncHeroAllocHeight() {
     var leg = host.querySelector('.hero-alloc-legend');
     if (!main || !leg) return;
     var h = main.clientHeight;
-    if (h > 0) leg.style.maxHeight = h + 'px';
+    if (!(h > 0)) return;
+    var cap = h;
+    try {
+      var root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      var sixRows = 6 * (0.85 * 1.55 * root) + 5 * (0.35 * root);
+      if (sixRows > 0 && sixRows < cap) cap = sixRows;
+    } catch (e2) { /* fall back to the measured block height */ }
+    leg.style.maxHeight = cap + 'px';
   } catch (e) { /* ignore */ }
 }
 
