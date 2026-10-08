@@ -139,11 +139,9 @@ header.brand::after {
   overflow: hidden;
 }
 
-.brand-mark > img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+.brand-mark.brand-logo {
+  background: url('/icons/android-chrome-192x192.png') center / cover no-repeat,
+    linear-gradient(135deg, #f5e6c4, #e3c57c 55%, #b98f3e);
 }
 
 .brand h1 {
