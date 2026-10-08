@@ -3695,6 +3695,39 @@ function wireDialog(id) {
   dlg.addEventListener('close', returnFocus);
 }
 
+var menuOutsideWired = false;
+
+// The account ··· menu is a native <details>: it only toggles on its own
+// summary, so dismiss it on outside click / focus leave / Escape.
+function wireMenuOutside() {
+  if (menuOutsideWired) return;
+  menuOutsideWired = true;
+  function closeOpenMenus(except) {
+    var open = (typeof document !== 'undefined' && document.querySelectorAll)
+      ? document.querySelectorAll('details.menu[open]')
+      : [];
+    for (var i = 0; i < open.length; i++) {
+      if (except && (open[i] === except || open[i].contains(except))) continue;
+      open[i].removeAttribute('open');
+    }
+  }
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('click', function (e) {
+      var t = e ? e.target : null;
+      if (t && t.closest && t.closest('details.menu')) return; // inside: native toggle / buttons handle it
+      closeOpenMenus(null);
+    });
+    document.addEventListener('focusin', function (e) {
+      var t = e ? e.target : null;
+      if (t && t.closest && t.closest('details.menu')) return;
+      closeOpenMenus(null);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e && (e.key === 'Escape' || e.key === 'Esc')) closeOpenMenus(null);
+    });
+  }
+}
+
 function buildTopbar() {
   wireDialog('trade-dialog');
   wireDialog('settings-dialog');
@@ -4223,6 +4256,7 @@ function init() {
   buildTradeForm();
   buildSettings();
   buildAccountDialog();
+  wireMenuOutside();
   if (!hashWired && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     hashWired = true;
     window.addEventListener('hashchange', route); // hash mode (file://, legacy links)
