@@ -2068,7 +2068,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = 'c493d6f (#111)';
+var APP_VERSION = 'f6d6c5b (#112)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2794,8 +2794,7 @@ function navHome() {
 // tint gain/loss. The FX conversion always gets its own line so amounts
 // never run into their provenance.
 
-function statRow(label, text, raw, tint) {
-  var d = document.createElement('div');
+function statRow(label, text, raw, tint) {  var d = document.createElement('div');
   d.className = 'stat-row';
   d.setAttribute('data-label', label);
   var l = document.createElement('span');
@@ -2989,6 +2988,32 @@ function tradeBlock(t, main, accountNameById) {
   return box;
 }
 
+function detailMetaRow(label, text, title) {
+  var d = document.createElement('div');
+  d.className = 'detail-meta';
+  var l = document.createElement('span');
+  l.className = 'detail-meta-label';
+  l.textContent = label;
+  var v = document.createElement('span');
+  v.className = 'detail-meta-val';
+  v.textContent = String(text);
+  v.title = String(text);
+  v.setAttribute('role', 'button');
+  v.setAttribute('tabindex', '0');
+  v.setAttribute('aria-label', 'Show full ' + String(title).toLowerCase());
+  function open() {
+    if (v.scrollWidth <= v.clientWidth + 1) return;
+    openNoteDialog(text, title);
+  }
+  v.addEventListener('click', open);
+  v.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  });
+  d.appendChild(l);
+  d.appendChild(v);
+  return d;
+}
+
 function renderAccountDetail(st, id) {
   var host = document.getElementById('account-detail');
   if (!host) return;
@@ -3048,6 +3073,10 @@ function renderAccountDetail(st, id) {
   menu.appendChild(mbox);
   head.appendChild(menu);
   host.appendChild(head);
+  // Wallet address / note entered at creation (stored on the account, not on
+  // trades) — shown here with popup-on-overflow like trade notes.
+  if (acc.address) host.appendChild(detailMetaRow('Wallet', acc.address, 'Wallet address'));
+  if (acc.note) host.appendChild(detailMetaRow('Note', acc.note, 'Account note'));
   var stats = document.createElement('div');
   stats.className = 'cards detail-stats';
   var pl = 0;
