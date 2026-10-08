@@ -592,18 +592,15 @@ section h2, aside h2 {
 .swatches button {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  min-height: 2.75rem;
+  justify-content: center;
+  min-height: 3rem;
   padding: 0.5rem 0.7rem;
   font-size: 0.86rem;
-}
-
-.swatches .sw {
-  width: 1.1rem;
-  height: 1.1rem;
-  border-radius: 50%;
-  flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-weight: 650;
+  background: var(--sw);
+  background: linear-gradient(135deg, var(--sw), color-mix(in srgb, var(--sw) 55%, #000000));
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .color-custom {
