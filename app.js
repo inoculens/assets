@@ -2057,14 +2057,16 @@ if (typeof window !== 'undefined') {
 // entry points (also used by tests.html).
 
 // === Version contract (for any AI or human editing this app) ===
-// On EVERY code change — feature, fix, text, or style — bump APP_VERSION
-// below (date + next counter) AND bump the ?v= cache-busters on the
-// stylesheet and script tags in index.html, so deployed users always load
-// fresh assets. The footer renders the version automatically via #app-ver;
-// users only ever see that version string, never this note.
+// The footer version is the commit id + commit count, e.g. "c03f772 (#110)".
+// That id only exists AFTER committing, so nobody hand-writes it: the deploy
+// build (stamp-version.sh, wired in netlify.toml) stamps the exact values
+// into APP_VERSION below on every deploy. Keep a sane fallback value here
+// for local/file:// use, and keep bumping the ?v= cache-busters in
+// index.html on every change so deployed users load fresh assets. Users only
+// ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.30';
+var APP_VERSION = 'c03f772 (#110)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -4995,7 +4997,7 @@ function render() {
   try { renderHeroAlloc(st); } catch (e) { /* best-effort */ }
   syncTopbar(st);
   var ver = document.getElementById('app-ver');
-  if (ver) ver.textContent = 'v' + APP_VERSION;
+  if (ver) ver.textContent = APP_VERSION;
   route(); // show home or the routed account page
   refreshDisplayRates(st); // fill missing historical pairs, then repaint once
 }

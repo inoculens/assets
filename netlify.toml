@@ -1,7 +1,9 @@
-# Netlify: static, no build. History-API (/account/<id>) falls back to index.html.
+# Netlify: static publish, but the build stamps the exact commit id + count
+# into APP_VERSION first (see stamp-version.sh + the version contract in app.js).
+# History-API (/account/<id>) falls back to index.html.
 [build]
   publish = "."
-  command = "echo 'static — no build'"
+  command = "./stamp-version.sh"
 
 [[redirects]]
   from = "/account/*"
