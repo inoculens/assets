@@ -680,16 +680,19 @@ section h2, aside h2 {
 .trade-block .stat-val { flex: 1; }
 .trade-block .stat-row { padding: 0.5rem 0.1rem; }
 /* Trades are always exactly two rows: labels above, amounts below. */
-.trade-block {
-  display: grid;
-  grid-template-rows: auto auto;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  column-gap: 1.25rem;
-  row-gap: 0.2rem;
+.trade-block { display: flex; flex-wrap: wrap; column-gap: 1.25rem; }
+.trade-head { flex: 1 1 100%; }
+.trade-block .stat-row {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.2rem;
+  border-bottom: none;
+  padding: 0.55rem 0 0.35rem;
 }
-.trade-head { grid-column: 1 / -1; }
-.trade-block .stat-row { display: contents; }
 .trade-block .stat-label { flex: none; }
 .trade-block .stat-val { flex: none; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trade-block .stat-row[data-label="Note"] .stat-val {
