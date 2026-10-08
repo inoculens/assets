@@ -2064,7 +2064,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.29';
+var APP_VERSION = '2026-10-08.30';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -4804,13 +4804,14 @@ function downloadLotsCsv() {
 
 // --- Hero allocation (compact ring inside the Total balance panel; home stays one calm panel) ---
 
-function allocationData(st, dtrades) {
+function allocationData(st, dtrades, visibleIds) {
   var method = st.settings.costMethod;
   var pf = null;
   try { pf = computePortfolio(dtrades, livePrices, method); } catch (e) { pf = null; }
   var bySym = {};
   if (pf && pf.byAccount) {
     Object.keys(pf.byAccount).forEach(function (accId) {
+      if (visibleIds && visibleIds.indexOf(accId) === -1) return; // honor the asset filter
       pf.byAccount[accId].forEach(function (p, sym) {
         var key = p.symbol;
         if (p.marketValue === null) {
@@ -4834,7 +4835,11 @@ function renderHeroAlloc(st) {
   var main = st.settings.mainCurrency;
   if (!st.accounts.length || !(st.trades || []).length) { host.hidden = true; host.innerHTML = ''; return; }
   var dtrades = convertTrades(st.trades, main);
-  var al = allocationData(st, dtrades);
+  var vf = selectedTickers(st);
+  var vIds = vf === null ? null : (st.accounts || [])
+    .filter(function (a) { return vf.indexOf(String(a.ticker).toUpperCase()) !== -1; })
+    .map(function (a) { return a.id; });
+  var al = allocationData(st, dtrades, vIds);
   if (!al.items.length) { host.hidden = true; host.innerHTML = ''; return; }
   host.hidden = false;
   host.innerHTML = '';
