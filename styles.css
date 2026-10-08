@@ -695,6 +695,12 @@ section h2, aside h2 {
 }
 .trade-block .stat-label { flex: none; }
 .trade-block .stat-val { flex: none; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trade-block .stat-row[data-label="Note"] {
+  flex: 1 1 12rem;
+  max-width: 24rem;
+  min-width: 0;
+  overflow: hidden;
+}
 .trade-block .stat-row[data-label="Note"] .stat-val {
   display: block;
   white-space: nowrap;
