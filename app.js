@@ -2417,9 +2417,11 @@ function tradeTypeMeta(type) {
   return { label: 'Buy', cls: 'side-buy' };
 }
 
-function openNoteDialog(text) {
+function openNoteDialog(text, title) {
   var p = document.getElementById('note-dialog-text');
   if (p) p.textContent = String(text === undefined || text === null ? '' : text);
+  var h = document.getElementById('note-dialog-title');
+  if (h) h.textContent = title || 'Note';
   openDialog('note-dialog');
 }
 
@@ -2508,6 +2510,20 @@ function tradeBlock(t, main, accountNameById) {
   var rv = document.createElement('span');
   rv.className = 'stat-val muted';
   rv.textContent = fxBadgeText(t);
+  rv.setAttribute('role', 'button');
+  rv.setAttribute('tabindex', '0');
+  rv.setAttribute('aria-label', 'Show full rate');
+  rv.addEventListener('click', function () {
+    // Popup only when the text actually overflows the row.
+    if (rv.scrollWidth <= rv.clientWidth + 1) return;
+    openNoteDialog(fxBadgeText(t), 'Rate');
+  });
+  rv.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      rv.click();
+    }
+  });
   rate.appendChild(rl);
   rate.appendChild(rv);
   box.appendChild(rate);
