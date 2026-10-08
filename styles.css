@@ -831,7 +831,7 @@ select {
 .fld-label { color: var(--muted); }
 #t-symbol-locked { color: var(--gold); font-weight: 700; }
 details.adv, details.opt { margin-top: 1.1rem; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.65rem 0.9rem; background: rgba(255,255,255,0.015); }
-details.adv summary, details.opt summary { color: var(--muted); font-size: 0.88rem; font-weight: 600; cursor: pointer; min-height: 2rem; }
+details.adv summary, details.opt summary { color: var(--muted); font-size: 0.88rem; font-weight: 600; cursor: pointer; min-height: 2rem; line-height: 2rem; }
 details.opt + details.opt { margin-top: 0.65rem; }
 
 /* ————— Settings: fixed box, tabs + panels scroll independently ————— */
