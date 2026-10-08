@@ -818,10 +818,11 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: 7px; }
   align-items: flex-end;
   gap: 0.2rem;
   line-height: 1.3;
+  min-width: 0;
 }
 
-.acct-value { font-weight: 650; font-size: 1.02rem; font-variant-numeric: tabular-nums; }
-.acct-pl { font-size: 0.84rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+.acct-value { font-weight: 650; font-size: 1.02rem; font-variant-numeric: tabular-nums; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-pl { font-size: 0.84rem; font-variant-numeric: tabular-nums; color: var(--muted); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-pl.gain { color: var(--gain); }
 .acct-pl.loss { color: var(--loss); }
 .acct-open { flex-shrink: 0; }
@@ -1508,8 +1509,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   margin: 0;
   padding: 0 0.25rem 0 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.35rem;
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
 }
 
@@ -1517,9 +1520,17 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
+  overflow: hidden;
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.hero-alloc-legend li > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hero-alloc-dot {
