@@ -584,11 +584,23 @@ section h2, aside h2 {
 /* ————— Recolored account cards ————— */
 .account-card[data-colored="1"] {
   border-color: color-mix(in srgb, var(--acct-color) 40%, transparent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--acct-color) 16%, transparent), transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.025), transparent),
+    var(--surface);
+}
+
+.account-card[data-colored="1"]:hover {
+  border-color: color-mix(in srgb, var(--acct-color) 55%, transparent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--acct-color) 22%, transparent), transparent 65%),
+    linear-gradient(180deg, rgba(255,255,255,0.045), transparent),
+    var(--surface-2);
 }
 
 .account-card[data-colored="1"] .acct-avatar {
   background: linear-gradient(135deg, var(--acct-color), color-mix(in srgb, var(--acct-color) 45%, #000));
-  border-color: transparent;
+  border: none;
 }
 
 /* ————— Color dialog ————— */
@@ -796,6 +808,7 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: 7px; }
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 0.78rem;
+  line-height: 1;
   letter-spacing: 0.04em;
 }
 
