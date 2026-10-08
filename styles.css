@@ -195,7 +195,7 @@ header.brand::after {
   min-height: 2.3rem;
   background: transparent;
   color: var(--muted);
-  font-weight: 500;
+  font-weight: 600;
   font-size: 0.86rem;
 }
 
@@ -747,7 +747,7 @@ details.opt + details.opt { margin-top: 0.65rem; }
 #settings-dialog { width: min(680px, 94vw); }
 .set-layout { display: flex; gap: 1.25rem; margin-top: 0.5rem; }
 .set-tabs { display: flex; flex-direction: column; gap: 0.35rem; flex: 0 0 11.5rem; }
-.set-tabs button { background: none; border: 1px solid transparent; text-align: left; min-height: 2.9rem; color: var(--muted); white-space: nowrap; font-weight: 500; }
+.set-tabs button { background: none; border: 1px solid transparent; text-align: left; min-height: 2.9rem; color: var(--muted); white-space: nowrap; font-weight: 600; }
 .set-tabs button:hover { color: var(--text); }
 .set-tabs button[aria-selected="true"] { background: rgba(227,197,124,0.08); border-color: var(--hairline-gold); color: var(--gold); font-weight: 600; }
 .set-panels { flex: 1; min-width: 0; min-height: 16rem; }
