@@ -1908,7 +1908,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.14';
+var APP_VERSION = '2026-10-08.15';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2714,10 +2714,13 @@ function renderAccountDetail(st, id) {
       host.appendChild(closedFlag);
     }
   }
-  if (pos) stats.appendChild(statCard('Quantity', fmtQty(pos.qtyHeld) + ' ' + String(pos.symbol || '').toUpperCase(), pos.qtyHeld));
-  stats.appendChild(statCard('Value', mvKnown ? fmtMoney(mv, main) : (atrades.length ? '—' : 'New'), mvKnown ? mv : null));
-  if (pos) stats.appendChild(statCard('Live price', pos.livePrice !== null ? fmtMoney(pos.livePrice, main) : '—', pos.livePrice));
-  if (pos) stats.appendChild(statCard('Average entry', (!closed) ? fmtMoney(pos.avgEntry, main) : '—', (!closed) ? pos.avgEntry : null));
+  stats.appendChild(statCard('Quantity', pos ? (fmtQty(pos.qtyHeld) + ' ' + String(pos.symbol || '').toUpperCase()) : '—', pos ? pos.qtyHeld : null));
+  // Full grid even with no records yet: unknowns show —, and the live price
+  // resolves from the ticker alone so a fresh account already quotes.
+  var liveShow = pos ? pos.livePrice : ((isFinite(lvNum) && lvNum > 0) ? lvNum : null);
+  stats.appendChild(statCard('Value', mvKnown ? fmtMoney(mv, main) : '—', mvKnown ? mv : null));
+  stats.appendChild(statCard('Live price', liveShow !== null ? fmtMoney(liveShow, main) : '—', liveShow));
+  stats.appendChild(statCard('Average entry', (pos && !closed) ? fmtMoney(pos.avgEntry, main) : '—', (pos && !closed) ? pos.avgEntry : null));
   stats.appendChild(statCard('Unrealized', unKnown ? fmtMoney(un, main) : '—', unKnown ? un : null));
   stats.appendChild(statCard('Realized', fmtMoney(rz, main), rz));
   if (pos) {
@@ -2725,6 +2728,8 @@ function renderAccountDetail(st, id) {
     var tsc = plClass(pos.totalPL);
     if (tsc) tplCard.querySelector('.card-value').classList.add(tsc);
     stats.appendChild(tplCard);
+  } else {
+    stats.appendChild(statCard('Total P&L', '—', null));
   }
   if (closed && lifetimeCost > 0) ret = (rz / lifetimeCost) * 100;
   var retCard = statCard('Return', ret !== null ? fmtPct(ret) : '—', ret);
