@@ -1300,6 +1300,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   text-overflow: ellipsis;
   cursor: pointer;
 }
+.label-edit-row {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+.label-edit-row button { min-width: 6rem; }
 
 /* ————— Hero: total left, allocation text + ring right, one panel ————— */
 #hero {
