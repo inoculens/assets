@@ -541,13 +541,6 @@ section h2, aside h2 {
   background: linear-gradient(180deg, rgba(255,255,255,0.045), transparent), var(--surface-2);
 }
 
-@media (min-width: 721px) {
-  .acct-figs {
-    padding-right: 1.25rem;
-    border-right: 1px solid var(--border);
-  }
-}
-
 .acct-avatar {
   width: 2.9rem;
   height: 2.9rem;
