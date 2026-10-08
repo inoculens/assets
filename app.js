@@ -2459,6 +2459,12 @@ function renderAccounts(st) {
     card.setAttribute('tabindex', '0');
     card.setAttribute('role', 'link');
     card.setAttribute('aria-label', 'Open ' + acc.name + ', ' + String(acc.ticker).toUpperCase());
+    var grip = document.createElement('span');
+    grip.className = 'drag-handle';
+    grip.title = 'Drag to reorder';
+    grip.setAttribute('draggable', 'true');
+    grip.setAttribute('aria-hidden', 'true');
+    card.appendChild(grip);
     var avatar = document.createElement('span');
     avatar.className = 'acct-avatar';
     avatar.setAttribute('aria-hidden', 'true');
@@ -3326,6 +3332,105 @@ function buildAccounts() {
       }
     });
   }
+  wireAccountDnD();
+}
+
+// --- Account drag-and-drop reorder (dice-grip handle, desktop) ---
+// Order is the accounts array itself: saveState persists it to localStorage
+// and export/import preserve it, so a reorder survives backup + restore with
+// no extra fields. Drags start from the grip only; card clicks still open.
+
+var dragAcctId = null;
+var dropAfterCard = false;
+
+function dndCardOf(e) {
+  if (!e || !e.target || !e.target.closest) return null;
+  return e.target.closest('.account-card');
+}
+
+function clearDropMarks() {
+  var host = document.getElementById('accounts');
+  if (!host || !host.querySelectorAll) return;
+  Array.prototype.forEach.call(host.querySelectorAll('.account-card.dragging,.account-card.drop-before,.account-card.drop-after'), function (el) {
+    el.classList.remove('dragging', 'drop-before', 'drop-after');
+  });
+}
+
+function markDragging() {
+  if (!dragAcctId) return;
+  var host = document.getElementById('accounts');
+  if (!host || !host.querySelector) return;
+  var src = null;
+  try {
+    src = host.querySelector('[data-account="' + String(dragAcctId).replace(/"/g, '') + '"]');
+  } catch (e) {
+    src = null;
+  }
+  if (src) src.classList.add('dragging');
+}
+
+function wireAccountDnD() {
+  var host = document.getElementById('accounts');
+  if (!host || host.getAttribute('data-dnd-wired')) return;
+  host.setAttribute('data-dnd-wired', '1');
+  host.addEventListener('dragstart', function (e) {
+    var card = dndCardOf(e);
+    var grip = e.target && e.target.closest ? e.target.closest('.drag-handle') : null;
+    if (!grip || !card || !card.getAttribute('data-account')) {
+      if (e.preventDefault) e.preventDefault();
+      dragAcctId = null;
+      return;
+    }
+    dragAcctId = card.getAttribute('data-account');
+    try {
+      e.dataTransfer.setData('text/plain', dragAcctId);
+      e.dataTransfer.effectAllowed = 'move';
+      if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(card, 24, 24);
+    } catch (err) { /* ignore */ }
+    setTimeout(function () { markDragging(); }, 0);
+  });
+  host.addEventListener('dragover', function (e) {
+    if (!dragAcctId) return;
+    var card = dndCardOf(e);
+    clearDropMarks();
+    markDragging();
+    if (!card || card.getAttribute('data-account') === dragAcctId) return;
+    if (e.preventDefault) e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'move'; } catch (err) { /* ignore */ }
+    var r = null;
+    try {
+      r = card.getBoundingClientRect();
+    } catch (err) {
+      r = null;
+    }
+    dropAfterCard = !!(r && typeof e.clientY === 'number' && (e.clientY - r.top) > r.height / 2);
+    card.classList.add(dropAfterCard ? 'drop-after' : 'drop-before');
+  });
+  host.addEventListener('drop', function (e) {
+    if (!dragAcctId) return;
+    if (e.preventDefault) e.preventDefault();
+    var card = dndCardOf(e);
+    var st = loadState();
+    var ids = (st.accounts || []).map(function (a) { return a && a.id; });
+    var fromIx = ids.indexOf(dragAcctId);
+    var targetId = card ? card.getAttribute('data-account') : null;
+    var toIx = targetId ? ids.indexOf(targetId) : -1;
+    dragAcctId = null;
+    clearDropMarks();
+    if (fromIx === -1) { render(); return; }
+    var insertIx = toIx === -1 ? ids.length : (dropAfterCard ? toIx + 1 : toIx);
+    var moved = st.accounts.splice(fromIx, 1)[0];
+    if (fromIx < insertIx) insertIx--;
+    if (insertIx !== fromIx) {
+      st.accounts.splice(insertIx, 0, moved);
+      if (!saveStateGuarded(st)) return;
+    }
+    render();
+  });
+  host.addEventListener('dragend', function () {
+    dragAcctId = null;
+    clearDropMarks();
+  });
 }
 
 // --- New-account dialog ---
