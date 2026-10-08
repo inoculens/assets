@@ -2768,6 +2768,39 @@ function route() {
     home.hidden = false;
     try { document.title = 'INOCULENS PLUTUS — Local-First Portfolio Tracker'; } catch (e) { /* ignore */ }
   }
+  syncTradeButtons();
+}
+
+// Trade entry lives inside accounts only: the top-bar +Trade and the mobile
+// FAB hide on home (the elements stay in the DOM so programmatic clicks and
+// tests keep working). First-run onboarding keeps its own guide CTA.
+function syncTradeButtons() {
+  var st = null;
+  try {
+    st = loadState();
+  } catch (e) {
+    st = null;
+  }
+  if (!st || !st.settings) {
+    try {
+      st = defaultState();
+    } catch (e2) {
+      st = { settings: {}, accounts: [], trades: [] };
+    }
+  }
+  var id = null;
+  try {
+    id = accountDetailId();
+  } catch (e) {
+    id = null;
+  }
+  var inAccount = !!id && !!accountById(st, id);
+  var hasAccts = Array.isArray(st.accounts) && st.accounts.length > 0;
+  var hasTrades = Array.isArray(st.trades) && st.trades.length > 0;
+  var add = document.getElementById('tb-add');
+  if (add) add.hidden = !(inAccount && hasAccts);
+  var fab = document.getElementById('fab-trade');
+  if (fab) fab.hidden = !(inAccount && hasAccts && hasTrades);
 }
 
 // --- Accounts CRUD (restored: must never be removed — the exposure block
@@ -3231,15 +3264,17 @@ function syncTradeTypeUI() {
     setLabel('t-qty-label', 'Quantity');
     setLabel('t-total-label', 'Total (native currency)');
   }
-  // Rebuild to-account options: transfer = same ticker only, swap = different ticker preferred
+  // Rebuild to-account options: transfer = same ticker only, swap = any other account.
   try {
     var st = loadState();
     var fromId = uiVal('t-account', '');
     var fromAcc = accountById(st, fromId);
     var toSel = document.getElementById('t-toaccount');
+    var hint = document.getElementById('t-toaccount-hint');
     if (toSel && (isTransfer || isSwap)) {
       var cur = toSel.value;
       toSel.innerHTML = '';
+      var curKept = false;
       (st.accounts || []).forEach(function (a) {
         if (a.id === fromId) return;
         if (isTransfer && fromAcc && String(a.ticker).toUpperCase() !== String(fromAcc.ticker).toUpperCase()) return; // same asset only
@@ -3247,8 +3282,20 @@ function syncTradeTypeUI() {
         o.value = a.id;
         o.textContent = a.name + ' · ' + String(a.ticker).toUpperCase();
         toSel.appendChild(o);
+        if (a.id === cur) curKept = true;
       });
-      if (cur) toSel.value = cur;
+      // Keep the previous pick only if still eligible; otherwise park on the
+      // first eligible destination so the select never shows a stale value.
+      if (cur && curKept) toSel.value = cur;
+      else if (toSel.options.length) toSel.selectedIndex = 0;
+      if (hint) {
+        if (!toSel.options.length) {
+          var need = fromAcc ? String(fromAcc.ticker).toUpperCase() : 'this asset';
+          hint.textContent = 'No other ' + need + ' account yet — create another ' + need + ' account first.';
+        } else {
+          hint.textContent = 'Transfer moves cost basis — only the network + fiat fees count as losses.';
+        }
+      }
     }
   } catch (e) { /* ignore */ }
   void isBuySell; void isIncome; void isExpense;
@@ -3269,6 +3316,43 @@ function syncLockedSymbol() {
 }
 
 var editingTradeId = null;
+
+// Fresh-trade reset: a new dialog must never inherit type, amounts, notes or
+// destination picks from the previous entry — otherwise e.g. a Transfer's
+// To-account row leaks into the next Buy.
+function resetTradeForm() {
+  editingTradeId = null;
+  uiSetVal('t-side', 'buy');
+  uiSetVal('t-qty', '');
+  uiSetVal('t-toqty', '');
+  uiSetVal('t-total', '');
+  var ccy = document.getElementById('t-currency');
+  if (ccy) ccy.value = 'EUR';
+  uiSetVal('t-custom-ccy', '');
+  var cust = document.getElementById('t-custom-ccy');
+  if (cust) cust.hidden = true;
+  var clab = document.getElementById('t-custom-ccy-label');
+  if (clab) clab.hidden = true;
+  uiSetVal('t-fee', '');
+  var feeccy = document.getElementById('t-feeccy');
+  if (feeccy) {
+    ensureCustomFeeOption('');
+    feeccy.value = 'EUR';
+  }
+  uiSetVal('t-note', '');
+  uiSetVal('t-networkfee', '');
+  uiSetVal('t-manual-rate', '');
+  uiSetVal('t-manual-price', '');
+  var toSel = document.getElementById('t-toaccount');
+  if (toSel) toSel.innerHTML = '';
+  var submitBtn0 = document.getElementById('t-submit');
+  if (submitBtn0) { submitBtn0.textContent = 'Add trade'; submitBtn0.disabled = false; }
+  var titleEl0 = document.getElementById('trade-dialog-title');
+  if (titleEl0) titleEl0.textContent = 'Add trade';
+  var dd = document.getElementById('t-date');
+  if (dd) dd.value = todayStr();
+  tradeFormError(null);
+}
 
 function openPrefillTrade(accountId, lockIt, presetType) {
   var st = loadState();
@@ -3303,14 +3387,10 @@ function openPrefillTrade(accountId, lockIt, presetType) {
   var row = document.getElementById('t-account-row');
   if (row) row.style.display = (lockIt && target) ? 'none' : '';
   syncLockedSymbol();
+  resetTradeForm();
+  // resetTradeForm defaults the type to Buy; re-apply an explicit preset after it.
+  if (sideSel && presetType && TRADE_TYPES.concat(['swap']).indexOf(presetType) !== -1) sideSel.value = presetType;
   syncTradeTypeUI();
-  var submitBtn = document.getElementById('t-submit');
-  if (submitBtn) { submitBtn.textContent = 'Add trade'; submitBtn.disabled = false; }
-  var titleEl = document.getElementById('trade-dialog-title');
-  if (titleEl) titleEl.textContent = 'Add trade';
-  var d = document.getElementById('t-date');
-  if (d && !d.value) d.value = todayStr();
-  tradeFormError(null);
   openDialog('trade-dialog');
   return target;
 }
@@ -3520,6 +3600,10 @@ function onTradeSubmit(ev) {
   } else if (side === 'transfer') {
     if (!isFinite(qty) || qty <= 0) { tradeFormError('Quantity must be > 0.'); return; }
     if (!isFinite(networkFee) || networkFee < 0 || networkFee >= qty) { tradeFormError('Network fee must be >= 0 and < qty.'); return; }
+    var eligibleDests = list.filter(function (a) {
+      return a && a.id !== accountId && String(a.ticker).toUpperCase() === symbol;
+    });
+    if (!eligibleDests.length) { tradeFormError('You need another ' + symbol + ' account to transfer to — create one first.'); return; }
     if (!toAccId) { tradeFormError('Pick a destination account.'); return; }
     var toAccT = accountById(st0, toAccId);
     if (!toAccT) { tradeFormError('Destination account not found.'); return; }
@@ -4376,6 +4460,8 @@ if (typeof window !== 'undefined') {
   window.Inoculens.openPrefillTrade = openPrefillTrade;
   window.Inoculens.openEditTrade = openEditTrade;
   window.Inoculens.openNoteDialog = openNoteDialog;
+  window.Inoculens.resetTradeForm = resetTradeForm;
+  window.Inoculens.syncTradeButtons = syncTradeButtons;
   window.Inoculens.syncLockedSymbol = syncLockedSymbol;
   window.Inoculens.syncTradeTypeUI = syncTradeTypeUI;
   window.Inoculens.route = route;
