@@ -1900,7 +1900,15 @@ if (typeof window !== 'undefined') {
 // DOMContentLoaded; render()/refreshPrices() are the recompute+render
 // entry points (also used by tests.html).
 
-var APP_VERSION = '2026-10-08.1';
+// === Version contract (for any AI or human editing this app) ===
+// On EVERY code change — feature, fix, text, or style — bump APP_VERSION
+// below (date + next counter) AND bump the ?v= cache-busters on the
+// stylesheet and script tags in index.html, so deployed users always load
+// fresh assets. The footer renders the version automatically via #app-ver;
+// users only ever see that version string, never this note.
+// === End version contract ===
+
+var APP_VERSION = '2026-10-08.2';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
