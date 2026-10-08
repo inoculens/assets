@@ -1282,6 +1282,14 @@ button.linklike:hover { color: var(--text); background: none; border-color: tran
   font-weight: 700;
   max-width: 22ch;
 }
+.landing-title .crayon {
+  white-space: nowrap;
+  padding-bottom: 0.12em;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 12' preserveAspectRatio='none'%3E%3Cpath d='M2 7 C 30 3, 55 10, 80 6 S 105 5, 118 8' fill='none' stroke='%23e3c57c' stroke-opacity='0.28' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M3 7 C 28 4, 52 9, 78 6 S 104 5, 117 7' fill='none' stroke='%23e3c57c' stroke-opacity='0.95' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 100% 0.32em;
+}
 .landing-sub {
   margin: 0 0 2rem;
   color: var(--muted);
