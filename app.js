@@ -2044,7 +2044,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.19';
+var APP_VERSION = '2026-10-08.20';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2497,12 +2497,15 @@ function renderAccounts(st) {
     if (isFinite(Number(pl)) && hasKnownPl) plv.setAttribute('data-value', String(Number(pl)));
     figs.appendChild(plv);
     card.appendChild(figs);
+    // Cards open on click (see nav wiring); the per-card buttons stay in the
+    // DOM hidden for programmatic/test use so they never clutter the card.
     var tradeBtn = document.createElement('button');
     tradeBtn.type = 'button';
     tradeBtn.className = 'quiet';
     tradeBtn.textContent = '+ Record';
     tradeBtn.setAttribute('data-account-trade', acc.id);
     tradeBtn.setAttribute('aria-label', 'Add record to ' + acc.name);
+    tradeBtn.hidden = true;
     card.appendChild(tradeBtn);
     var openBtn = document.createElement('button');
     openBtn.type = 'button';
@@ -2510,6 +2513,7 @@ function renderAccounts(st) {
     openBtn.textContent = 'Open ›';
     openBtn.setAttribute('data-account-open', acc.id);
     openBtn.setAttribute('aria-label', 'Open ' + acc.name);
+    openBtn.hidden = true;
     card.appendChild(openBtn);
     host.appendChild(card);
   });
