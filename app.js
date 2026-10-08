@@ -2044,7 +2044,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.26';
+var APP_VERSION = '2026-10-08.27';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -4410,12 +4410,16 @@ function syncTopbar(st) {
   }
 }
 
+function backupStamp() {
+  var n = new Date();
+  function p(x) { return (x < 10 ? '0' : '') + x; }
+  return n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate());
+}
+
 function downloadBackup() {
   var json = exportState(loadState());
   var blob = new Blob([json], { type: 'application/json' });
-  var n = new Date();
-  function p(x) { return (x < 10 ? '0' : '') + x; }
-  var name = 'plutus.inoculens.com-' + n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()) + '.json';
+  var name = 'plutus.inoculens.com-' + backupStamp() + '.json';
   var urls = window.URL || window.webkitURL;
   var url = urls.createObjectURL(blob);
   var a = document.createElement('a');
@@ -4469,7 +4473,7 @@ function downloadTradesCsv() {
       (t.fxLock && t.fxLock.source) || ''
     ]);
   });
-  downloadTextFile('plutus-trades.csv', rows.map(function (r) { return r.map(csvEsc).join(','); }).join('\n'), 'text/csv');
+  downloadTextFile('plutus.inoculens.com-trades-' + backupStamp() + '.csv', rows.map(function (r) { return r.map(csvEsc).join(','); }).join('\n'), 'text/csv');
 }
 
 function downloadLotsCsv() {
@@ -4499,7 +4503,7 @@ function downloadLotsCsv() {
       });
     });
   }
-  downloadTextFile('plutus-tax-lots.csv', rows.map(function (r) { return r.map(csvEsc).join(','); }).join('\n'), 'text/csv');
+  downloadTextFile('plutus.inoculens.com-tax-lots-' + backupStamp() + '.csv', rows.map(function (r) { return r.map(csvEsc).join(','); }).join('\n'), 'text/csv');
 }
 
 // --- Hero allocation (compact ring inside the Total balance panel; home stays one calm panel) ---
