@@ -1908,7 +1908,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.5';
+var APP_VERSION = '2026-10-08.6';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2839,12 +2839,13 @@ function syncTradeButtons() {
   var inAccount = !!id && !!accountById(st, id);
   var hasAccts = Array.isArray(st.accounts) && st.accounts.length > 0;
   var hasTrades = Array.isArray(st.trades) && st.trades.length > 0;
+  // Entry points live with their lists now (+ Account above accounts,
+  // + Trade above trades), so the top-bar duplicates stay hidden everywhere
+  // (elements remain in the DOM for tests and programmatic use).
   var add = document.getElementById('tb-add');
-  if (add) add.hidden = !(inAccount && hasAccts);
-  // Top-bar + Account served the home list; the list now carries its own
-  // button (above, right), so the top-bar one shows only inside accounts.
+  if (add) add.hidden = true;
   var acctBtn = document.getElementById('tb-account');
-  if (acctBtn) acctBtn.hidden = !(inAccount && hasAccts);
+  if (acctBtn) acctBtn.hidden = true;
   var fab = document.getElementById('fab-trade');
   if (fab) fab.hidden = !(inAccount && hasAccts && hasTrades);
 }
