@@ -88,15 +88,35 @@ function normalizeAccount(a) {
   return out;
 }
 
+function normalizeAccountFilter(v) {
+  if (v === undefined || v === null) return null; // null = show all assets
+  if (!Array.isArray(v)) return null;
+  var seen = {};
+  var out = [];
+  v.forEach(function (t) {
+    var u = String(t === undefined || t === null ? '' : t).trim().toUpperCase();
+    if (!isValidSymbolCode(u) || seen[u]) return;
+    seen[u] = true;
+    out.push(u);
+  });
+  return out; // [] = none selected
+}
+
 function normalizeSettings(s, fallback) {
   var fb = fallback || { mainCurrency: 'EUR', costMethod: 'average' };
   if (!isValidSettings(s)) {
-    return { mainCurrency: fb.mainCurrency, costMethod: fb.costMethod };
+    var outFb = { mainCurrency: fb.mainCurrency, costMethod: fb.costMethod };
+    var fbf = normalizeAccountFilter(fb.accountFilter);
+    if (fbf !== null) outFb.accountFilter = fbf;
+    return outFb;
   }
-  return {
+  var res = {
     mainCurrency: String(s.mainCurrency).toUpperCase(),
     costMethod: s.costMethod
   };
+  var flt = normalizeAccountFilter(s.accountFilter);
+  if (flt !== null) res.accountFilter = flt;
+  return res;
 }
 
 function loadState() {
@@ -2044,7 +2064,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.27';
+var APP_VERSION = '2026-10-08.28';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2283,7 +2303,7 @@ function statCard(label, text, raw) {
   return d;
 }
 
-function renderSummaryCards(st, rows, dtradesOpt) {
+function renderSummaryCards(st, rows, dtradesOpt, nAcctsOpt) {
   var main = st.settings.mainCurrency;
   var mv = 0;
   var un = 0;
@@ -2336,7 +2356,7 @@ function renderSummaryCards(st, rows, dtradesOpt) {
   var plKnown = unKnown || hasRealized;
   var tb = document.getElementById('tb-totals');
   if (tb) {
-    var nAccts = (st.accounts || []).length;
+    var nAccts = (typeof nAcctsOpt === 'number' && isFinite(nAcctsOpt)) ? nAcctsOpt : (st.accounts || []).length;
     tb.textContent = rows.length
       ? (nAccts + (nAccts === 1 ? ' account' : ' accounts') + ' · ' +
         (st.settings.costMethod === 'fifo' ? 'FIFO' : 'Average cost') + ' · in ' + main)
@@ -2379,12 +2399,152 @@ function renderSummaryCards(st, rows, dtradesOpt) {
   }
 }
 
+var accountFilterOpen = false;
+var accountFilterFocus = null;
+var accountFilterOutsideWired = false;
+
+// View filter: null = show every asset, otherwise exactly these tickers.
+// Persisted in settings (backup/restore carry it); absent key means all.
+function selectedTickers(st) {
+  var f = st && st.settings ? st.settings.accountFilter : null;
+  if (f === undefined || f === null) return null;
+  return normalizeAccountFilter(f);
+}
+
+function accountTickers(accounts) {
+  var seen = {};
+  var out = [];
+  (accounts || []).forEach(function (a) {
+    var t = String((a && a.ticker) || '').toUpperCase();
+    if (!t || seen[t]) return;
+    seen[t] = true;
+    out.push(t);
+  });
+  return out.sort();
+}
+
+function setAccountFilter(next, focusTicker) {
+  var st = loadState();
+  st.settings = st.settings || { mainCurrency: 'EUR', costMethod: 'average' };
+  if (next === null) {
+    try {
+      delete st.settings.accountFilter;
+    } catch (e) {
+      st.settings.accountFilter = null;
+    }
+  } else {
+    st.settings.accountFilter = next;
+  }
+  accountFilterFocus = focusTicker || null;
+  if (!saveStateGuarded(st)) return;
+  render();
+}
+
+function closeAccountFilter(moveFocus) {
+  if (!accountFilterOpen) return;
+  accountFilterOpen = false;
+  accountFilterFocus = null;
+  var host = document.getElementById('accounts');
+  var panel = host && host.querySelector ? host.querySelector('[data-filter-panel]') : null;
+  var btn = host && host.querySelector ? host.querySelector('[data-filter-btn]') : null;
+  if (panel) panel.hidden = true;
+  if (btn) {
+    btn.setAttribute('aria-expanded', 'false');
+    if (moveFocus && btn.focus) {
+      try { btn.focus(); } catch (e) { /* ignore */ }
+    }
+  }
+}
+
+function restoreAccountFilterFocus() {
+  if (!accountFilterOpen || !accountFilterFocus) {
+    accountFilterFocus = null;
+    return;
+  }
+  try {
+    var host = document.getElementById('accounts');
+    var el = host && host.querySelector ? host.querySelector('[data-ticker="' + accountFilterFocus + '"]') : null;
+    if (el && el.focus) el.focus();
+  } catch (e) { /* ignore */ }
+  accountFilterFocus = null;
+}
+
+function buildAccountFilter(st, tickers, effective) {
+  var wrap = document.createElement('div');
+  wrap.className = 'filter-wrap';
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ghost';
+  btn.setAttribute('data-filter-btn', '1');
+  var f = selectedTickers(st);
+  btn.textContent = (f === null) ? 'Filter' : ('Filter · ' + f.length);
+  btn.setAttribute('aria-label', 'Filter accounts by asset');
+  btn.setAttribute('aria-expanded', accountFilterOpen ? 'true' : 'false');
+  btn.addEventListener('click', function () {
+    accountFilterOpen = !accountFilterOpen;
+    accountFilterFocus = null;
+    render();
+  });
+  wrap.appendChild(btn);
+  var panel = document.createElement('div');
+  panel.className = 'filter-panel';
+  panel.setAttribute('data-filter-panel', '1');
+  panel.hidden = !accountFilterOpen;
+  var title = document.createElement('p');
+  title.className = 'filter-title';
+  title.textContent = 'Show assets';
+  panel.appendChild(title);
+  function optRow(labelText, checked, ticker) {
+    var lab = document.createElement('label');
+    lab.className = 'filter-opt';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!checked;
+    if (ticker === null) cb.setAttribute('data-filter-all', '1');
+    else cb.setAttribute('data-ticker', ticker);
+    var sp = document.createElement('span');
+    sp.textContent = labelText;
+    lab.appendChild(cb);
+    lab.appendChild(sp);
+    cb.addEventListener('change', function () {
+      if (ticker === null) {
+        setAccountFilter(cb.checked ? null : [], null);
+        return;
+      }
+      var cur = effective.slice();
+      var ix = cur.indexOf(ticker);
+      if (cb.checked && ix === -1) cur.push(ticker);
+      if (!cb.checked && ix !== -1) cur.splice(ix, 1);
+      var coversAll = tickers.length > 0 && tickers.every(function (t) { return cur.indexOf(t) !== -1; });
+      setAccountFilter(coversAll ? null : cur.sort(), ticker);
+    });
+    return lab;
+  }
+  var counts = {};
+  (st.accounts || []).forEach(function (a) {
+    var t = String((a && a.ticker) || '').toUpperCase();
+    if (t) counts[t] = (counts[t] || 0) + 1;
+  });
+  panel.appendChild(optRow('All', effective.length === tickers.length && tickers.length > 0, null));
+  tickers.forEach(function (t) {
+    var n = counts[t] || 0;
+    panel.appendChild(optRow(t + (n ? ' · ' + n : ''), effective.indexOf(t) !== -1, t));
+  });
+  wrap.appendChild(panel);
+  return wrap;
+}
+
 function renderAccounts(st) {
   var host = document.getElementById('accounts');
   if (!host) return;
   var method = st.settings.costMethod;
   var main = st.settings.mainCurrency;
   var accounts = Array.isArray(st.accounts) ? st.accounts : [];
+  // View filter: only the selected assets render (cards + totals).
+  var filter = selectedTickers(st);
+  var visibleAccounts = filter === null
+    ? accounts
+    : accounts.filter(function (a) { return filter.indexOf(String(a.ticker).toUpperCase()) !== -1; });
   // Display conversion: native amounts stay in stone; everything shown is
   // converted into the CURRENT main at historical ECB rates (cached).
   var dtrades = convertTrades(st.trades, main);
@@ -2398,7 +2558,7 @@ function renderAccounts(st) {
   try { pf = computePortfolio(dtrades, livePrices, method); } catch (e) { pf = null; }
   var perAcctRows;
   if (pf && pf.byAccount) {
-    perAcctRows = accounts.map(function (acc) {
+    perAcctRows = visibleAccounts.map(function (acc) {
       var m = pf.byAccount[acc.id];
       if (!m) return [];
       var arr = [];
@@ -2408,7 +2568,7 @@ function renderAccounts(st) {
     });
   } else {
     // Fallback: independent per-account runs (no transfers in legacy data).
-    perAcctRows = accounts.map(function (acc) {
+    perAcctRows = visibleAccounts.map(function (acc) {
       return computePositions(accountTrades({ trades: dtrades }, acc.id), livePrices, method);
     });
   }
@@ -2416,7 +2576,7 @@ function renderAccounts(st) {
   perAcctRows.forEach(function (rows) {
     rows.forEach(function (r) { grandRows.push(r); });
   });
-  renderSummaryCards(st, grandRows, dtrades);
+  renderSummaryCards(st, grandRows, dtrades, visibleAccounts.length);
   host.innerHTML = '';
   var landing = document.getElementById('landing');
   var hero = document.getElementById('hero');
@@ -2443,15 +2603,32 @@ function renderAccounts(st) {
   h2.textContent = 'Accounts';
   h2.className = 'section-title';
   headRow.appendChild(h2);
+  var actions = document.createElement('div');
+  actions.className = 'section-actions';
+  var tickers = accountTickers(accounts);
+  var effective = filter === null ? tickers : filter;
+  actions.appendChild(buildAccountFilter(st, tickers, effective));
   var addBtn = document.createElement('button');
   addBtn.type = 'button';
   addBtn.className = 'ghost';
   addBtn.textContent = '+ Account';
   addBtn.setAttribute('aria-label', 'Create account');
   addBtn.addEventListener('click', function () { openAccountDialog(); });
-  headRow.appendChild(addBtn);
+  actions.appendChild(addBtn);
+  headRow.appendChild(actions);
   host.appendChild(headRow);
-  accounts.forEach(function (acc, ai) {
+  if (!visibleAccounts.length) {
+    if (hero) hero.hidden = true;
+    if (overview) overview.hidden = true;
+    if (fab) fab.hidden = true;
+    var noneNote = document.createElement('p');
+    noneNote.className = 'muted';
+    noneNote.textContent = 'No accounts match this filter — pick assets in Filter above.';
+    host.appendChild(noneNote);
+    restoreAccountFilterFocus();
+    return;
+  }
+  visibleAccounts.forEach(function (acc, ai) {
     var card = document.createElement('article');
     card.className = 'account-card';
     card.setAttribute('data-account', acc.id);
@@ -2523,6 +2700,7 @@ function renderAccounts(st) {
     card.appendChild(openBtn);
     host.appendChild(card);
   });
+  restoreAccountFilterFocus();
 }
 
 function startInlineRename(accId, headEl, nameEl) {
@@ -3333,6 +3511,19 @@ function buildAccounts() {
     });
   }
   wireAccountDnD();
+  // Filter panel dismissal: click outside or Escape closes without render.
+  if (!accountFilterOutsideWired && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    accountFilterOutsideWired = true;
+    document.addEventListener('pointerdown', function (e) {
+      if (!accountFilterOpen) return;
+      var t = e && e.target;
+      if (t && t.closest && (t.closest('[data-filter-panel]') || t.closest('[data-filter-btn]'))) return;
+      closeAccountFilter(false);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e && (e.key === 'Escape' || e.key === 'Esc')) closeAccountFilter(true);
+    });
+  }
 }
 
 // --- Account drag-and-drop reorder (dice-grip handle, desktop) ---
