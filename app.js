@@ -1774,6 +1774,94 @@ function fetchStockPrice(symbol, vs) {
   });
 }
 
+var lastPriceErrors = {}; // sym -> short reason for the latest refreshAllPrices run (feeds the error-details popup)
+
+function cachedFreshPrice(sym, cur) {
+  var key = priceCacheKey(sym, cur);
+  var c = priceCache[key];
+  if (c && (Date.now() - c.at) < PRICE_CACHE_TTL_MS && isFinite(Number(c.price)) && Number(c.price) > 0) {
+    return Number(c.price);
+  }
+  return null;
+}
+
+// One CoinGecko request for many symbols (ids=csv, vs=main[,usd]). Per-coin
+// requests tripped the free-tier rate limit and caused the intermittent
+// "unreachable" errors; a single batched call plus one outer retry is far
+// more reliable. Resolves {prices, errors}; rejects only on total failure.
+function fetchBatchPrices(syms, vs) {
+  var cur = String(vs || '').toUpperCase();
+  var curLow = cur.toLowerCase();
+  var ids = syms.map(function (s) { return SYMBOL_MAP[String(s).toUpperCase()]; });
+  var seenIds = {};
+  var uniqIds = [];
+  ids.forEach(function (id) { if (id && !seenIds[id]) { seenIds[id] = true; uniqIds.push(id); } });
+  var needUsd = curLow !== 'usd'; // bridge for mains CoinGecko doesn't quote (e.g. RON)
+  var url = 'https://api.coingecko.com/api/v3/simple/price?ids=' +
+    uniqIds.map(function (id) { return encodeURIComponent(id); }).join(',') +
+    '&vs_currencies=' + encodeURIComponent(curLow) + (needUsd ? ',usd' : '');
+  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : null;
+  var done = function (prices, errors) { return { prices: prices, errors: errors }; };
+  if (!capturedFetch) {
+    var off = {}, offE = {};
+    syms.forEach(function (s) {
+      var c = priceCache[priceCacheKey(s, cur)];
+      if (c && isFinite(Number(c.price)) && Number(c.price) > 0) off[s] = Number(c.price);
+      else { off[s] = null; offE[s] = 'offline — no cached price'; }
+    });
+    return Promise.resolve(done(off, offE));
+  }
+  return capturedFetch(url).then(function (res) {
+    if (!res.ok) throw new Error('price-http-' + res.status);
+    return res.json();
+  }).then(function (data) {
+    var prices = {}, errors = {};
+    var usdToCur = null;
+    var usdToCurJobs = [];
+    syms.forEach(function (s) {
+      var id = SYMBOL_MAP[String(s).toUpperCase()];
+      var p = data && data[id] && data[id][curLow];
+      p = Number(p);
+      if (isFinite(p) && p > 0) {
+        prices[s] = p;
+        priceCache[priceCacheKey(s, cur)] = { price: p, at: Date.now() };
+        return;
+      }
+      if (needUsd) {
+        var pu = data && data[id] && data[id].usd;
+        pu = Number(pu);
+        if (isFinite(pu) && pu > 0) {
+          usdToCurJobs.push({ sym: s, usd: pu });
+          return;
+        }
+      }
+      prices[s] = null;
+      errors[s] = 'no quote returned — try a manual override in Settings';
+    });
+    if (!usdToCurJobs.length) return done(prices, errors);
+    return fetchEcbRate(todayStr(), 'USD', cur).then(function (r) {
+      usdToCur = Number(r.rate);
+      usdToCurJobs.forEach(function (j) {
+        var v = j.usd * usdToCur;
+        if (isFinite(v) && v > 0) {
+          prices[j.sym] = v;
+          priceCache[priceCacheKey(j.sym, cur)] = { price: v, at: Date.now() };
+        } else {
+          prices[j.sym] = null;
+          errors[j.sym] = 'currency bridge failed — try a manual override in Settings';
+        }
+      });
+      return done(prices, errors);
+    }, function () {
+      usdToCurJobs.forEach(function (j) {
+        prices[j.sym] = null;
+        errors[j.sym] = 'currency bridge unreachable (ECB) — try a manual override in Settings';
+      });
+      return done(prices, errors);
+    });
+  });
+}
+
 function fetchLivePrice(symbol, vs, kind) {
   var sym = String(symbol || '').trim().toUpperCase();
   var cur = priceDefaultVs(vs);
@@ -1870,12 +1958,49 @@ function refreshAllPrices(symbols, vs, kinds) {
     return undefined;
   }
   var out = {};
-  var jobs = uniq.map(function (sym) {
-    return fetchLivePrice(sym, cur, kindFor(sym)).then(function (p) {
-      out[sym] = p;
-    });
+  var errors = {};
+  var crypto = [];
+  var stocks = [];
+  uniq.forEach(function (sym) {
+    // Manual override wins — no network, never an error.
+    var ov = priceOverrideFor(sym);
+    if (ov !== null) { out[sym] = ov; return; }
+    var kd = (typeof kindFor(sym) === 'string') ? kindFor(sym).trim().toLowerCase() : '';
+    if (kd === 'stock') { stocks.push(sym); return; }
+    if (kd === 'custom' || kd === 'cash') {
+      out[sym] = null;
+      errors[sym] = 'manual price only — add an override in Settings';
+      return;
+    }
+    if (!SYMBOL_MAP[sym]) {
+      out[sym] = null;
+      errors[sym] = 'no live source mapped — add a manual override in Settings';
+      return;
+    }
+    var fresh = cachedFreshPrice(sym, cur);
+    if (fresh !== null) { out[sym] = fresh; return; }
+    crypto.push(sym);
   });
-  return Promise.all(jobs).then(function () { return out; });
+  var jobs = [];
+  if (crypto.length) {
+    jobs.push(fetchBatchPrices(crypto, cur).then(function (res) {
+      Object.keys(res.prices).forEach(function (k) { out[k] = res.prices[k]; });
+      Object.keys(res.errors).forEach(function (k) { errors[k] = res.errors[k]; });
+    }, function () {
+      crypto.forEach(function (sym) {
+        var c = priceCache[priceCacheKey(sym, cur)];
+        if (c && isFinite(Number(c.price)) && Number(c.price) > 0) out[sym] = Number(c.price);
+        else { out[sym] = null; errors[sym] = 'CoinGecko request failed (network or rate limit)'; }
+      });
+    }));
+  }
+  stocks.forEach(function (sym) {
+    jobs.push(fetchLivePrice(sym, cur, 'stock').then(function (p) {
+      if (isFinite(Number(p)) && Number(p) > 0) out[sym] = Number(p);
+      else { out[sym] = null; errors[sym] = 'stock feed unreachable — try a manual override in Settings'; }
+    }));
+  });
+  return Promise.all(jobs).then(function () { lastPriceErrors = errors; return out; });
 }
 
 // Expose Prices on window.Inoculens for tests.html and Ui (Task 6).
@@ -1908,7 +2033,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.15';
+var APP_VERSION = '2026-10-08.17';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -1972,7 +2097,7 @@ function fmtPct(n) {
   return (Math.round(v * 100) / 100) + '%';
 }
 
-function showBanner(msg, kind) {
+function showBanner(msg, kind, details) {
   var b = document.getElementById('banner');
   if (!b) return;
   var t = document.getElementById('banner-text');
@@ -1981,6 +2106,28 @@ function showBanner(msg, kind) {
   b.classList.remove('error', 'info');
   b.classList.add(kind === 'info' ? 'info' : 'error');
   try { b.dataset.kind = kind === 'info' ? 'info' : 'error'; } catch (e) { /* ignore */ }
+  var old = document.getElementById('banner-details');
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+  // Optional drill-down: every error with something more to say gets a
+  // "More details" button opening the fixed-size error popup. The banner
+  // itself stays one calm general line no matter how many tickers fail.
+  if (details && ((details.lines && details.lines.length) || details.message)) {
+    lastErrorDetails = {
+      title: details.title || 'Details',
+      message: details.message || String(msg),
+      lines: (details.lines || []).slice(0, 200)
+    };
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'banner-details';
+    btn.className = 'quiet';
+    btn.textContent = 'More details';
+    btn.setAttribute('aria-label', 'Show error details');
+    btn.addEventListener('click', function () { openErrorDialog(); });
+    b.appendChild(btn);
+  } else {
+    lastErrorDetails = null;
+  }
   b.hidden = false;
 }
 
@@ -1992,7 +2139,35 @@ function clearBanner() {
   else b.textContent = '';
   b.classList.remove('error', 'info');
   try { delete b.dataset.kind; } catch (e) { /* ignore */ }
+  var old = document.getElementById('banner-details');
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+  lastErrorDetails = null;
   b.hidden = true;
+}
+
+var lastErrorDetails = null; // {title, message, lines[]} for the error-details popup
+
+function openErrorDialog() {
+  var d = lastErrorDetails || { title: 'Details', message: '', lines: [] };
+  var t = document.getElementById('error-dialog-title');
+  if (t) t.textContent = d.title || 'Details';
+  var m = document.getElementById('error-dialog-message');
+  if (m) {
+    m.textContent = d.message || '';
+    m.hidden = !d.message;
+  }
+  var ul = document.getElementById('error-dialog-list');
+  if (ul) {
+    ul.innerHTML = '';
+    (d.lines || []).forEach(function (line) {
+      var li = document.createElement('li');
+      li.textContent = String(line);
+      ul.appendChild(li);
+    });
+    ul.hidden = !(d.lines && d.lines.length);
+  }
+  wireDialog('error-dialog');
+  openDialog('error-dialog');
 }
 
 // Price notices are informational and transient: only clear the banner
@@ -2015,7 +2190,14 @@ function saveStateGuarded(s) {
     return true;
   } catch (e) {
     if (e && e.message === 'storage-unavailable') {
-      showBanner('Storage unavailable — change was not saved (private mode or quota exceeded).');
+      showBanner('Storage unavailable — change was not saved.', 'error', {
+        title: 'Storage error',
+        lines: [
+          'What failed: saving your latest change to this browser.',
+          'Common causes: private window, or storage full / quota exceeded.',
+          'Your change was NOT saved — free space or leave private mode, then retry.'
+        ]
+      });
       return false;
     }
     throw e;
@@ -3216,7 +3398,7 @@ function buildTradeForm() {
     '<select id="t-account"></select></div>' +
     '<div id="t-toaccount-row" hidden><label for="t-toaccount">To account</label>' +
     '<select id="t-toaccount"></select><p class="fld-hint" id="t-toaccount-hint">Transfer moves cost basis — only the network + fiat fees count as losses.</p></div>' +
-    '<div class="fld-locked"><span class="fld-label">Symbol (locked to account)</span> <span id="t-symbol-locked" role="status"></span></div>' +
+    '<div class="fld-locked" hidden><span class="fld-label">Symbol (locked to account)</span> <span id="t-symbol-locked" role="status"></span></div>' +
     '<div id="t-qty-row"><label for="t-qty" id="t-qty-label">Quantity</label>' +
     '<input id="t-qty" inputmode="decimal" placeholder="e.g. 1"></div>' +
     '<div id="t-toqty-row" hidden><label for="t-toqty">Received quantity</label>' +
@@ -3620,7 +3802,15 @@ function onTradeSubmit(ev) {
       proceedSwap({ pair: swapCcy + '/' + main, rate: r.rate, source: r.source, interpolated: !!r.interpolated });
     }, function () {
       lockSubmit(false, 'Add record');
-      showBanner('FX rate unavailable for ' + swapCcy + ' → ' + main + ' on ' + date + ' — open “Manual FX rate” and enter a rate to save this trade.');
+      showBanner('FX rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.', 'error', {
+        title: 'FX error',
+        lines: [
+          'Pair: ' + swapCcy + ' → ' + main,
+          'Trade date: ' + date,
+          'Cause: no ECB fixing cached and the rate request failed (weekend gap or network).',
+          'Tip: nothing was saved yet — enter the rate manually to proceed.'
+        ]
+      });
       tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
     });
     return;
@@ -3816,7 +4006,15 @@ function onTradeSubmit(ev) {
     proceed({ pair: from + '/' + main, rate: r.rate, source: r.source, interpolated: !!r.interpolated });
   }, function () {
     lockSubmit(false, side === 'buy' || side === 'sell' ? 'Add record' : 'Add record');
-    showBanner('FX rate unavailable for ' + from + ' → ' + main + ' on ' + date + ' — open “Manual FX rate” and enter a rate to save this trade.');
+    showBanner('FX rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.', 'error', {
+      title: 'FX error',
+      lines: [
+        'Pair: ' + from + ' → ' + main,
+        'Trade date: ' + date,
+        'Cause: no ECB fixing cached and the rate request failed (weekend gap or network).',
+        'Tip: nothing was saved yet — enter the rate manually to proceed.'
+      ]
+    });
     tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
   });
 }
@@ -3943,6 +4141,7 @@ function buildTopbar() {
   wireDialog('account-dialog');
   wireDialog('confirm-dialog');
   wireDialog('note-dialog');
+  wireDialog('error-dialog');
   var bclose = document.getElementById('banner-close');
   if (bclose && !bclose.getAttribute('data-wired')) {
     bclose.setAttribute('data-wired', '1');
@@ -4131,7 +4330,10 @@ function buildSettings() {
       try {
         importState(String(reader.result));
       } catch (err) {
-        showBanner('Import failed: ' + (err && err.message ? err.message : err));
+        showBanner('Import failed — your data was left untouched.', 'error', {
+          title: 'Import error',
+          lines: [String((err && err.message) || err)]
+        });
         input.value = '';
         return;
       }
@@ -4141,7 +4343,10 @@ function buildSettings() {
       closeDialog('settings-dialog');
     };
     reader.onerror = function () {
-      showBanner('Import failed: could not read file.');
+      showBanner('Import failed — could not read the file.', 'error', {
+        title: 'Import error',
+        lines: ['The file could not be read. Pick a Plutus backup (.json) and retry.']
+      });
       input.value = '';
     };
     reader.readAsText(f);
@@ -4404,7 +4609,13 @@ function refreshPrices() {
       });
       var stillMissing = syms.filter(function (s) { return !(isFinite(Number(livePrices[s])) && Number(livePrices[s]) > 0); });
       if (stillMissing.length) {
-        showBanner('Live prices are unreachable right now for ' + stillMissing.join(', ') + ' — your data is safe and numbers will fill in automatically.', 'info');
+        var detailLines = stillMissing.map(function (s) {
+          return s + ' — ' + (lastPriceErrors[s] || 'price unavailable');
+        });
+        showBanner('Live prices are unreachable right now — your data is safe and numbers will fill in automatically.', 'info', {
+          title: 'Price errors',
+          lines: detailLines
+        });
       } else {
         clearPriceBanner();
       }
@@ -4511,6 +4722,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.openPrefillTrade = openPrefillTrade;
   window.Inoculens.openEditTrade = openEditTrade;
   window.Inoculens.openNoteDialog = openNoteDialog;
+  window.Inoculens.openErrorDialog = openErrorDialog;
   window.Inoculens.resetTradeForm = resetTradeForm;
   window.Inoculens.syncTradeButtons = syncTradeButtons;
   window.Inoculens.syncLockedSymbol = syncLockedSymbol;
@@ -4531,7 +4743,10 @@ if (typeof window !== 'undefined') {
   if (typeof window.addEventListener === 'function') {
     window.addEventListener('error', function (e) {
       try {
-        showBanner('App error: ' + ((e && e.message) || 'unknown error') + ' — please report this text plus your app version (bottom of page).');
+        showBanner('App error — please report this text plus your app version (bottom of page).', 'error', {
+          title: 'App error',
+          lines: [String((e && e.message) || 'unknown error'), 'Version ' + APP_VERSION]
+        });
       } catch (err) { /* ignore */ }
     });
   }

@@ -305,7 +305,44 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible {
   border-color: transparent;
   color: var(--text);
 }
+#banner-details {
+  flex-shrink: 0;
+  min-height: 2rem;
+  padding: 0.25rem 0.8rem;
+  background: none;
+  border-color: transparent;
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .banner-error { color: var(--loss); font-weight: 600; }
+
+/* ————— Error-details popup: fixed box, scrolling list ————— */
+#error-dialog[open] {
+  width: min(520px, 94vw);
+  height: min(430px, 82vh);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#error-dialog .dialog-head { flex-shrink: 0; margin-bottom: 0.5rem; }
+#error-dialog-message { margin: 0.2rem 0 0; line-height: 1.6; }
+#error-dialog-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0 0.25rem 0.5rem 0;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+#error-dialog-list li {
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+#error-dialog-list li:last-child { border-bottom: none; }
 
 /* ————— Layout ————— */
 main {
