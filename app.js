@@ -2068,7 +2068,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '02b640f (#119)';
+var APP_VERSION = '78bb43a (#120)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2409,6 +2409,9 @@ function renderSummaryCards(st, rows, dtradesOpt, nAcctsOpt) {
 var accountFilterOpen = false;
 var accountFilterFocus = null;
 var accountFilterOutsideWired = false;
+var selectionMode = false;
+var selectedAccounts = {}; // id -> true; survives page flips and re-renders (in-memory working set)
+var accountActionOpen = false;
 
 // View filter: null = show every asset, otherwise exactly these tickers.
 // Persisted in settings (backup/restore carry it); absent key means all.
@@ -2474,6 +2477,122 @@ function restoreAccountFilterFocus() {
     if (el && el.focus) el.focus();
   } catch (e) { /* ignore */ }
   accountFilterFocus = null;
+}
+
+function selectedCount() {
+  return Object.keys(selectedAccounts).length;
+}
+
+function cancelSelection() {
+  selectionMode = false;
+  selectedAccounts = {};
+  accountActionOpen = false;
+  render();
+}
+
+function toggleAccountSelect(id) {
+  if (!id) return;
+  if (selectedAccounts[id]) delete selectedAccounts[id];
+  else selectedAccounts[id] = true;
+  syncSelectionUI();
+}
+
+// Paint-only sync (no re-render): cards, count and Action follow the set,
+// so rapid multi-select keeps focus and the filter panel stays open.
+function syncSelectionUI() {
+  var n = selectedCount();
+  try {
+    var host = document.getElementById('accounts');
+    if (host && host.querySelectorAll) {
+      Array.prototype.forEach.call(host.querySelectorAll('.account-card'), function (card) {
+        var id = card.getAttribute ? card.getAttribute('data-account') : null;
+        var on = !!id && !!selectedAccounts[id];
+        if (card.classList) card.classList.toggle('selected', on);
+        var cb = card.querySelector ? card.querySelector('[data-select-check]') : null;
+        if (cb) cb.checked = on;
+      });
+    }
+    if (host && host.querySelector) {
+      var count = host.querySelector('[data-select-count]');
+      if (count) {
+        count.textContent = n + ' selected';
+        count.hidden = !(selectionMode && n > 0);
+      }
+      var awrap = host.querySelector('[data-action-wrap]');
+      if (awrap) awrap.hidden = !(selectionMode && n > 0);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function closeAccountAction() {
+  if (!accountActionOpen) return;
+  accountActionOpen = false;
+  var host = document.getElementById('accounts');
+  var panel = host && host.querySelector ? host.querySelector('[data-action-panel]') : null;
+  var btn = host && host.querySelector ? host.querySelector('[data-action-btn]') : null;
+  if (panel) panel.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function buildAccountAction() {
+  var wrap = document.createElement('div');
+  wrap.className = 'filter-wrap';
+  wrap.setAttribute('data-action-wrap', '1');
+  var n = selectedCount();
+  wrap.hidden = !(selectionMode && n > 0);
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ghost';
+  btn.setAttribute('data-action-btn', '1');
+  btn.textContent = 'Action';
+  btn.setAttribute('aria-label', 'Bulk actions for selected accounts');
+  btn.setAttribute('aria-expanded', accountActionOpen ? 'true' : 'false');
+  btn.addEventListener('click', function () {
+    accountActionOpen = !accountActionOpen;
+    render();
+  });
+  wrap.appendChild(btn);
+  var panel = document.createElement('div');
+  panel.className = 'filter-panel';
+  panel.setAttribute('data-action-panel', '1');
+  panel.hidden = !accountActionOpen;
+  var del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'action-del';
+  del.textContent = 'Delete';
+  del.setAttribute('aria-label', 'Delete selected accounts and their trades');
+  del.addEventListener('click', function () {
+    accountActionOpen = false;
+    var total = selectedCount();
+    confirmAction('Delete accounts', 'Delete ' + total + (total === 1 ? ' account' : ' accounts') + ' and all their trades? This cannot be undone.', 'Delete', true).then(function (ok) {
+      if (!ok) return;
+      var s2 = loadState();
+      var inSet = {};
+      Object.keys(selectedAccounts).forEach(function (id) {
+        if (accountById(s2, id)) inSet[id] = true;
+      });
+      if (!Object.keys(inSet).length) {
+        selectedAccounts = {};
+        selectionMode = false;
+        render();
+        return;
+      }
+      // Owned trades go; transfers pointing into the set go too — otherwise
+      // the next load would silently drop the survivors' half of the move.
+      s2.trades = (s2.trades || []).filter(function (t) {
+        return !t || (!inSet[t.accountId] && !inSet[t.toAccountId]);
+      });
+      s2.accounts = (s2.accounts || []).filter(function (a) { return !a || !inSet[a.id]; });
+      selectedAccounts = {};
+      selectionMode = false;
+      if (!saveStateGuarded(s2)) return;
+      clearBanner();
+      render();
+    });
+  });
+  panel.appendChild(del);
+  wrap.appendChild(panel);
+  return wrap;
 }
 
 function buildAccountFilter(st, tickers, effective) {
@@ -2622,6 +2741,28 @@ function renderAccounts(st) {
   actions.className = 'section-actions';
   var tickers = accountTickers(accounts);
   var effective = filter === null ? tickers : filter;
+  var nSel = selectedCount();
+  if (selectionMode) {
+    var countEl = document.createElement('span');
+    countEl.className = 'muted select-count';
+    countEl.setAttribute('data-select-count', '1');
+    countEl.textContent = nSel + ' selected';
+    countEl.hidden = nSel === 0;
+    actions.appendChild(countEl);
+    actions.appendChild(buildAccountAction());
+  }
+  var selectBtn = document.createElement('button');
+  selectBtn.type = 'button';
+  selectBtn.className = 'ghost' + (selectionMode ? ' select-on' : '');
+  selectBtn.setAttribute('data-select-btn', '1');
+  selectBtn.textContent = 'Select';
+  selectBtn.setAttribute('aria-label', 'Select accounts');
+  selectBtn.setAttribute('aria-pressed', selectionMode ? 'true' : 'false');
+  selectBtn.addEventListener('click', function () {
+    if (selectionMode) cancelSelection();
+    else { selectionMode = true; render(); }
+  });
+  actions.appendChild(selectBtn);
   actions.appendChild(buildAccountFilter(st, tickers, effective));
   var addBtn = document.createElement('button');
   addBtn.type = 'button';
@@ -2694,6 +2835,18 @@ function renderAccounts(st) {
     if (isFinite(Number(pl)) && hasKnownPl) plv.setAttribute('data-value', String(Number(pl)));
     figs.appendChild(plv);
     card.appendChild(figs);
+    if (selectionMode) {
+      var cbx = document.createElement('input');
+      cbx.type = 'checkbox';
+      cbx.className = 'card-check';
+      cbx.setAttribute('data-select-check', acc.id);
+      cbx.checked = !!selectedAccounts[acc.id];
+      cbx.setAttribute('aria-label', 'Select ' + acc.name);
+      cbx.addEventListener('click', function (e) { if (e && e.stopPropagation) e.stopPropagation(); });
+      cbx.addEventListener('change', function () { toggleAccountSelect(acc.id); });
+      if (cbx.checked) card.classList.add('selected');
+      card.appendChild(cbx);
+    }
     // Cards open on click (see nav wiring); the per-card buttons stay in the
     // DOM hidden for programmatic/test use so they never clutter the card.
     var tradeBtn = document.createElement('button');
@@ -3490,7 +3643,7 @@ function deleteAccount(id) {
     if (!ok) return;
     var s2 = loadState();
     if (!accountById(s2, id)) return;
-    s2.trades = (s2.trades || []).filter(function (t) { return !t || t.accountId !== id; });
+    s2.trades = (s2.trades || []).filter(function (t) { return !t || (t.accountId !== id && t.toAccountId !== id); });
     s2.accounts = (s2.accounts || []).filter(function (a) { return !a || a.id !== id; });
     if (!saveStateGuarded(s2)) return;
     clearBanner();
@@ -3663,6 +3816,13 @@ function buildAccounts() {
     navHost.addEventListener('click', function (e) {
       if (!e || !e.target || !e.target.closest) return;
       if (suppressCardClick) { suppressCardClick = false; return; } // just finished a drag
+      if (selectionMode) {
+        var scard = e.target.closest('.account-card');
+        if (scard && scard.getAttribute('data-account')) {
+          toggleAccountSelect(scard.getAttribute('data-account'));
+          return;
+        }
+      }
       if (e.target.closest('button')) return;
       var nav = e.target.closest('[data-account-nav]');
       if (nav && nav.getAttribute('data-account-nav')) {
@@ -3685,13 +3845,14 @@ function buildAccounts() {
   if (!accountFilterOutsideWired && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
     accountFilterOutsideWired = true;
     document.addEventListener('pointerdown', function (e) {
-      if (!accountFilterOpen) return;
       var t = e && e.target;
-      if (t && t.closest && (t.closest('[data-filter-panel]') || t.closest('[data-filter-btn]'))) return;
-      closeAccountFilter(false);
+      var inF = t && t.closest && (t.closest('[data-filter-panel]') || t.closest('[data-filter-btn]'));
+      var inA = t && t.closest && (t.closest('[data-action-panel]') || t.closest('[data-action-btn]'));
+      if (!inF) closeAccountFilter(false);
+      if (!inA) closeAccountAction();
     });
     document.addEventListener('keydown', function (e) {
-      if (e && (e.key === 'Escape' || e.key === 'Esc')) closeAccountFilter(true);
+      if (e && (e.key === 'Escape' || e.key === 'Esc')) { closeAccountFilter(true); closeAccountAction(); }
     });
   }
 }

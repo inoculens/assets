@@ -47,4 +47,7 @@ No framework, no bundler. Pushed to `main`, Netlify redeploys automatically.
 - Errors: one calm banner line + "More details" popup; never dump ticker
   lists into the banner.
 - National currencies are always called "fiat" in UI copy.
+- Account list: 6 cards per page with sliding 6-number pager; dice-grip
+  reorder and bulk selection persist across pages; totals always cover every
+  visible (filtered) account, never just the page.
 - Commit each change separately with a clear message and push to `main`.
