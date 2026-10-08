@@ -4009,8 +4009,7 @@ function downloadLotsCsv() {
   downloadTextFile('plutus-tax-lots.csv', rows.map(function (r) { return r.map(csvEsc).join(','); }).join('\n'), 'text/csv');
 }
 
-// --- Allocation / Insights / Activity (ultimate tracker, additive; no-ops when containers absent) ---
-var activityFilter = { q: '', type: '' };
+// --- Allocation / Insights (aggregate only; home stays minimal, trade details live in account view) ---
 
 function allocationData(st, dtrades) {
   var method = st.settings.costMethod;
@@ -4188,68 +4187,6 @@ function renderInsights(st) {
   } catch (e) { /* charts are best-effort */ }
 }
 
-function renderActivity(st) {
-  var host = document.getElementById('activity');
-  if (!host) return;
-  if (!st.accounts.length || !st.trades.length) { host.hidden = true; host.innerHTML = ''; return; }
-  host.hidden = false;
-  host.innerHTML = '';
-  var h = document.createElement('h2');
-  h.className = 'section-title';
-  h.textContent = 'Activity';
-  host.appendChild(h);
-  var tools = document.createElement('div');
-  tools.className = 'activity-tools';
-  var q = document.createElement('input');
-  q.id = 'act-q';
-  q.setAttribute('placeholder', 'Search symbol, note…');
-  q.setAttribute('aria-label', 'Search trades');
-  q.value = activityFilter.q || '';
-  var sel = document.createElement('select');
-  sel.id = 'act-type';
-  sel.setAttribute('aria-label', 'Filter by type');
-  [['', 'All types'], ['buy', 'Buys'], ['sell', 'Sells'], ['transfer', 'Transfers'], ['income', 'Income'], ['expense', 'Expenses']].forEach(function (o) {
-    var op = document.createElement('option');
-    op.value = o[0]; op.textContent = o[1];
-    if ((activityFilter.type || '') === o[0]) op.selected = true;
-    sel.appendChild(op);
-  });
-  tools.appendChild(q);
-  tools.appendChild(sel);
-  host.appendChild(tools);
-  q.addEventListener('input', function () {
-    activityFilter.q = q.value;
-    renderActivity(loadState());
-    var nq = document.getElementById('act-q');
-    if (nq) { try { nq.focus(); nq.setSelectionRange(nq.value.length, nq.value.length); } catch (e) { /* ignore */ } }
-  });
-  sel.addEventListener('change', function () { activityFilter.type = sel.value; renderActivity(loadState()); });
-  var main = st.settings.mainCurrency;
-  var dtrades = convertTrades(st.trades, main);
-  var nameById = {};
-  (st.accounts || []).forEach(function (a) { nameById[a.id] = a.name; });
-  var ql = String(activityFilter.q || '').trim().toUpperCase();
-  var tf = activityFilter.type || '';
-  var list = ledgerSortByDate(dtrades).reverse().filter(function (t) {
-    if (tf && t.type !== tf) return false;
-    if (ql) {
-      var hay = (String(t.symbol || '') + ' ' + String(t.note || '') + ' ' + String(t.date || '') + ' ' + (nameById[t.accountId] || '')).toUpperCase();
-      if (hay.indexOf(ql) === -1) return false;
-    }
-    return true;
-  }).slice(0, 120);
-  if (!list.length) {
-    var p = document.createElement('p');
-    p.className = 'muted';
-    p.textContent = 'No trades match this filter.';
-    host.appendChild(p);
-    return;
-  }
-  list.forEach(function (t) {
-    host.appendChild(tradeBlock(t, main, function (aid) { return nameById[aid] || ''; }));
-  });
-}
-
 function clearAllData() {
   confirmAction('Clear everything', 'Delete all accounts, trades, overrides and settings? This cannot be undone.', 'Delete everything', true).then(function (ok) {
     if (!ok) return;
@@ -4329,7 +4266,6 @@ function render() {
   renderAccounts(st);
   try { renderAllocation(st); } catch (e) { /* best-effort */ }
   try { renderInsights(st); } catch (e) { /* best-effort */ }
-  try { renderActivity(st); } catch (e) { /* best-effort */ }
   syncTopbar(st);
   var ver = document.getElementById('app-ver');
   if (ver) ver.textContent = 'INOCULENS PLUTUS v' + APP_VERSION + ' · local-only, no account, no server';
@@ -4354,7 +4290,6 @@ function refreshDisplayRates(st) {
       renderAccounts(s2);
       try { renderAllocation(s2); } catch (e) { /* ignore */ }
       try { renderInsights(s2); } catch (e) { /* ignore */ }
-      try { renderActivity(s2); } catch (e) { /* ignore */ }
       syncTopbar(s2);
       route();
     }, function () { /* offline: keep current paint */ });
@@ -4427,7 +4362,6 @@ if (typeof window !== 'undefined') {
   window.Inoculens.navHome = navHome;
   window.Inoculens.renderAllocation = renderAllocation;
   window.Inoculens.renderInsights = renderInsights;
-  window.Inoculens.renderActivity = renderActivity;
   window.Inoculens.downloadTradesCsv = downloadTradesCsv;
   window.Inoculens.downloadLotsCsv = downloadLotsCsv;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {

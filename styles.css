@@ -993,7 +993,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   .cards, .account-card, .trade-block, #hero, #landing { border: 1px solid #ccc; background: none; box-shadow: none; }
 }
 
-/* ————— Ultimate tracker: types, allocation, insights, activity ————— */
+/* ————— Ultimate tracker: types, allocation, insights ————— */
 .side-transfer { color: #7dd3fc; background: rgba(125,211,252,0.1); border-color: rgba(125,211,252,0.25); }
 .side-income { color: #c4b5fd; background: rgba(167,139,250,0.12); border-color: rgba(167,139,250,0.28); }
 .side-expense { color: #fdba74; background: rgba(251,146,60,0.1); border-color: rgba(251,146,60,0.28); }
@@ -1011,7 +1011,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 .trade-edit { margin-left: 0.25rem; padding: 0.45rem 0.7rem; min-height: 2.5rem; font-size: 1rem; line-height: 1; }
 .trade-edit:hover { color: var(--gold); border-color: var(--hairline-gold); }
 
-#allocation, #insights, #activity {
+#allocation, #insights {
   background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent), var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1019,7 +1019,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   box-shadow: 0 8px 24px rgba(0,0,0,0.22);
 }
 
-#allocation[hidden], #insights[hidden], #activity[hidden] { display: none; }
+#allocation[hidden], #insights[hidden] { display: none; }
 
 .alloc-wrap {
   display: flex;
@@ -1097,17 +1097,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 .bar-fill.loss { background: linear-gradient(90deg, #f87171, #fca5a5); }
 .bar-val { font-size: 0.85rem; min-width: 5.5rem; text-align: right; }
 
-.activity-tools {
-  display: flex;
-  gap: 0.65rem;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-}
-.activity-tools input { flex: 2; min-width: 10rem; }
-.activity-tools select { flex: 1; min-width: 8rem; }
-
-#activity .trade-block { margin: 0.65rem 0; }
-
 #s-csv-trades, #s-csv-lots { margin-top: 0.65rem; margin-right: 0.65rem; }
 
 /* Account kind chip + address line */
@@ -1132,11 +1121,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   .alloc-wrap { flex-direction: column; align-items: stretch; }
   .donut { width: 7.5rem; height: 7.5rem; margin: 0 auto; }
   .bar-row { grid-template-columns: 3.8rem 1fr auto; }
-  .activity-tools { flex-direction: column; }
-  .activity-tools input, .activity-tools select { width: 100%; }
 }
 
 @media print {
-  #allocation, #insights, #activity { border: 1px solid #ccc; background: none; box-shadow: none; }
+  #allocation, #insights { border: 1px solid #ccc; background: none; box-shadow: none; }
   .bar-fill { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
