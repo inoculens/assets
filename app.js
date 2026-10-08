@@ -899,7 +899,6 @@ function computeAverage(trades) {
     var sym = ledgerSym(t);
     if (!sym) continue;
     var n = normalizeTrade(t);
-    var fiatFee = n.totalMain !== undefined ? 0 : 0; // placeholder, computed per-type below
     if (t.type === 'buy' || t.type === 'income') {
       var qbi = Number(t.qty);
       if (!isFinite(qbi) || qbi <= 0) continue;
@@ -1222,7 +1221,6 @@ function computePortfolio(allTrades, live, method) {
     var sym = ledgerSym(t);
     if (!sym) return;
     var n = normalizeTrade(t);
-    var fiat = (n.totalMain || 0) + 0; // total part, fee added per-type
     if (t.type === 'buy') {
       var qb = Number(t.qty);
       if (!isFinite(qb) || qb <= 0) return;
@@ -1531,9 +1529,11 @@ function validateTrade(t, heldQty) {
       if (typeof heldQty === 'number' && isFinite(heldQty)) {
         if (qex > heldQty + LEDGER_EPS) return 'oversell: max sellable is ' + heldQty;
       }
-    } else if (hasT) {
-      var tex0 = Number(t.total);
-      if (!isFinite(tex0) || tex0 <= 0) return 'total must be > 0';
+    }
+    if (hasT) {
+      var tex = Number(t.total);
+      if (!isFinite(tex) || tex < 0) return 'total must be >= 0';
+      if (!hasQ && tex <= 0) return 'total must be > 0';
     }
   } else {
     if (typeof t.qty !== 'number' && typeof t.qty !== 'string') return 'qty must be > 0';
@@ -2083,7 +2083,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '81d0380 (#129)';
+var APP_VERSION = 'd6a6a55 (#130)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -3579,6 +3579,35 @@ function renderAccountDetail(st, id) {
     eAdd.addEventListener('click', function () { openPrefillTrade(acc.id, true); });
     emptyTrades.appendChild(eAdd);
     host.appendChild(emptyTrades);
+  }
+  // FIFO cost basis is only visible here: closed lots with holding periods,
+  // so the method toggle shows its work instead of just changing numbers.
+  if (method === 'fifo') {
+    var allLots = [];
+    rows.forEach(function (r) {
+      (r.lots || []).forEach(function (l) { allLots.push(l); });
+    });
+    if (allLots.length) {
+      allLots.sort(function (a, b) {
+        var ca = String(a.closeDate || ''), cb = String(b.closeDate || '');
+        return ca < cb ? 1 : ca > cb ? -1 : 0;
+      });
+      var lotHead = document.createElement('h2');
+      lotHead.className = 'section-title';
+      lotHead.textContent = 'Closed lots (FIFO)';
+      host.appendChild(lotHead);
+      var lotBox = document.createElement('article');
+      lotBox.className = 'trade-block';
+      allLots.forEach(function (l) {
+        var sym = String(l.symbol || (rows.length ? rows[0].symbol : '') || '').toUpperCase();
+        lotBox.appendChild(statRow(
+          String(l.openDate || '') + ' → ' + String(l.closeDate || ''),
+          fmtQty(l.qty) + ' ' + sym + ' · ' + fmtMoney(l.gain, main) + ' (' + l.holdingDays + 'd)',
+          l.gain, true
+        ));
+      });
+      host.appendChild(lotBox);
+    }
   }
 }
 
