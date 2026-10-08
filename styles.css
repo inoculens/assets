@@ -827,6 +827,9 @@ details.opt + details.opt { margin-top: 0.65rem; }
 .set-panels label { text-transform: uppercase; }
 #o-list { list-style: none; margin: 0.85rem 0 0; padding: 0; }
 #o-list li { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; padding: 0.65rem 0; border-bottom: 1px solid var(--border); }
+#s-clear { border-color: rgba(248, 113, 113, 0.35); color: var(--loss); }
+#s-clear:hover { background: rgba(248, 113, 113, 0.12); border-color: var(--loss); color: var(--loss); }
+#s-clear:active { background: rgba(248, 113, 113, 0.22); border-color: var(--loss); color: #fff; }
 #s-upload-label {
   display: block;
   margin: 0.25rem 0 0;
@@ -836,20 +839,19 @@ details.opt + details.opt { margin-top: 0.65rem; }
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-.file-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-width: 0;
+/* Native restore box keeps its look, but only Browse is clickable. */
+#s-upload { pointer-events: none; cursor: default; }
+#s-upload::file-selector-button {
+  font: inherit; font-weight: 600; color: var(--text);
+  background: var(--surface-3); border: 1px solid var(--border-strong);
+  border-radius: 9px; padding: 0.5rem 0.9rem; margin-right: 0.75rem;
+  cursor: pointer; pointer-events: auto;
 }
-.file-row button { flex-shrink: 0; }
-#s-filename {
-  font-size: 0.9rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  cursor: default;
+#s-upload::-webkit-file-upload-button {
+  font: inherit; font-weight: 600; color: var(--text);
+  background: var(--surface-3); border: 1px solid var(--border-strong);
+  border-radius: 9px; padding: 0.5rem 0.9rem; margin-right: 0.75rem;
+  cursor: pointer; pointer-events: auto;
 }
 
 /* ————— FAB ————— */
