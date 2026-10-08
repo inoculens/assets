@@ -52,4 +52,6 @@ No framework, no bundler. Pushed to `main`, Netlify redeploys automatically.
   visible (filtered) account, never just the page.
 - Accounts carry optional `color` (validated hex, avatar + border tint);
   bulk Change color offers presets, custom picker/hex, and reset.
+- Layout is fixed, content is fluid: boxes never resize with values —
+  truncate, fit, or reserve space instead (hero panel is the reference).
 - Commit each change separately with a clear message and push to `main`.
