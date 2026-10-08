@@ -2044,7 +2044,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.18';
+var APP_VERSION = '2026-10-08.19';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -4657,7 +4657,7 @@ function render() {
   try { renderHeroAlloc(st); } catch (e) { /* best-effort */ }
   syncTopbar(st);
   var ver = document.getElementById('app-ver');
-  if (ver) ver.textContent = 'INOCULENS PLUTUS v' + APP_VERSION + ' · local-only, no account, no server';
+  if (ver) ver.textContent = 'v' + APP_VERSION;
   route(); // show home or the routed account page
   refreshDisplayRates(st); // fill missing historical pairs, then repaint once
 }
