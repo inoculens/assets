@@ -3705,6 +3705,14 @@ function buildTopbar() {
     bclose.setAttribute('data-wired', '1');
     bclose.addEventListener('click', clearBanner);
   }
+  var brandHome = document.getElementById('brand-home');
+  if (brandHome && !brandHome.getAttribute('data-wired')) {
+    brandHome.setAttribute('data-wired', '1');
+    brandHome.addEventListener('click', function (e) {
+      if (e && e.preventDefault) e.preventDefault();
+      navHome();
+    });
+  }
   var cok = document.getElementById('confirm-ok');
   if (cok && !cok.getAttribute('data-wired')) {
     cok.setAttribute('data-wired', '1');

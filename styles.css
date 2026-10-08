@@ -110,6 +110,16 @@ header.brand::after {
   min-width: 0;
 }
 
+.brand-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 10px;
+}
+
 .brand-mark {
   width: 2.1rem;
   height: 2.1rem;
