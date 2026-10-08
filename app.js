@@ -2640,6 +2640,15 @@ function renderAccountDetail(st, id) {
   var rsc = plClass(ret);
   if (rsc) retCard.querySelector('.card-value').classList.add(rsc);
   stats.appendChild(retCard);
+  // Fee + income tracking lives here (detail view only): shown when non-zero.
+  var feesSum = 0, incomeSum = 0;
+  rows.forEach(function (r) { feesSum += Number(r.fees) || 0; incomeSum += Number(r.income) || 0; });
+  if (Math.abs(incomeSum) > 1e-9) stats.appendChild(statCard('Income', fmtMoney(incomeSum, main), incomeSum));
+  if (Math.abs(feesSum) > 1e-9) {
+    var feeCard = statCard('Fees paid', fmtMoney(feesSum, main), -Math.abs(feesSum));
+    feeCard.querySelector('.card-value').classList.add('loss');
+    stats.appendChild(feeCard);
+  }
   host.appendChild(stats);
   if (atrades.length) {
     host.appendChild(sectionTitle('Trades'));
@@ -4009,7 +4018,7 @@ function downloadLotsCsv() {
   downloadTextFile('plutus-tax-lots.csv', rows.map(function (r) { return r.map(csvEsc).join(','); }).join('\n'), 'text/csv');
 }
 
-// --- Allocation / Insights (aggregate only; home stays minimal, trade details live in account view) ---
+// --- Hero allocation (compact ring inside the Total balance panel; home stays one calm panel) ---
 
 function allocationData(st, dtrades) {
   var method = st.settings.costMethod;
@@ -4035,32 +4044,41 @@ function allocationData(st, dtrades) {
   return { items: arr, total: total };
 }
 
-function renderAllocation(st) {
-  var host = document.getElementById('allocation');
+function renderHeroAlloc(st) {
+  var host = document.getElementById('hero-alloc');
   if (!host) return;
   var main = st.settings.mainCurrency;
-  if (!st.accounts.length || !st.trades.length) { host.hidden = true; host.innerHTML = ''; return; }
+  if (!st.accounts.length || !(st.trades || []).length) { host.hidden = true; host.innerHTML = ''; return; }
   var dtrades = convertTrades(st.trades, main);
   var al = allocationData(st, dtrades);
   if (!al.items.length) { host.hidden = true; host.innerHTML = ''; return; }
   host.hidden = false;
   host.innerHTML = '';
-  var h = document.createElement('h2');
-  h.className = 'section-title';
-  h.textContent = 'Allocation';
-  host.appendChild(h);
-  var wrap = document.createElement('div');
-  wrap.className = 'alloc-wrap';
+  // Text first, ring last: legend sits left, circle pins to the very right.
+  var palette = ['#e3c57c', '#7dd3fc', '#34d399', '#f472b6', '#a78bfa', '#fbbf24'];
+  var leg = document.createElement('ul');
+  leg.className = 'hero-alloc-legend';
+  al.items.slice(0, 6).forEach(function (it, i) {
+    var li = document.createElement('li');
+    var dot = document.createElement('span');
+    dot.className = 'hero-alloc-dot';
+    dot.style.background = palette[i % palette.length];
+    li.appendChild(dot);
+    var tx = document.createElement('span');
+    tx.textContent = it.symbol + ' · ' + fmtPct(it.pct) + ' · ' + fmtMoney(it.value, main);
+    li.appendChild(tx);
+    leg.appendChild(li);
+  });
+  host.appendChild(leg);
   var svgNS = 'http://www.w3.org/2000/svg';
   var svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('viewBox', '0 0 120 120');
-  svg.setAttribute('class', 'donut');
+  svg.setAttribute('class', 'donut-sm');
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Portfolio allocation by asset');
-  var palette = ['#e3c57c', '#7dd3fc', '#34d399', '#f472b6', '#a78bfa', '#fbbf24', '#60a5fa', '#f87171', '#4ade80', '#22d3ee'];
+  svg.setAttribute('aria-label', 'Allocation by asset');
   var cx = 60, cy = 60, r = 46, circ = 2 * Math.PI * r;
   var off = 0;
-  al.items.slice(0, 10).forEach(function (it, i) {
+  al.items.slice(0, 6).forEach(function (it, i) {
     var frac = it.pct / 100;
     var c = document.createElementNS(svgNS, 'circle');
     c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', r);
@@ -4074,117 +4092,7 @@ function renderAllocation(st) {
     svg.appendChild(c);
     off += frac;
   });
-  wrap.appendChild(svg);
-  var leg = document.createElement('ul');
-  leg.className = 'alloc-legend';
-  al.items.slice(0, 10).forEach(function (it, i) {
-    var li = document.createElement('li');
-    var dot = document.createElement('span');
-    dot.className = 'alloc-dot';
-    dot.style.background = palette[i % palette.length];
-    li.appendChild(dot);
-    var tx = document.createElement('span');
-    tx.textContent = it.symbol + ' · ' + fmtPct(it.pct) + ' · ' + fmtMoney(it.value, main);
-    li.appendChild(tx);
-    leg.appendChild(li);
-  });
-  wrap.appendChild(leg);
-  host.appendChild(wrap);
-}
-
-function renderInsights(st) {
-  var host = document.getElementById('insights');
-  if (!host) return;
-  var main = st.settings.mainCurrency;
-  if (!st.accounts.length || !st.trades.length) { host.hidden = true; host.innerHTML = ''; return; }
-  var dtrades = convertTrades(st.trades, main);
-  var an = null;
-  try { an = computeAnalytics(dtrades, livePrices, st.settings.costMethod); } catch (e) { an = null; }
-  if (!an) { host.hidden = true; host.innerHTML = ''; return; }
-  host.hidden = false;
-  host.innerHTML = '';
-  var h = document.createElement('h2');
-  h.className = 'section-title';
-  h.textContent = 'Insights · fees, income & cash flow';
-  host.appendChild(h);
-  var grid = document.createElement('div');
-  grid.className = 'cards insights-grid';
-  function card(label, text, raw) {
-    var c = statCard(label, text, raw);
-    if (label !== 'Invested' && label !== 'Withdrawn') {
-      var sc = plClass(label === 'Fees paid' || label === 'Cash expenses' ? -Math.abs(Number(raw) || 0) : raw);
-      if (sc) c.querySelector('.card-value').classList.add(sc);
-    }
-    return c;
-  }
-  grid.appendChild(card('Invested', fmtMoney(an.invested, main), an.invested));
-  grid.appendChild(card('Withdrawn', fmtMoney(an.withdrawn, main), an.withdrawn));
-  grid.appendChild(card('Income', fmtMoney(an.income, main), an.income));
-  var feesTxt = fmtMoney(an.feesTotal, main);
-  grid.appendChild(card('Fees paid', an.feesTotal > 0 ? feesTxt : fmtMoney(0, main), -Math.abs(an.feesTotal)));
-  host.appendChild(grid);
-  if ((an.feesCryptoQty > 0 || an.feesFiat > 0 || an.expensesFiat > 0)) {
-    var sub = document.createElement('p');
-    sub.className = 'muted insights-sub';
-    var bits = [];
-    if (an.feesCryptoQty > 0) bits.push('on-chain ' + fmtQty(an.feesCryptoQty) + ' (≈ ' + fmtMoney(an.feesCryptoMain, main) + ')');
-    if (an.feesFiat > 0) bits.push('money fees ' + fmtMoney(an.feesFiat, main));
-    if (an.expensesFiat > 0) bits.push('cash expenses ' + fmtMoney(an.expensesFiat, main));
-    sub.textContent = 'Fee drag: ' + bits.join(' + ') + ' — transfers move basis, only fees count as losses.';
-    host.appendChild(sub);
-  }
-  // Monthly realized bars from FIFO lots (closed trades only).
-  try {
-    var lots = [];
-    var pfM = computePortfolio(dtrades, {}, 'fifo');
-    Object.keys(pfM.states || {}).forEach(function (accId) {
-      var syms = pfM.states[accId];
-      Object.keys(syms).forEach(function (sym) {
-        (syms[sym].lots || []).forEach(function (l) {
-          if (!l.closeDate) return;
-          lots.push(l);
-        });
-      });
-    });
-    if (lots.length) {
-      var byMonth = {};
-      lots.forEach(function (l) {
-        var m = String(l.closeDate).slice(0, 7);
-        byMonth[m] = (byMonth[m] || 0) + l.gain;
-      });
-      var months = Object.keys(byMonth).sort().slice(-12);
-      if (months.length) {
-        var bh = document.createElement('h3');
-        bh.className = 'section-title';
-        bh.textContent = 'Realized per month';
-        host.appendChild(bh);
-        var bars = document.createElement('div');
-        bars.className = 'bars';
-        var maxAbs = 1;
-        months.forEach(function (m) { maxAbs = Math.max(maxAbs, Math.abs(byMonth[m])); });
-        months.forEach(function (m) {
-          var row = document.createElement('div');
-          row.className = 'bar-row';
-          var lab = document.createElement('span');
-          lab.className = 'bar-label muted';
-          lab.textContent = m;
-          var track = document.createElement('span');
-          track.className = 'bar-track';
-          var fill = document.createElement('span');
-          fill.className = 'bar-fill ' + (byMonth[m] >= 0 ? 'gain' : 'loss');
-          fill.style.width = (Math.abs(byMonth[m]) / maxAbs * 100) + '%';
-          fill.title = fmtMoney(byMonth[m], main);
-          track.appendChild(fill);
-          var val = document.createElement('span');
-          val.className = 'bar-val num ' + plClass(byMonth[m]);
-          val.textContent = fmtMoney(byMonth[m], main);
-          row.appendChild(lab); row.appendChild(track); row.appendChild(val);
-          bars.appendChild(row);
-        });
-        host.appendChild(bars);
-      }
-    }
-  } catch (e) { /* charts are best-effort */ }
+  host.appendChild(svg);
 }
 
 function clearAllData() {
@@ -4264,8 +4172,7 @@ function render() {
   }
   if (!st || !st.settings) st = defaultState();
   renderAccounts(st);
-  try { renderAllocation(st); } catch (e) { /* best-effort */ }
-  try { renderInsights(st); } catch (e) { /* best-effort */ }
+  try { renderHeroAlloc(st); } catch (e) { /* best-effort */ }
   syncTopbar(st);
   var ver = document.getElementById('app-ver');
   if (ver) ver.textContent = 'INOCULENS PLUTUS v' + APP_VERSION + ' · local-only, no account, no server';
@@ -4288,8 +4195,7 @@ function refreshDisplayRates(st) {
       } catch (e) { return; }
       if (!s2 || !s2.settings) return;
       renderAccounts(s2);
-      try { renderAllocation(s2); } catch (e) { /* ignore */ }
-      try { renderInsights(s2); } catch (e) { /* ignore */ }
+      try { renderHeroAlloc(s2); } catch (e) { /* ignore */ }
       syncTopbar(s2);
       route();
     }, function () { /* offline: keep current paint */ });
@@ -4360,8 +4266,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.currentRouteId = currentRouteId;
   window.Inoculens.navTo = navTo;
   window.Inoculens.navHome = navHome;
-  window.Inoculens.renderAllocation = renderAllocation;
-  window.Inoculens.renderInsights = renderInsights;
+  window.Inoculens.renderHeroAlloc = renderHeroAlloc;
   window.Inoculens.downloadTradesCsv = downloadTradesCsv;
   window.Inoculens.downloadLotsCsv = downloadLotsCsv;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
