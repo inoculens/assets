@@ -2083,7 +2083,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '6c5b968 (#138)';
+var APP_VERSION = 'a7765e0 (#139)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
