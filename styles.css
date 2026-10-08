@@ -140,8 +140,7 @@ header.brand::after {
 }
 
 .brand-mark.brand-logo {
-  background: url('/icons/android-chrome-192x192.png') center / cover no-repeat,
-    linear-gradient(135deg, #f5e6c4, #e3c57c 55%, #b98f3e);
+  background: url('/icons/android-chrome-192x192.png') center / cover no-repeat #0b0e11;
 }
 
 .brand h1 {
