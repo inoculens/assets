@@ -1908,7 +1908,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.4';
+var APP_VERSION = '2026-10-08.5';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2244,10 +2244,20 @@ function renderAccounts(st) {
   if (noTrades) {
     host.appendChild(buildGuidePanel());
   }
+  var headRow = document.createElement('div');
+  headRow.className = 'section-head';
   var h2 = document.createElement('h2');
   h2.textContent = 'Accounts';
   h2.className = 'section-title';
-  host.appendChild(h2);
+  headRow.appendChild(h2);
+  var addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'ghost';
+  addBtn.textContent = '+ Account';
+  addBtn.setAttribute('aria-label', 'Create account');
+  addBtn.addEventListener('click', function () { openAccountDialog(); });
+  headRow.appendChild(addBtn);
+  host.appendChild(headRow);
   accounts.forEach(function (acc, ai) {
     var card = document.createElement('article');
     card.className = 'account-card';
@@ -2732,17 +2742,41 @@ function renderAccountDetail(st, id) {
     stats.appendChild(feeCard);
   }
   host.appendChild(stats);
+  var tHead = document.createElement('div');
+  tHead.className = 'section-head';
+  var tTitle = document.createElement('h2');
+  tTitle.className = 'section-title';
+  tTitle.textContent = 'Trades';
+  tHead.appendChild(tTitle);
   if (atrades.length) {
-    host.appendChild(sectionTitle('Trades'));
+    var tAdd = document.createElement('button');
+    tAdd.type = 'button';
+    tAdd.className = 'ghost';
+    tAdd.textContent = '+ Trade';
+    tAdd.setAttribute('aria-label', 'Add trade to ' + acc.name);
+    tAdd.addEventListener('click', function () { openPrefillTrade(acc.id, true); });
+    tHead.appendChild(tAdd);
+    host.appendChild(tHead);
     var nameById = function (aid) { var a = accountById(st, aid); return a ? a.name : ''; };
     ledgerSortByDate(atrades).reverse().forEach(function (t) {
       host.appendChild(tradeBlock(t, main, nameById));
     });
   } else {
+    host.appendChild(tHead);
+    var emptyTrades = document.createElement('div');
+    emptyTrades.className = 'empty-trades';
     var muted = document.createElement('p');
     muted.className = 'muted';
     muted.textContent = 'No trades yet — add one to see P&L.';
-    host.appendChild(muted);
+    emptyTrades.appendChild(muted);
+    var eAdd = document.createElement('button');
+    eAdd.type = 'button';
+    eAdd.className = 'primary';
+    eAdd.textContent = '+ Trade';
+    eAdd.setAttribute('aria-label', 'Add trade to ' + acc.name);
+    eAdd.addEventListener('click', function () { openPrefillTrade(acc.id, true); });
+    emptyTrades.appendChild(eAdd);
+    host.appendChild(emptyTrades);
   }
 }
 
@@ -2807,6 +2841,10 @@ function syncTradeButtons() {
   var hasTrades = Array.isArray(st.trades) && st.trades.length > 0;
   var add = document.getElementById('tb-add');
   if (add) add.hidden = !(inAccount && hasAccts);
+  // Top-bar + Account served the home list; the list now carries its own
+  // button (above, right), so the top-bar one shows only inside accounts.
+  var acctBtn = document.getElementById('tb-account');
+  if (acctBtn) acctBtn.hidden = !(inAccount && hasAccts);
   var fab = document.getElementById('fab-trade');
   if (fab) fab.hidden = !(inAccount && hasAccts && hasTrades);
 }

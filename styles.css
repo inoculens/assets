@@ -466,6 +466,27 @@ section h2, aside h2 {
   color: var(--muted);
 }
 
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.4rem 0 0.9rem;
+}
+
+.section-head .section-title { margin: 0; }
+
+.empty-trades {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.empty-trades .muted { margin: 0; }
+
 .account-card {
   display: flex;
   align-items: center;
@@ -679,7 +700,7 @@ section h2, aside h2 {
 .side-sell { color: var(--loss); background: var(--loss-bg); border-color: rgba(248,113,113,0.25); }
 
 .trade-what { font-weight: 600; letter-spacing: -0.01em; }
-.trade-when { margin-left: auto; font-size: 0.83rem; color: var(--muted); flex-shrink: 0; }
+.trade-when { font-size: 0.83rem; color: var(--muted); flex-shrink: 0; }
 .trade-block .stat-label { flex: 0 0 7rem; }
 .trade-block .stat-val { flex: 1; }
 .trade-block .stat-row { padding: 0.5rem 0.1rem; }
@@ -1105,7 +1126,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   font-weight: 400;
 }
 
-.trade-edit { margin-left: 0.25rem; padding: 0.45rem 0.7rem; min-height: 2.5rem; font-size: 1rem; line-height: 1; }
+.trade-edit { margin-left: auto; padding: 0.45rem 0.7rem; min-height: 2.5rem; font-size: 1rem; line-height: 1; }
 .trade-edit:hover { color: var(--gold); border-color: var(--hairline-gold); }
 
 /* ————— Hero: total left, allocation text + ring right, one panel ————— */
