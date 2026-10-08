@@ -2044,7 +2044,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.24';
+var APP_VERSION = '2026-10-08.25';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -3011,6 +3011,10 @@ function route() {
     home.hidden = false;
     try { document.title = 'INOCULENS PLUTUS — Local-First Portfolio Tracker'; } catch (e) { /* ignore */ }
   }
+  // Views just toggled: hidden-while-rendered content (e.g. the hero after
+  // deleting the open account) measures zero until now — sync sizes now that
+  // the right view is visible.
+  try { syncHeroAllocHeight(); } catch (e) { /* ignore */ }
   syncTradeButtons();
 }
 
