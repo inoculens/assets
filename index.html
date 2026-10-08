@@ -5,28 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>INOCULENS PLUTUS — Local-First Portfolio Tracker</title>
-  <meta name="description" content="INOCULENS PLUTUS is a private, local-first portfolio tracker. Track buys and sells per asset with live prices, ECB-locked FX normalization, and average-cost / FIFO P&L — all stored only in your browser. No account, no server, no tracking.">
+  <meta name="description" content="INOCULENS PLUTUS is a private, local-first portfolio tracker. Track buys, sells, transfers with on-chain fees, swaps, staking income and expenses across crypto and stocks — with live prices, ECB-locked FX, and average-cost / FIFO P&L. All stored only in your browser. No account, no server, no tracking.">
   <link rel="canonical" href="https://plutus.inoculens.com/">
   <meta name="theme-color" content="#07080b">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0e11'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='18' fill='%23ffffff'%3EP%3C/text%3E%3C/svg%3E">
   <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230b0e11'/%3E%3Ctext x='90' y='122' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='96' fill='%23ffffff'%3EP%3C/text%3E%3C/svg%3E">
 
-  <!-- CSP: limit outbound data fetches to CoinGecko + Frankfurter (+ Fonts).
+  <!-- CSP: limit outbound data fetches to CoinGecko + Frankfurter + Stooq (+ Fonts).
        connect-src only: scripts/styles/images/inline handlers unrestricted,
        so file:// and static hosts keep working. -->
-  <meta http-equiv="Content-Security-Policy" content="connect-src 'self' api.coingecko.com api.frankfurter.dev fonts.googleapis.com fonts.gstatic.com">
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'self' api.coingecko.com api.frankfurter.dev stooq.com fonts.googleapis.com fonts.gstatic.com">
 
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="INOCULENS PLUTUS">
   <meta property="og:title" content="INOCULENS PLUTUS — Local-First Portfolio Tracker">
-  <meta property="og:description" content="Private, local-first portfolio tracker: per-asset trades, live prices, ECB FX locks, average-cost and FIFO P&L. Your data never leaves your browser.">
+  <meta property="og:description" content="Private, local-first portfolio tracker: buys, sells, transfers with gas fees, swaps, income and expenses across crypto and stocks. Live prices, ECB FX locks, average-cost and FIFO P&L. Your data never leaves your browser.">
   <meta property="og:url" content="https://plutus.inoculens.com/">
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="INOCULENS PLUTUS — Local-First Portfolio Tracker">
-  <meta name="twitter:description" content="Private, local-first portfolio tracker with live prices, ECB-locked FX, and average-cost / FIFO P&L. No account, no server.">
+  <meta name="twitter:description" content="Private, local-first portfolio tracker with transfers, gas fees, swaps, income, live prices, ECB-locked FX, and average-cost / FIFO P&L. No account, no server.">
 
   <link rel="manifest" href="/manifest.json">
 
@@ -34,7 +34,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/styles.css?v=9">
+  <link rel="stylesheet" href="/styles.css?v=10">
 
   <script type="application/ld+json">
   {
@@ -43,7 +43,7 @@
     "name": "INOCULENS PLUTUS",
     "applicationCategory": "FinanceApplication",
     "operatingSystem": "Web",
-    "description": "Private, local-first portfolio tracker: track buys and sells per asset with live prices, ECB-locked FX normalization, and average-cost / FIFO P&L. All data stays in your browser.",
+    "description": "Private, local-first portfolio tracker: buys, sells, transfers with on-chain fees, swaps, income and expenses across crypto and stocks. Live prices, ECB FX, average-cost / FIFO. All data stays in your browser.",
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
     "url": "https://plutus.inoculens.com/"
   }
@@ -106,8 +106,11 @@
       <section id="overview" aria-label="Summary">
         <div class="cards" id="summary-cards"></div>
       </section>
+      <section id="allocation" aria-label="Allocation" hidden></section>
       <section id="accounts" aria-label="Accounts">
       </section>
+      <section id="insights" aria-label="Insights" hidden></section>
+      <section id="activity" aria-label="Activity" hidden></section>
     </div>
     <div id="view-account" hidden>
       <a href="#/" id="acct-back">‹ Accounts</a>
@@ -158,6 +161,6 @@
 
   <footer><p id="app-ver" class="muted"></p></footer>
 
-  <script src="/app.js?v=8" defer></script>
+  <script src="/app.js?v=10" defer></script>
 </body>
 </html>

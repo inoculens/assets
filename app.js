@@ -62,20 +62,30 @@ function isValidAccount(a) {
   if (typeof a.ticker !== 'string') return false;
   var tk = a.ticker.trim().toUpperCase();
   if (!/^[A-Z0-9._-]{1,12}$/.test(tk)) return false;
+  if (a.kind !== undefined && a.kind !== null && String(a.kind).trim() !== '') {
+    var kd = String(a.kind).trim().toLowerCase();
+    if (kd !== 'crypto' && kd !== 'stock' && kd !== 'custom' && kd !== 'cash') return false;
+  }
   return true;
 }
 
 function normalizeAccount(a) {
   var tk = String(a.ticker || '').trim().toUpperCase();
   var nm = String(a.name == null ? '' : a.name).trim() || tk;
-  return {
+  var kd = (a && typeof a.kind === 'string') ? a.kind.trim().toLowerCase() : 'crypto';
+  if (kd !== 'crypto' && kd !== 'stock' && kd !== 'custom' && kd !== 'cash') kd = 'crypto';
+  var out = {
     id: a.id,
     name: nm,
     ticker: tk,
+    kind: kd,
     createdAt: (typeof a.createdAt === 'string' && a.createdAt.length > 0)
       ? a.createdAt
       : new Date().toISOString()
   };
+  if (a && typeof a.address === 'string' && a.address.trim() !== '') out.address = a.address.trim().slice(0, 128);
+  if (a && typeof a.note === 'string' && a.note.trim() !== '') out.note = a.note.trim().slice(0, 280);
+  return out;
 }
 
 function normalizeSettings(s, fallback) {
@@ -110,7 +120,7 @@ function loadState() {
     : [];
   var accountIds = accounts.map(function (a) { return a.id; });
   var trades = Array.isArray(parsed.trades)
-    ? parsed.trades.filter(function (t) { return isValidImportTrade(t, accountIds.length ? accountIds : undefined); })
+    ? parsed.trades.filter(function (t) { return isValidImportTrade(t, accountIds); }).map(normalizeTradeForStore)
     : [];
   var priceOverrides = {};
   if (parsed.priceOverrides && typeof parsed.priceOverrides === 'object' && !Array.isArray(parsed.priceOverrides) && isValidPriceOverrides(parsed.priceOverrides)) {
@@ -133,10 +143,122 @@ function saveState(s) {
   }
 }
 
+var TRADE_TYPES = ['buy', 'sell', 'transfer', 'income', 'expense'];
+
+function isValidCurrencyCode(c) {
+  if (typeof c !== 'string') return false;
+  var u = c.trim().toUpperCase();
+  if (u === 'CUSTOM') return false;
+  return /^[A-Z]{2,10}$/.test(u);
+}
+
+function isValidSymbolCode(s) {
+  if (typeof s !== 'string') return false;
+  var u = s.trim().toUpperCase();
+  return /^[A-Z0-9._-]{1,12}$/.test(u);
+}
+
+function numGte0(v, allowEmpty) {
+  if (v === undefined || v === null || String(v).trim() === '') return allowEmpty ? null : false;
+  if (typeof v !== 'number' && typeof v !== 'string') return false;
+  var n = Number(v);
+  if (!isFinite(n) || n < 0) return false;
+  return n;
+}
+
 function isValidImportTrade(t, accountIds) {
   if (!t || typeof t !== 'object' || Array.isArray(t)) return false;
-  if (t.type !== 'buy' && t.type !== 'sell') return false;
-  if (typeof t.symbol !== 'string' || t.symbol.trim().length === 0) return false;
+  if (TRADE_TYPES.indexOf(t.type) === -1) return false;
+  if (!isValidSymbolCode(t.symbol)) return false;
+  if (!isValidDateStr(t.date)) return false;
+  if (isFutureDateStr(t.date)) return false;
+  // fee (fiat) is always optional >= 0 when present
+  var feeChk = numGte0(t.fee, true);
+  if (feeChk === false) return false;
+  if (t.feeCurrency !== undefined && t.feeCurrency !== null && String(t.feeCurrency).trim() !== '') {
+    if (!isValidCurrencyCode(t.feeCurrency)) return false;
+  }
+  // networkFee: on-chain fee denominated in the transferred asset itself
+  if (t.networkFee !== undefined && t.networkFee !== null && String(t.networkFee).trim() !== '') {
+    if (typeof t.networkFee !== 'number' && typeof t.networkFee !== 'string') return false;
+    var nf = Number(t.networkFee);
+    if (!isFinite(nf) || nf < 0) return false;
+  }
+  if (t.type === 'transfer') {
+    if (typeof t.qty !== 'number' && typeof t.qty !== 'string') return false;
+    var tq = Number(t.qty);
+    if (!isFinite(tq) || tq <= 0) return false;
+    var tnf = (t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee);
+    if (!isFinite(tnf) || tnf < 0 || tnf >= tq) return false; // net received must stay > 0
+    if (t.total !== undefined && t.total !== null && String(t.total).trim() !== '') {
+      var tt = Number(t.total);
+      if (!isFinite(tt) || tt < 0) return false;
+    }
+    if (t.currency !== undefined && t.currency !== null && String(t.currency).trim() !== '') {
+      if (!isValidCurrencyCode(t.currency)) return false;
+    }
+    if (accountIds !== undefined) {
+      if (!Array.isArray(accountIds)) return false;
+      if (typeof t.accountId !== 'string' || t.accountId.length === 0) return false;
+      if (typeof t.toAccountId !== 'string' || t.toAccountId.length === 0) return false;
+      if (t.accountId === t.toAccountId) return false;
+      if (accountIds.indexOf(t.accountId) === -1) return false;
+      if (accountIds.indexOf(t.toAccountId) === -1) return false;
+    } else {
+      if (typeof t.accountId !== 'string' || !t.accountId) return false;
+      if (typeof t.toAccountId !== 'string' || !t.toAccountId) return false;
+      if (t.accountId === t.toAccountId) return false;
+    }
+    return true;
+  }
+  if (t.type === 'income') {
+    if (typeof t.qty !== 'number' && typeof t.qty !== 'string') return false;
+    var iq = Number(t.qty);
+    if (!isFinite(iq) || iq <= 0) return false;
+    if (t.total !== undefined && t.total !== null && String(t.total).trim() !== '') {
+      if (typeof t.total !== 'number' && typeof t.total !== 'string') return false;
+      var it = Number(t.total);
+      if (!isFinite(it) || it < 0) return false;
+    }
+    if (t.currency !== undefined && t.currency !== null && String(t.currency).trim() !== '') {
+      if (!isValidCurrencyCode(t.currency)) return false;
+    } else if (t.total !== undefined && t.total !== null && String(t.total).trim() !== '' && Number(t.total) > 0) {
+      return false; // value without currency is ambiguous
+    }
+    if (accountIds !== undefined) {
+      if (!Array.isArray(accountIds)) return false;
+      if (typeof t.accountId !== 'string' || t.accountId.length === 0) return false;
+      if (accountIds.indexOf(t.accountId) === -1) return false;
+    }
+    return true;
+  }
+  if (t.type === 'expense') {
+    var hasQty = !(t.qty === undefined || t.qty === null || String(t.qty).trim() === '');
+    var hasTotal = !(t.total === undefined || t.total === null || String(t.total).trim() === '');
+    if (!hasQty && !hasTotal) return false;
+    if (hasQty) {
+      if (typeof t.qty !== 'number' && typeof t.qty !== 'string') return false;
+      var eq = Number(t.qty);
+      if (!isFinite(eq) || eq <= 0) return false;
+    }
+    if (hasTotal) {
+      if (typeof t.total !== 'number' && typeof t.total !== 'string') return false;
+      var et = Number(t.total);
+      if (!isFinite(et) || et < 0) return false;
+      if (et === 0 && !hasQty) return false;
+    }
+    if (typeof t.currency !== 'string' || !isValidCurrencyCode(t.currency)) {
+      // crypto-only expense may omit currency; fiat expense must name it
+      if (hasTotal) return false;
+    }
+    if (accountIds !== undefined) {
+      if (!Array.isArray(accountIds)) return false;
+      if (typeof t.accountId !== 'string' || t.accountId.length === 0) return false;
+      if (accountIds.indexOf(t.accountId) === -1) return false;
+    }
+    return true;
+  }
+  // buy / sell (legacy strict path, preserved for tests)
   if (typeof t.qty !== 'number' && typeof t.qty !== 'string') return false;
   var qty = Number(t.qty);
   if (!isFinite(qty) || qty <= 0) return false;
@@ -145,17 +267,7 @@ function isValidImportTrade(t, accountIds) {
   if (String(t.total).trim() === '') return false;
   var total = Number(t.total);
   if (!isFinite(total) || total < 0) return false;
-  if (!isValidDateStr(t.date)) return false;
-  if (isFutureDateStr(t.date)) return false;
-  if (typeof t.currency !== 'string' || !/^[A-Z]{2,10}$/.test(t.currency.trim().toUpperCase())) return false;
-  if (t.fee !== undefined && t.fee !== null && String(t.fee).trim() !== '') {
-    if (typeof t.fee !== 'number' && typeof t.fee !== 'string') return false;
-    var fee = Number(t.fee);
-    if (!isFinite(fee) || fee < 0) return false;
-  }
-  if (t.feeCurrency !== undefined && t.feeCurrency !== null && String(t.feeCurrency).trim() !== '') {
-    if (typeof t.feeCurrency !== 'string' || !/^[A-Z]{2,10}$/.test(String(t.feeCurrency).trim().toUpperCase())) return false;
-  }
+  if (typeof t.currency !== 'string' || !isValidCurrencyCode(t.currency)) return false;
   // Strict v2 membership: when the account roster is supplied, the trade
   // must name one of its accounts. Legacy v1 callers omit it (their trades
   // gain accountIds during grouping instead).
@@ -165,6 +277,15 @@ function isValidImportTrade(t, accountIds) {
     if (accountIds.indexOf(t.accountId) === -1) return false;
   }
   return true;
+}
+
+function normalizeTradeForStore(t) {
+  var c = {};
+  for (var k in t) { if (Object.prototype.hasOwnProperty.call(t, k)) c[k] = t[k]; }
+  if (typeof c.symbol === 'string') c.symbol = c.symbol.trim().toUpperCase();
+  if (typeof c.currency === 'string' && c.currency.trim() !== '') c.currency = c.currency.trim().toUpperCase();
+  if (typeof c.feeCurrency === 'string' && c.feeCurrency.trim() !== '') c.feeCurrency = c.feeCurrency.trim().toUpperCase();
+  return c;
 }
 
 function isValidPriceOverrides(v) {
@@ -183,7 +304,7 @@ function exportState(s) {
     : [];
   var accountIds = accounts.map(function (a) { return a.id; });
   var trades = Array.isArray(st.trades)
-    ? st.trades.filter(function (t) { return isValidImportTrade(t, accountIds.length ? accountIds : undefined); })
+    ? st.trades.filter(function (t) { return isValidImportTrade(t, accountIds); }).map(normalizeTradeForStore)
     : [];
   var priceOverrides = {};
   if (st.priceOverrides && typeof st.priceOverrides === 'object' && !Array.isArray(st.priceOverrides) && isValidPriceOverrides(st.priceOverrides)) {
@@ -270,7 +391,7 @@ function importState(json) {
   var next = {
     settings: normalizedSettings,
     accounts: data.accounts.map(normalizeAccount),
-    trades: data.trades,
+    trades: data.trades.map(normalizeTradeForStore),
     priceOverrides: priceOverrides
   };
   saveState(next);
@@ -304,7 +425,7 @@ function importStateV1(data) {
   var trades = data.trades.map(function (t) {
     var sym = String(t.symbol).trim().toUpperCase();
     if (!Object.prototype.hasOwnProperty.call(bySymbol, sym)) {
-      var acc = { id: uid(), name: sym, ticker: sym, createdAt: new Date().toISOString() };
+      var acc = { id: uid(), name: sym, ticker: sym, kind: 'crypto', createdAt: new Date().toISOString() };
       bySymbol[sym] = acc;
       accounts.push(acc);
     }
@@ -314,7 +435,7 @@ function importStateV1(data) {
     }
     copy.symbol = sym;
     copy.accountId = bySymbol[sym].id;
-    return copy;
+    return normalizeTradeForStore(copy);
   });
   // Membership holds by construction; re-check via the extended validator
   // so a grouping bug can never silently persist a dangling trade.
@@ -736,25 +857,73 @@ function computeAverage(trades) {
     var t = list[i] || {};
     var sym = ledgerSym(t);
     if (!sym) continue;
-    var qty = Number(t.qty);
-    if (!isFinite(qty) || qty <= 0) continue;
-    if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
-    var e = bySym.get(sym);
     var n = normalizeTrade(t);
-    if (t.type === 'buy') {
-      e.qty += qty;
-      e.cost += n.totalMain + n.feeMain;
+    var fiatFee = n.totalMain !== undefined ? 0 : 0; // placeholder, computed per-type below
+    if (t.type === 'buy' || t.type === 'income') {
+      var qbi = Number(t.qty);
+      if (!isFinite(qbi) || qbi <= 0) continue;
+      if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
+      var ebi = bySym.get(sym);
+      ebi.qty += qbi;
+      ebi.cost += n.totalMain + n.feeMain;
     } else if (t.type === 'sell') {
+      var qs = Number(t.qty);
+      if (!isFinite(qs) || qs <= 0) continue;
+      if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
+      var e = bySym.get(sym);
       if (e.qty <= LEDGER_EPS) continue; // no inventory: ignore, never negative
-      var sellQty = Math.min(qty, e.qty);
+      var sellQty = Math.min(qs, e.qty);
       var avg = e.qty > 0 ? e.cost / e.qty : 0;
       var proceeds = n.totalMain - n.feeMain;
       if (proceeds < 0) proceeds = 0;
-      if (qty > e.qty && qty > 0) proceeds = proceeds * (sellQty / qty);
+      if (qs > e.qty && qs > 0) proceeds = proceeds * (sellQty / qs);
       e.realized += proceeds - avg * sellQty;
       e.cost -= avg * sellQty;
       e.qty -= sellQty;
       if (Math.abs(e.qty) < LEDGER_EPS) { e.qty = 0; e.cost = 0; } // kill float dust
+    } else if (t.type === 'expense') {
+      var hasQ = !(t.qty === undefined || t.qty === null || String(t.qty).trim() === '');
+      var hasT = !(t.total === undefined || t.total === null || String(t.total).trim() === '');
+      var qe = hasQ ? Number(t.qty) : 0;
+      if (hasQ && (!isFinite(qe) || qe <= 0)) continue;
+      if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
+      var ee = bySym.get(sym);
+      if (hasQ) {
+        if (ee.qty > LEDGER_EPS) {
+          var rq = Math.min(qe, ee.qty);
+          var aqe = ee.qty > 0 ? ee.cost / ee.qty : 0;
+          var cRem = aqe * rq;
+          ee.realized -= cRem; // crypto lost: proceeds 0 minus cost
+          ee.cost -= cRem;
+          ee.qty -= rq;
+          if (Math.abs(ee.qty) < LEDGER_EPS) { ee.qty = 0; ee.cost = 0; }
+        }
+      }
+      if (hasT || (n.feeMain > 0)) {
+        ee.realized -= (n.totalMain + n.feeMain); // cash lost / gas paid in fiat
+      }
+    } else if (t.type === 'transfer') {
+      var qt = Number(t.qty);
+      if (!isFinite(qt) || qt <= 0) continue;
+      var nft = (t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee);
+      if (!isFinite(nft) || nft < 0 || nft >= qt) continue;
+      if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
+      var et = bySym.get(sym);
+      var fiatT = n.totalMain + n.feeMain;
+      if (et.qty <= LEDGER_EPS) {
+        // no inventory: cannot move, but fiat fee still lost
+        if (fiatT > 0) et.realized -= fiatT;
+        continue;
+      }
+      var tQty = Math.min(qt, et.qty);
+      var scaleT = qt > 0 ? tQty / qt : 0;
+      var feeQtyT = nft * scaleT;
+      var avgT = et.qty > 0 ? et.cost / et.qty : 0;
+      var feeCostT = avgT * feeQtyT;
+      et.qty -= feeQtyT; // net movement is -fee (out+in cancel except fee)
+      et.cost -= feeCostT;
+      et.realized -= feeCostT + fiatT; // on-chain loss + fiat fee are real losses
+      if (Math.abs(et.qty) < LEDGER_EPS) { et.qty = 0; et.cost = 0; }
     }
   }
   bySym.forEach(function (e) {
@@ -777,14 +946,16 @@ function computeFifo(trades) {
     var t = list[i] || {};
     var sym = ledgerSym(t);
     if (!sym) continue;
-    var qty = Number(t.qty);
-    if (!isFinite(qty) || qty <= 0) continue;
     var n = normalizeTrade(t);
     var st = state(sym);
     var q = queues.get(sym);
-    if (t.type === 'buy') {
-      q.push({ qty: qty, unitCost: (n.totalMain + n.feeMain) / qty, date: t.date });
+    if (t.type === 'buy' || t.type === 'income') {
+      var qb = Number(t.qty);
+      if (!isFinite(qb) || qb <= 0) continue;
+      q.push({ qty: qb, unitCost: (n.totalMain + n.feeMain) / qb, date: t.date });
     } else if (t.type === 'sell') {
+      var qty = Number(t.qty);
+      if (!isFinite(qty) || qty <= 0) continue;
       var heldFifo = q.reduce(function (s, l) { return s + l.qty; }, 0);
       if (heldFifo <= LEDGER_EPS) continue; // no inventory: ignore, never negative
       var proceedsTotal = n.totalMain - n.feeMain;
@@ -813,6 +984,99 @@ function computeFifo(trades) {
         left -= take;
         if (lot.qty <= LEDGER_EPS) q.shift();
       }
+    } else if (t.type === 'expense') {
+      var hasQ = !(t.qty === undefined || t.qty === null || String(t.qty).trim() === '');
+      var hasT = !(t.total === undefined || t.total === null || String(t.total).trim() === '');
+      if (hasQ) {
+        var qe = Number(t.qty);
+        if (!isFinite(qe) || qe <= 0) continue;
+        var heldE = q.reduce(function (s, l) { return s + l.qty; }, 0);
+        if (heldE > LEDGER_EPS) {
+          var rq = Math.min(qe, heldE);
+          var leftE = rq;
+          while (leftE > LEDGER_EPS && q.length > 0) {
+            var lote = q[0];
+            var takeE = Math.min(lote.qty, leftE);
+            var costE = takeE * lote.unitCost;
+            st.lots.push({
+              openDate: lote.date,
+              closeDate: t.date,
+              qty: takeE,
+              proceeds: 0,
+              cost: costE,
+              gain: -costE,
+              holdingDays: ledgerHoldingDays(lote.date, t.date)
+            });
+            st.realized -= costE;
+            lote.qty -= takeE;
+            leftE -= takeE;
+            if (lote.qty <= LEDGER_EPS) q.shift();
+          }
+        }
+      }
+      if (hasT || n.feeMain > 0) {
+        st.realized -= (n.totalMain + n.feeMain);
+      }
+    } else if (t.type === 'transfer') {
+      var qt = Number(t.qty);
+      if (!isFinite(qt) || qt <= 0) continue;
+      var nft = (t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee);
+      if (!isFinite(nft) || nft < 0 || nft >= qt) continue;
+      var fiatT = n.totalMain + n.feeMain;
+      var heldT = q.reduce(function (s, l) { return s + l.qty; }, 0);
+      if (heldT <= LEDGER_EPS) {
+        if (fiatT > 0) st.realized -= fiatT;
+        continue;
+      }
+      var tQty = Math.min(qt, heldT);
+      var scaleT = qt > 0 ? tQty / qt : 0;
+      var feeQtyT = nft * scaleT;
+      // Remove gross qty oldest-first, then treat fee slice as expense.
+      var removed = [];
+      var leftT = tQty;
+      while (leftT > LEDGER_EPS && q.length > 0) {
+        var lotT = q[0];
+        var takeT = Math.min(lotT.qty, leftT);
+        removed.push({ qty: takeT, unitCost: lotT.unitCost, openDate: lotT.date });
+        lotT.qty -= takeT;
+        leftT -= takeT;
+        if (lotT.qty <= LEDGER_EPS) q.shift();
+      }
+      var costOutT = removed.reduce(function (s, l) { return s + l.qty * l.unitCost; }, 0);
+      var feeCostT = tQty > 0 ? costOutT * (feeQtyT / tQty) : 0;
+      // Record the on-chain fee slice as loss lots (proportional across removed lots).
+      if (feeQtyT > LEDGER_EPS && tQty > 0) {
+        for (var ri = 0; ri < removed.length; ri++) {
+          var rl = removed[ri];
+          var ft = rl.qty * (feeQtyT / tQty);
+          if (ft <= LEDGER_EPS) continue;
+          var fc = ft * rl.unitCost;
+          st.lots.push({
+            openDate: rl.openDate,
+            closeDate: t.date,
+            qty: ft,
+            proceeds: 0,
+            cost: fc,
+            gain: -fc,
+            holdingDays: ledgerHoldingDays(rl.openDate, t.date)
+          });
+        }
+      }
+      st.realized -= feeCostT + fiatT;
+      // qty/cost net: gross removed, nothing re-added globally (in+out cancel except fee already accounted via qty reduction below).
+      // Re-add net? No: globally out+in cancel, leaving -feeQty. Queues already removed gross; re-add net portion with original lots scaled.
+      var netQtyT = tQty - feeQtyT;
+      if (netQtyT > LEDGER_EPS && tQty > 0) {
+        for (var ni = 0; ni < removed.length; ni++) {
+          var ol = removed[ni];
+          var keep = ol.qty * (netQtyT / tQty);
+          if (keep > LEDGER_EPS) q.push({ qty: keep, unitCost: ol.unitCost, date: ol.openDate });
+        }
+        // Keep FIFO order stable: moved lots go to back (they are still oldest economically, but queue order preserved by re-append; sort by date to keep oldest-first).
+        q.sort(function (a, b) { return String(a.date) < String(b.date) ? -1 : String(a.date) > String(b.date) ? 1 : 0; });
+      }
+      // Fix double-count: we removed gross then re-added net, net qty change = -feeQty, net cost change = -feeCost. Queues now reflect that (removed gross, added net). Realized already includes -feeCost-fiat. Good.
+      // Recompute: queues currently = old - gross + net = old - fee. Correct.
     }
   }
   var out = new Map();
@@ -841,10 +1105,10 @@ function computeFifo(trades) {
 
 function computePositions(trades, live, method) {
   var engine = method === 'fifo' ? computeFifo(trades) : computeAverage(trades);
-  var buyCost = {}; // sym -> lifetime buy cost (denominator for returnPct)
+  var buyCost = {}; // sym -> lifetime buy+income cost (denominator for returnPct)
   var hasBuy = {};
   (trades || []).forEach(function (t) {
-    if (!t || t.type !== 'buy') return;
+    if (!t || (t.type !== 'buy' && t.type !== 'income')) return;
     var sym = ledgerSym(t);
     if (!sym) return;
     var qty = Number(t.qty);
@@ -890,12 +1154,350 @@ function computePositions(trades, live, method) {
   return rows;
 }
 
+// --- Joint per-account portfolio engine (transfers move basis between accounts) ---
+// Processes ALL trades once in date order, keeping separate cost queues per
+// (accountId, symbol). Transfers move cost/lots from source to dest at the
+// source's basis (no P&L except network + fiat fees, which are real losses).
+// Returns { byAccount: {accId: Map(sym->pos)}, analytics, lots }.
+// Positions use the same live-price unknown rules as computePositions.
+function computePortfolio(allTrades, live, method) {
+  var isFifo = method === 'fifo';
+  var sorted = ledgerSortByDate(allTrades || []);
+  var acctState = {}; // accId -> sym -> {qty,cost,realized,income,fees,fiatFees,queue,lots}
+  function stFor(accId, sym) {
+    var a = acctState[accId];
+    if (!a) { a = {}; acctState[accId] = a; }
+    var s = a[sym];
+    if (!s) {
+      s = { qty: 0, cost: 0, realized: 0, income: 0, fees: 0, lots: [], queue: [], touched: false };
+      a[sym] = s;
+    }
+    return s;
+  }
+  var totals = { invested: 0, withdrawn: 0, income: 0, incomeQty: 0, feesFiat: 0, feesCryptoQty: 0, feesCryptoMain: 0, expensesFiat: 0, realized: 0 };
+  function avgOf(s) { return s.qty > LEDGER_EPS ? s.cost / s.qty : 0; }
+  sorted.forEach(function (t) {
+    if (!t) return;
+    var sym = ledgerSym(t);
+    if (!sym) return;
+    var n = normalizeTrade(t);
+    var fiat = (n.totalMain || 0) + 0; // total part, fee added per-type
+    if (t.type === 'buy') {
+      var qb = Number(t.qty);
+      if (!isFinite(qb) || qb <= 0) return;
+      var sb = stFor(t.accountId, sym);
+      sb.touched = true;
+      sb.qty += qb;
+      var cb = n.totalMain + n.feeMain;
+      sb.cost += cb;
+      sb.fees += n.feeMain;
+      totals.invested += cb;
+      totals.feesFiat += n.feeMain;
+    } else if (t.type === 'income') {
+      var qi = Number(t.qty);
+      if (!isFinite(qi) || qi <= 0) return;
+      var si = stFor(t.accountId, sym);
+      si.touched = true;
+      si.qty += qi;
+      var ci = n.totalMain + n.feeMain;
+      si.cost += ci;
+      si.income += n.totalMain;
+      si.fees += n.feeMain;
+      totals.income += n.totalMain;
+      totals.incomeQty += qi;
+      totals.feesFiat += n.feeMain;
+      if (isFifo) si.queue.push({ qty: qi, unitCost: qi > 0 ? ci / qi : 0, date: t.date });
+    } else if (t.type === 'sell') {
+      var qs = Number(t.qty);
+      if (!isFinite(qs) || qs <= 0) return;
+      var ss = stFor(t.accountId, sym);
+      if (ss.qty <= LEDGER_EPS && (!isFifo || ss.queue.reduce(function (s, l) { return s + l.qty; }, 0) <= LEDGER_EPS)) return;
+      ss.touched = true;
+      var proceeds = n.totalMain - n.feeMain;
+      if (proceeds < 0) proceeds = 0;
+      if (isFifo) {
+        var heldF = ss.queue.reduce(function (s, l) { return s + l.qty; }, 0);
+        var sQty = Math.min(qs, heldF);
+        if (qs > heldF && qs > 0) proceeds = proceeds * (sQty / qs);
+        var unitP = sQty > 0 ? proceeds / sQty : 0;
+        // also mirror qty/cost for avg view consistency
+        var left = sQty;
+        while (left > LEDGER_EPS && ss.queue.length) {
+          var lot = ss.queue[0];
+          var take = Math.min(lot.qty, left);
+          var pc = take * unitP;
+          var cc = take * lot.unitCost;
+          ss.lots.push({ openDate: lot.date, closeDate: t.date, qty: take, proceeds: pc, cost: cc, gain: pc - cc, holdingDays: ledgerHoldingDays(lot.date, t.date), accountId: t.accountId, symbol: sym });
+          ss.realized += pc - cc;
+          totals.realized += pc - cc;
+          lot.qty -= take;
+          left -= take;
+          if (lot.qty <= LEDGER_EPS) ss.queue.shift();
+        }
+        ss.qty -= sQty;
+        // cost derived from queue; recompute for avg field
+        var rc = 0, rq = 0;
+        ss.queue.forEach(function (l) { rq += l.qty; rc += l.qty * l.unitCost; });
+        ss.cost = rc;
+        if (Math.abs(ss.qty) < LEDGER_EPS && Math.abs(rq) < LEDGER_EPS) { ss.qty = 0; ss.cost = 0; }
+        else ss.qty = rq;
+        totals.withdrawn += proceeds;
+        totals.feesFiat += n.feeMain;
+        ss.fees += n.feeMain;
+      } else {
+        var sQty2 = Math.min(qs, ss.qty);
+        if (qs > ss.qty && qs > 0) proceeds = proceeds * (sQty2 / qs);
+        var a2 = avgOf(ss);
+        ss.realized += proceeds - a2 * sQty2;
+        totals.realized += proceeds - a2 * sQty2;
+        ss.cost -= a2 * sQty2;
+        ss.qty -= sQty2;
+        if (Math.abs(ss.qty) < LEDGER_EPS) { ss.qty = 0; ss.cost = 0; }
+        totals.withdrawn += proceeds;
+        totals.feesFiat += n.feeMain;
+        ss.fees += n.feeMain;
+      }
+    } else if (t.type === 'expense') {
+      var hasQ = !(t.qty === undefined || t.qty === null || String(t.qty).trim() === '');
+      var hasT = !(t.total === undefined || t.total === null || String(t.total).trim() === '');
+      if (!hasQ && !hasT) return;
+      var se = stFor(t.accountId, sym);
+      se.touched = true;
+      if (hasQ) {
+        var qe = Number(t.qty);
+        if (isFinite(qe) && qe > 0) {
+          if (isFifo) {
+            var heldE = se.queue.reduce(function (s, l) { return s + l.qty; }, 0);
+            var rqE = Math.min(qe, heldE);
+            var lE = rqE;
+            while (lE > LEDGER_EPS && se.queue.length) {
+              var le2 = se.queue[0];
+              var tk = Math.min(le2.qty, lE);
+              var ce2 = tk * le2.unitCost;
+              se.lots.push({ openDate: le2.date, closeDate: t.date, qty: tk, proceeds: 0, cost: ce2, gain: -ce2, holdingDays: ledgerHoldingDays(le2.date, t.date), accountId: t.accountId, symbol: sym, kind: 'expense' });
+              se.realized -= ce2;
+              totals.realized -= ce2;
+              totals.feesCryptoMain += ce2;
+              totals.feesCryptoQty += tk;
+              le2.qty -= tk;
+              lE -= tk;
+              if (le2.qty <= LEDGER_EPS) se.queue.shift();
+            }
+            var rq2 = 0, rc2 = 0;
+            se.queue.forEach(function (l) { rq2 += l.qty; rc2 += l.qty * l.unitCost; });
+            se.qty = rq2; se.cost = rc2;
+          } else if (se.qty > LEDGER_EPS) {
+            var rqe = Math.min(qe, se.qty);
+            var ae = avgOf(se);
+            var cre = ae * rqe;
+            se.realized -= cre;
+            totals.realized -= cre;
+            totals.feesCryptoMain += cre;
+            totals.feesCryptoQty += rqe;
+            se.cost -= cre;
+            se.qty -= rqe;
+            if (Math.abs(se.qty) < LEDGER_EPS) { se.qty = 0; se.cost = 0; }
+          }
+        }
+      }
+      if (hasT || n.feeMain > 0) {
+        var fl = n.totalMain + n.feeMain;
+        se.realized -= fl;
+        totals.realized -= fl;
+        totals.expensesFiat += fl;
+        totals.feesFiat += n.feeMain;
+        se.fees += n.feeMain;
+      }
+    } else if (t.type === 'transfer') {
+      var qt = Number(t.qty);
+      if (!isFinite(qt) || qt <= 0) return;
+      var nft = (t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee);
+      if (!isFinite(nft) || nft < 0 || nft >= qt) return;
+      var from = stFor(t.accountId, sym);
+      var to = stFor(t.toAccountId, sym);
+      from.touched = true;
+      to.touched = true;
+      var fiatT = n.totalMain + n.feeMain;
+      if (isFifo) {
+        var heldT = from.queue.reduce(function (s, l) { return s + l.qty; }, 0);
+        if (heldT <= LEDGER_EPS) {
+          if (fiatT > 0) { from.realized -= fiatT; totals.realized -= fiatT; totals.expensesFiat += fiatT; totals.feesFiat += n.feeMain; }
+          return;
+        }
+        var tQty = Math.min(qt, heldT);
+        var sc = qt > 0 ? tQty / qt : 0;
+        var feeQ = nft * sc;
+        var removed = [];
+        var lt = tQty;
+        while (lt > LEDGER_EPS && from.queue.length) {
+          var ltf = from.queue[0];
+          var tkf = Math.min(ltf.qty, lt);
+          removed.push({ qty: tkf, unitCost: ltf.unitCost, openDate: ltf.date });
+          ltf.qty -= tkf;
+          lt -= tkf;
+          if (ltf.qty <= LEDGER_EPS) from.queue.shift();
+        }
+        var costOut = removed.reduce(function (s, l) { return s + l.qty * l.unitCost; }, 0);
+        var feeC = tQty > 0 ? costOut * (feeQ / tQty) : 0;
+        if (feeQ > LEDGER_EPS && tQty > 0) {
+          removed.forEach(function (rl) {
+            var fsh = rl.qty * (feeQ / tQty);
+            if (fsh <= LEDGER_EPS) return;
+            var fco = fsh * rl.unitCost;
+            from.lots.push({ openDate: rl.openDate, closeDate: t.date, qty: fsh, proceeds: 0, cost: fco, gain: -fco, holdingDays: ledgerHoldingDays(rl.openDate, t.date), accountId: t.accountId, symbol: sym, kind: 'network-fee' });
+          });
+        }
+        from.realized -= feeC + fiatT;
+        totals.realized -= feeC + fiatT;
+        totals.feesCryptoMain += feeC;
+        totals.feesCryptoQty += feeQ;
+        totals.expensesFiat += fiatT;
+        totals.feesFiat += n.feeMain;
+        from.fees += n.feeMain;
+        var frq = 0, frc = 0;
+        from.queue.forEach(function (l) { frq += l.qty; frc += l.qty * l.unitCost; });
+        from.qty = frq; from.cost = frc;
+        var netQ = tQty - feeQ;
+        if (netQ > LEDGER_EPS && tQty > 0) {
+          removed.forEach(function (rl) {
+            var keep = rl.qty * (netQ / tQty);
+            if (keep > LEDGER_EPS) to.queue.push({ qty: keep, unitCost: rl.unitCost, date: rl.openDate });
+          });
+          to.queue.sort(function (a, b) { return String(a.date) < String(b.date) ? -1 : String(a.date) > String(b.date) ? 1 : 0; });
+          var trq = 0, trc = 0;
+          to.queue.forEach(function (l) { trq += l.qty; trc += l.qty * l.unitCost; });
+          to.qty = trq; to.cost = trc;
+        }
+      } else {
+        if (from.qty <= LEDGER_EPS) {
+          if (fiatT > 0) { from.realized -= fiatT; totals.realized -= fiatT; totals.expensesFiat += fiatT; totals.feesFiat += n.feeMain; }
+          return;
+        }
+        var tQ2 = Math.min(qt, from.qty);
+        var sc2 = qt > 0 ? tQ2 / qt : 0;
+        var feeQ2 = nft * sc2;
+        var aF = avgOf(from);
+        var costO = aF * tQ2;
+        var feeC2 = aF * feeQ2;
+        var moved = costO - feeC2;
+        from.qty -= tQ2;
+        from.cost -= costO;
+        if (Math.abs(from.qty) < LEDGER_EPS) { from.qty = 0; from.cost = 0; }
+        from.realized -= feeC2 + fiatT;
+        totals.realized -= feeC2 + fiatT;
+        totals.feesCryptoMain += feeC2;
+        totals.feesCryptoQty += feeQ2;
+        totals.expensesFiat += fiatT;
+        totals.feesFiat += n.feeMain;
+        from.fees += n.feeMain;
+        var netQ2 = tQ2 - feeQ2;
+        to.qty += netQ2;
+        to.cost += moved;
+      }
+    }
+  });
+  // Build per-account position maps with live prices.
+  var byAccount = {};
+  Object.keys(acctState).forEach(function (accId) {
+    var m = new Map();
+    var syms = acctState[accId];
+    Object.keys(syms).forEach(function (sym) {
+      var s = syms[sym];
+      if (!s.touched) return; // never active: drop phantom (e.g. sell-only with no inventory)
+      var lookup = String(sym).toUpperCase();
+      var raw = live ? (live[sym] !== undefined ? live[sym] : live[lookup]) : undefined;
+      var num = Number(raw);
+      var known = isFinite(num) && num > 0;
+      var qtyHeld = Math.abs(s.qty) < LEDGER_EPS ? 0 : s.qty;
+      var avgEntry = qtyHeld > 0 ? s.cost / qtyHeld : 0;
+      var mv = known ? qtyHeld * num : (qtyHeld === 0 ? 0 : null);
+      var un = mv === null ? null : mv - avgEntry * qtyHeld;
+      m.set(sym, {
+        symbol: sym, qtyHeld: qtyHeld, avgEntry: avgEntry,
+        livePrice: known ? num : null, marketValue: mv, unrealized: un,
+        realized: s.realized, totalPL: un === null ? s.realized : un + s.realized,
+        income: s.income, fees: s.fees, lots: s.lots
+      });
+    });
+    byAccount[accId] = m;
+  });
+  return { byAccount: byAccount, totals: totals, states: acctState };
+}
+
+function computeAnalytics(allTrades, live, method) {
+  var pf = computePortfolio(allTrades, live, method);
+  var mv = 0, un = 0, rz = pf.totals.realized, mvKnown = false, unKnown = false;
+  var accIds = Object.keys(pf.byAccount);
+  accIds.forEach(function (id) {
+    pf.byAccount[id].forEach(function (p) {
+      if (p.marketValue !== null) { mv += p.marketValue; mvKnown = true; }
+      if (p.unrealized !== null) { un += p.unrealized; unKnown = true; }
+    });
+  });
+  var feesTotal = (pf.totals.feesFiat || 0) + (pf.totals.feesCryptoMain || 0) + (pf.totals.expensesFiat || 0);
+  return {
+    marketValue: mvKnown ? mv : null,
+    unrealized: unKnown ? un : null,
+    realized: rz,
+    totalPL: (unKnown || Math.abs(rz) > LEDGER_EPS) ? (unKnown ? un + rz : rz) : rz,
+    invested: pf.totals.invested,
+    withdrawn: pf.totals.withdrawn,
+    income: pf.totals.income,
+    feesFiat: pf.totals.feesFiat,
+    feesCryptoQty: pf.totals.feesCryptoQty,
+    feesCryptoMain: pf.totals.feesCryptoMain,
+    expensesFiat: pf.totals.expensesFiat,
+    feesTotal: feesTotal,
+    byAccount: pf.byAccount,
+    totals: pf.totals
+  };
+}
+
+function heldForAccount(allTrades, accountId, symbol) {
+  var sym = String(symbol || '').toUpperCase();
+  var pf = computePortfolio(allTrades || [], {}, 'average');
+  var m = pf.byAccount[accountId];
+  if (!m) return 0;
+  var p = m.get(sym) || m.get(symbol);
+  if (!p) {
+    // fallback: try case-insensitive scan
+    var found = 0;
+    m.forEach(function (v, k) { if (String(k).toUpperCase() === sym) found = v.qtyHeld; });
+    return found;
+  }
+  return p.qtyHeld;
+}
+
 function validateTrade(t, heldQty) {
   t = t || {};
-  if (typeof t.qty !== 'number' && typeof t.qty !== 'string') return 'qty must be > 0';
-  if (typeof t.qty === 'string' && t.qty.trim() === '') return 'qty must be > 0';
-  var qty = Number(t.qty);
-  if (!isFinite(qty) || qty <= 0) return 'qty must be > 0';
+  var type = t.type;
+  if (type !== undefined && TRADE_TYPES.indexOf(type) === -1) {
+    return 'type must be buy, sell, transfer, income or expense';
+  }
+  var effType = type || 'buy';
+  if (effType === 'expense') {
+    var hasQ = !(t.qty === undefined || t.qty === null || String(t.qty).trim() === '');
+    var hasT = !(t.total === undefined || t.total === null || String(t.total).trim() === '');
+    if (!hasQ && !hasT) return 'expense needs qty or total';
+    if (hasQ) {
+      var qex = Number(t.qty);
+      if (!isFinite(qex) || qex <= 0) return 'qty must be > 0';
+      if (typeof heldQty === 'number' && isFinite(heldQty)) {
+        if (qex > heldQty + LEDGER_EPS) return 'oversell: max sellable is ' + heldQty;
+      }
+    } else if (hasT) {
+      var tex0 = Number(t.total);
+      if (!isFinite(tex0) || tex0 <= 0) return 'total must be > 0';
+    }
+  } else {
+    if (typeof t.qty !== 'number' && typeof t.qty !== 'string') return 'qty must be > 0';
+    if (typeof t.qty === 'string' && t.qty.trim() === '') return 'qty must be > 0';
+    var qty = Number(t.qty);
+    if (!isFinite(qty) || qty <= 0) return 'qty must be > 0';
+    if ((effType === 'sell' || effType === 'transfer') && typeof heldQty === 'number' && isFinite(heldQty)) {
+      if (qty > heldQty + LEDGER_EPS) return 'oversell: max sellable is ' + heldQty;
+    }
+  }
   if (t.total !== undefined && t.total !== null && String(t.total).trim() !== '') {
     if (typeof t.total !== 'number' && typeof t.total !== 'string') return 'total must be >= 0';
     var total = Number(t.total);
@@ -906,15 +1508,28 @@ function validateTrade(t, heldQty) {
     var fee = Number(t.fee);
     if (!isFinite(fee) || fee < 0) return 'fee must be >= 0';
   }
-  if (t.type !== undefined && t.type !== 'buy' && t.type !== 'sell') {
-    return 'type must be buy or sell';
+  if (t.networkFee !== undefined && t.networkFee !== null && String(t.networkFee).trim() !== '') {
+    if (typeof t.networkFee !== 'number' && typeof t.networkFee !== 'string') return 'network fee must be >= 0';
+    var nf = Number(t.networkFee);
+    if (!isFinite(nf) || nf < 0) return 'network fee must be >= 0';
+    if (typeof t.qty === 'number' || typeof t.qty === 'string') {
+      var qq = Number(t.qty);
+      if (isFinite(qq) && qq > 0 && nf >= qq) return 'network fee must be < qty';
+    }
+  }
+  if (t.feeCurrency !== undefined && t.feeCurrency !== null && String(t.feeCurrency).trim() !== '') {
+    if (!isValidCurrencyCode(t.feeCurrency)) return 'fee currency invalid';
+  }
+  if (t.currency !== undefined && t.currency !== null && String(t.currency).trim() !== '') {
+    if (!isValidCurrencyCode(t.currency)) return 'currency invalid';
+  }
+  if (effType === 'transfer') {
+    if (typeof t.toAccountId !== 'string' || !t.toAccountId) return 'transfer needs a destination account';
+    if (t.accountId && t.toAccountId && t.accountId === t.toAccountId) return 'transfer needs two different accounts';
   }
   if (typeof t.date === 'string' && t.date.length > 0) {
     if (!isValidDateStr(t.date)) return 'date must be YYYY-MM-DD';
     if (isFutureDateStr(t.date)) return 'date cannot be in the future';
-  }
-  if (t.type === 'sell' && typeof heldQty === 'number' && isFinite(heldQty)) {
-    if (qty > heldQty + LEDGER_EPS) return 'oversell: max sellable is ' + heldQty;
   }
   return null;
 }
@@ -927,6 +1542,10 @@ if (typeof window !== 'undefined') {
   window.Inoculens.computeFifo = computeFifo;
   window.Inoculens.computePositions = computePositions;
   window.Inoculens.validateTrade = validateTrade;
+  window.Inoculens.computePortfolio = computePortfolio;
+  window.Inoculens.computeAnalytics = computeAnalytics;
+  window.Inoculens.heldForAccount = heldForAccount;
+  window.Inoculens.TRADE_TYPES = TRADE_TYPES;
 }
 
 // === Prices ===
@@ -960,7 +1579,61 @@ var SYMBOL_MAP = {
   OP: 'optimism',
   USDC: 'usd-coin',
   USDT: 'tether',
-  DAI: 'dai'
+  DAI: 'dai',
+  MATIC: 'matic-network',
+  POL: 'polygon-ecosystem-token',
+  APT: 'aptos',
+  INJ: 'injective-protocol',
+  SUI: 'sui',
+  SEI: 'sei-network',
+  TIA: 'celestia',
+  PEPE: 'pepe',
+  SHIB: 'shiba-inu',
+  TON: 'toncoin',
+  ICP: 'internet-computer',
+  FIL: 'filecoin',
+  ETC: 'ethereum-classic',
+  HBAR: 'hedera-hashgraph',
+  VET: 'vechain',
+  RENDER: 'render-token',
+  FET: 'fetch-ai',
+  KAS: 'kaspa',
+  MNT: 'mantle',
+  STX: 'stacks',
+  MKR: 'maker',
+  AAVE: 'aave',
+  CRV: 'curve-dao-token',
+  LDO: 'lido-dao',
+  AR: 'arweave',
+  SAND: 'the-sandbox',
+  MANA: 'decentraland',
+  AXS: 'axie-infinity',
+  CHZ: 'chiliz',
+  ENJ: 'enjincoin',
+  BAT: 'basic-attention-token',
+  ZEC: 'zcash',
+  DASH: 'dash',
+  XTZ: 'tezos',
+  EOS: 'eos',
+  KSM: 'kusama',
+  ALGO: 'algorand',
+  THETA: 'theta-network',
+  FTM: 'fantom',
+  CELO: 'celo',
+  KAVA: 'kava',
+  RUNE: 'thorchain',
+  WBTC: 'wrapped-bitcoin',
+  WSTETH: 'wrapped-steth',
+  RPL: 'rocket-pool',
+  SNX: 'havven',
+  COMP: 'compound-governance-token',
+  YFI: 'yearn-finance',
+  SUSHI: 'sushi',
+  ASTR: 'astar',
+  JUP: 'jupiter-exchange-solana',
+  PYTH: 'pyth-network',
+  ONDO: 'ondo-finance',
+  TAO: 'bittensor'
 };
 
 var PRICE_CACHE_TTL_MS = 60000;
@@ -1006,7 +1679,77 @@ function priceDefaultVs(vs) {
   return 'EUR';
 }
 
-function fetchLivePrice(symbol, vs) {
+function stooqSymbol(sym) {
+  var s = String(sym || '').trim().toUpperCase();
+  if (!/^[A-Z0-9._-]{1,12}$/.test(s)) return null;
+  return s.toLowerCase() + '.us';
+}
+
+function parseStooqClose(csv) {
+  try {
+    var lines = String(csv || '').trim().split(/\r?\n/);
+    if (lines.length < 2) return null;
+    var header = lines[0].split(',');
+    var row = lines[1].split(',');
+    var ci = header.indexOf('Close');
+    if (ci === -1) ci = 6;
+    var v = Number(row[ci]);
+    if (!isFinite(v) || v <= 0) return null;
+    return v;
+  } catch (e) { return null; }
+}
+
+function fetchStockPrice(symbol, vs) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  var cur = priceDefaultVs(vs);
+  cur = String(cur).trim().toUpperCase();
+  if (MAIN_CURRENCIES.indexOf(cur) === -1) cur = 'EUR';
+  var key = priceCacheKey('STOCK:' + sym, cur);
+  var now = Date.now();
+  var cached = priceCache[key];
+  if (cached && (now - cached.at) < PRICE_CACHE_TTL_MS && isFinite(Number(cached.price)) && Number(cached.price) > 0) {
+    return Promise.resolve(Number(cached.price));
+  }
+  var sq = stooqSymbol(sym);
+  if (!sq) return Promise.resolve(cached && cached.price > 0 ? Number(cached.price) : null);
+  var url = 'https://stooq.com/q/l/?s=' + encodeURIComponent(sq) + '&f=sd2t2ohlcv&h&e=csv';
+  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : null;
+  if (!capturedFetch) {
+    if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Promise.resolve(Number(cached.price));
+    return Promise.resolve(null);
+  }
+  return capturedFetch(url).then(function (res) {
+    if (!res.ok) throw new Error('price-http-' + res.status);
+    return res.text();
+  }).then(function (csv) {
+    var usd = parseStooqClose(csv);
+    if (!isFinite(usd) || usd <= 0) {
+      if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Number(cached.price);
+      return null;
+    }
+    if (cur === 'USD') {
+      priceCache[key] = { price: usd, at: Date.now() };
+      return usd;
+    }
+    return fetchEcbRate(todayStr(), 'USD', cur).then(function (r) {
+      var v = usd * Number(r.rate);
+      if (!isFinite(v) || v <= 0) {
+        if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Number(cached.price);
+        return null;
+      }
+      priceCache[key] = { price: v, at: Date.now() };
+      return v;
+    }, function () {
+      if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Number(cached.price);
+      return null;
+    });
+  }).then(null, function () {
+    if (cached && isFinite(Number(cached.price)) && Number(cached.price) > 0) return Number(cached.price);
+    return null;
+  });
+}
+
+function fetchLivePrice(symbol, vs, kind) {
   var sym = String(symbol || '').trim().toUpperCase();
   var cur = priceDefaultVs(vs);
   cur = String(cur).trim().toUpperCase();
@@ -1015,6 +1758,9 @@ function fetchLivePrice(symbol, vs) {
   // (1) Manual override wins — no network.
   var override = priceOverrideFor(sym);
   if (override !== null) return Promise.resolve(override);
+  var kd = (typeof kind === 'string') ? kind.trim().toLowerCase() : '';
+  if (kd === 'stock') return fetchStockPrice(sym, cur);
+  if (kd === 'custom' || kd === 'cash') return Promise.resolve(null);
   // (3a) Unknown ticker: null immediately, never throws, no network.
   var id = SYMBOL_MAP[sym];
   if (!id) return Promise.resolve(null);
@@ -1077,7 +1823,7 @@ function fetchLivePrice(symbol, vs) {
   });
 }
 
-function refreshAllPrices(symbols, vs) {
+function refreshAllPrices(symbols, vs, kinds) {
   var cur = priceDefaultVs(vs);
   var seen = {};
   var uniq = [];
@@ -1087,9 +1833,20 @@ function refreshAllPrices(symbols, vs) {
     seen[sym] = true;
     uniq.push(sym);
   });
+  function kindFor(sym) {
+    if (!kinds) return undefined;
+    if (typeof kinds === 'function') { try { return kinds(sym); } catch (e) { return undefined; } }
+    if (typeof kinds === 'object') {
+      if (Object.prototype.hasOwnProperty.call(kinds, sym)) return kinds[sym];
+      var up = String(sym).toUpperCase();
+      var ks = Object.keys(kinds);
+      for (var i = 0; i < ks.length; i++) if (String(ks[i]).toUpperCase() === up) return kinds[ks[i]];
+    }
+    return undefined;
+  }
   var out = {};
   var jobs = uniq.map(function (sym) {
-    return fetchLivePrice(sym, cur).then(function (p) {
+    return fetchLivePrice(sym, cur, kindFor(sym)).then(function (p) {
       out[sym] = p;
     });
   });
@@ -1118,7 +1875,7 @@ if (typeof window !== 'undefined') {
 // DOMContentLoaded; render()/refreshPrices() are the recompute+render
 // entry points (also used by tests.html).
 
-var APP_VERSION = '2026-10-06.9';
+var APP_VERSION = '2026-10-08.1';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -1237,10 +1994,26 @@ function heldQtyFor(trades, symbol) {
   var held = 0;
   (trades || []).forEach(function (t) {
     if (!t || String(t.symbol || '').toUpperCase() !== sym) return;
-    var q = Number(t.qty);
-    if (!isFinite(q) || q <= 0) return;
-    if (t.type === 'buy') held += q;
-    else if (t.type === 'sell') held -= q;
+    if (t.type === 'buy' || t.type === 'income') {
+      var qb = Number(t.qty);
+      if (!isFinite(qb) || qb <= 0) return;
+      held += qb;
+    } else if (t.type === 'sell') {
+      var qs = Number(t.qty);
+      if (!isFinite(qs) || qs <= 0) return;
+      held -= qs;
+    } else if (t.type === 'expense') {
+      if (t.qty === undefined || t.qty === null || String(t.qty).trim() === '') return;
+      var qe = Number(t.qty);
+      if (!isFinite(qe) || qe <= 0) return;
+      held -= qe;
+    } else if (t.type === 'transfer') {
+      var qt = Number(t.qty);
+      if (!isFinite(qt) || qt <= 0) return;
+      var nft = (t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee);
+      if (!isFinite(nft) || nft < 0) nft = 0;
+      held -= nft; // global net: out+in cancel except on-chain fee
+    }
   });
   return held < 0 ? 0 : held;
 }
@@ -1284,7 +2057,7 @@ function statCard(label, text, raw) {
   return d;
 }
 
-function renderSummaryCards(st, rows) {
+function renderSummaryCards(st, rows, dtradesOpt) {
   var main = st.settings.mainCurrency;
   var mv = 0;
   var un = 0;
@@ -1293,7 +2066,6 @@ function renderSummaryCards(st, rows) {
   var mvKnown = false;
   var unKnown = false;
   var hasRealized = false;
-  var costKnown = 0; // remaining cost basis of positions with known prices
   rows.forEach(function (p) {
     rz += p.realized;
     if (Math.abs(p.realized || 0) > 1e-9) hasRealized = true;
@@ -1304,8 +2076,37 @@ function renderSummaryCards(st, rows) {
     pl += p.totalPL;
     if (p.marketValue !== null) { mv += p.marketValue; mvKnown = true; }
     if (p.unrealized !== null) { un += p.unrealized; unKnown = true; }
-    if (p.marketValue !== null && p.unrealized !== null) costKnown += p.marketValue - p.unrealized;
   });
+  // Lifetime cost denominator (consistent with computePositions returnPct):
+  // sum of buy+income cost for symbols with known P&L. Falls back to
+  // remaining-cost when trade history is unavailable (tests/native).
+  var lifetime = 0;
+  try {
+    var dtr = dtradesOpt || convertTrades(st.trades, main);
+    var buyBySym = {};
+    dtr.forEach(function (t) {
+      if (!t || (t.type !== 'buy' && t.type !== 'income')) return;
+      var s = String(t.symbol || '').toUpperCase();
+      if (!s) return;
+      var q = Number(t.qty);
+      if (!isFinite(q) || q <= 0) return;
+      var nn = normalizeTrade(t);
+      buyBySym[s] = (buyBySym[s] || 0) + nn.totalMain + nn.feeMain;
+    });
+    var knownSyms = {};
+    rows.forEach(function (p) {
+      if (p.unrealized !== null || Math.abs(p.realized || 0) > 1e-9) knownSyms[p.symbol] = true;
+    });
+    Object.keys(buyBySym).forEach(function (s) { if (knownSyms[s]) lifetime += buyBySym[s]; });
+  } catch (e) { lifetime = 0; }
+  if (!(lifetime > 0)) {
+    // Fallback: remaining cost (old behaviour) so empty/new portfolios still paint.
+    rows.forEach(function (p) {
+      if (p.marketValue !== null && p.unrealized !== null) lifetime += p.marketValue - p.unrealized;
+    });
+    // If fallback yields 0 but we have realized (e.g. closed, price unknown), use it as denominator guard below.
+    if (!(lifetime > 0)) lifetime = 0;
+  }
   var plKnown = unKnown || hasRealized;
   var tb = document.getElementById('tb-totals');
   if (tb) {
@@ -1325,7 +2126,7 @@ function renderSummaryCards(st, rows) {
     host.appendChild(p);
     return;
   }
-  var ret = costKnown > 0 ? ((un + rz) / costKnown) * 100 : null;
+  var ret = lifetime > 0 ? ((un + rz) / lifetime) * 100 : null;
   [['Value', mvKnown ? fmtMoney(mv, main) : '—', mvKnown ? mv : null],
    ['Unrealized', unKnown ? fmtMoney(un, main) : '—', unKnown ? un : null],
    ['Realized', fmtMoney(rz, main), rz],
@@ -1361,18 +2162,35 @@ function renderAccounts(st) {
   // Display conversion: native amounts stay in stone; everything shown is
   // converted into the CURRENT main at historical ECB rates (cached).
   var dtrades = convertTrades(st.trades, main);
-  // AGGREGATE-BEATS-GLOBAL: grand totals are the SUM of the per-account
-  // computePositions runs (same method), never a separate global all-trades
-  // engine run. Each account's run is computed once here and reused for its
-  // card below, so cards and totals agree by construction.
-  var perAcctRows = accounts.map(function (acc) {
-    return computePositions(accountTrades({ trades: dtrades }, acc.id), livePrices, method);
-  });
+  // Joint portfolio engine: one date-ordered pass keeps per-account cost
+  // queues separate (so AGGREGATE-BEATS-GLOBAL holds for buy/sell), while
+  // transfers move basis from source to dest at the source's basis — the
+  // on-chain network fee + any fiat fee land as real losses. Each account's
+  // rows are read from the joint run and reused for its card below, so
+  // cards and grand totals agree by construction.
+  var pf = null;
+  try { pf = computePortfolio(dtrades, livePrices, method); } catch (e) { pf = null; }
+  var perAcctRows;
+  if (pf && pf.byAccount) {
+    perAcctRows = accounts.map(function (acc) {
+      var m = pf.byAccount[acc.id];
+      if (!m) return [];
+      var arr = [];
+      m.forEach(function (r) { arr.push(r); });
+      arr.sort(function (a, b) { return a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0; });
+      return arr;
+    });
+  } else {
+    // Fallback: independent per-account runs (no transfers in legacy data).
+    perAcctRows = accounts.map(function (acc) {
+      return computePositions(accountTrades({ trades: dtrades }, acc.id), livePrices, method);
+    });
+  }
   var grandRows = [];
   perAcctRows.forEach(function (rows) {
     rows.forEach(function (r) { grandRows.push(r); });
   });
-  renderSummaryCards(st, grandRows);
+  renderSummaryCards(st, grandRows, dtrades);
   host.innerHTML = '';
   var landing = document.getElementById('landing');
   var hero = document.getElementById('hero');
@@ -1402,6 +2220,8 @@ function renderAccounts(st) {
     card.className = 'account-card';
     card.setAttribute('data-account', acc.id);
     card.setAttribute('data-account-nav', acc.id);
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('role', 'link');
     card.setAttribute('aria-label', 'Open ' + acc.name + ', ' + String(acc.ticker).toUpperCase());
     var avatar = document.createElement('span');
     avatar.className = 'acct-avatar';
@@ -1575,24 +2395,65 @@ function sectionTitle(text) {
   return h;
 }
 
-function tradeBlock(t, main) {
+function fmtFeeAmount(t) {
+  var f = Number(t.fee);
+  if (!(isFinite(f) && f > 0)) return '—';
+  var code = String(t.feeCurrency || t.currency || '').toUpperCase();
+  var fiatCodes = ['EUR', 'USD', 'GBP', 'CHF', 'RON', 'USDC', 'USDT', 'DAI', 'JPY', 'CAD', 'AUD'];
+  if (fiatCodes.indexOf(code) !== -1 || /^[A-Z]{3}$/.test(code)) {
+    // fiat-like: money; crypto-like fee (BTC/ETH) would be caught below? Keep money for 3-letter fiat, qty for longer crypto? Simple: money for fiat list, qty otherwise.
+    if (['EUR', 'USD', 'GBP', 'CHF', 'RON', 'JPY', 'CAD', 'AUD'].indexOf(code) !== -1) {
+      try { return moneyFmt(code).format(f); } catch (e) { return fmtQty(f) + ' ' + code; }
+    }
+  }
+  return fmtQty(f) + ' ' + code;
+}
+
+function tradeTypeMeta(type) {
+  if (type === 'sell') return { label: 'Sell', cls: 'side-sell' };
+  if (type === 'transfer') return { label: 'Transfer', cls: 'side-transfer' };
+  if (type === 'income') return { label: 'Income', cls: 'side-income' };
+  if (type === 'expense') return { label: 'Expense', cls: 'side-expense' };
+  return { label: 'Buy', cls: 'side-buy' };
+}
+
+function tradeBlock(t, main, accountNameById) {
   var n = normalizeTrade(t);
   var box = document.createElement('article');
   box.className = 'trade-block';
+  box.setAttribute('data-trade', t.id || '');
   var head = document.createElement('div');
   head.className = 'trade-head';
+  var meta = tradeTypeMeta(t.type);
   var side = document.createElement('span');
-  side.className = 'side ' + (t.type === 'sell' ? 'side-sell' : 'side-buy');
-  side.textContent = t.type === 'sell' ? 'Sell' : 'Buy';
+  side.className = 'side ' + meta.cls;
+  side.textContent = meta.label;
   head.appendChild(side);
   var what = document.createElement('span');
   what.className = 'trade-what';
-  what.textContent = fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase();
+  var qtyTxt = (t.qty === undefined || t.qty === null || String(t.qty).trim() === '') ? '' : fmtQty(t.qty) + ' ';
+  what.textContent = qtyTxt + String(t.symbol || '').toUpperCase();
+  if (t.type === 'transfer' && t.toAccountId && accountNameById) {
+    try {
+      var fn = accountNameById(t.accountId);
+      var tn = accountNameById(t.toAccountId);
+      if (fn || tn) what.textContent += ' · ' + (fn || '') + ' → ' + (tn || '');
+    } catch (e) { /* ignore */ }
+  }
+  if (t.swapId) what.textContent += ' · swap';
   head.appendChild(what);
   var when = document.createElement('span');
   when.className = 'trade-when muted';
   when.textContent = t.date || '';
   head.appendChild(when);
+  var edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'quiet trade-edit';
+  edit.textContent = '✎';
+  edit.setAttribute('data-edit', t.id || '');
+  edit.setAttribute('aria-label', 'Edit trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
+  edit.addEventListener('click', function () { openEditTrade(edit.getAttribute('data-edit')); });
+  head.appendChild(edit);
   var del = document.createElement('button');
   del.type = 'button';
   del.className = 'quiet danger trade-del';
@@ -1602,8 +2463,34 @@ function tradeBlock(t, main) {
   del.addEventListener('click', function () { deleteTrade(del.getAttribute('data-del')); });
   head.appendChild(del);
   box.appendChild(head);
-  box.appendChild(statRow('Paid', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
-  box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+  if (t.type === 'transfer') {
+    var netQ = Number(t.qty) - ((t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee));
+    box.appendChild(statRow('Moved', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
+    if (Number(t.networkFee) > 0) box.appendChild(statRow('Network fee', fmtQty(t.networkFee) + ' ' + String(t.symbol || '').toUpperCase(), t.networkFee, false));
+    box.appendChild(statRow('Received', fmtQty(netQ) + ' ' + String(t.symbol || '').toUpperCase(), netQ, false));
+    if ((Number(t.total) > 0 || Number(t.fee) > 0)) {
+      box.appendChild(statRow('Cash cost', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+    }
+  } else if (t.type === 'income') {
+    box.appendChild(statRow('Received', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
+    if (Number(t.total) > 0) {
+      box.appendChild(statRow('Value', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
+      box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+    } else {
+      box.appendChild(statRow('Value', '— (free)', null, false));
+    }
+  } else if (t.type === 'expense') {
+    if (t.qty !== undefined && t.qty !== null && String(t.qty).trim() !== '') {
+      box.appendChild(statRow('Lost', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
+    }
+    if (t.total !== undefined && t.total !== null && String(t.total).trim() !== '' && Number(t.total) > 0) {
+      box.appendChild(statRow('Cash lost', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
+      box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+    }
+  } else {
+    box.appendChild(statRow('Paid', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
+    box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+  }
   var rate = document.createElement('div');
   rate.className = 'stat-row rate-line';
   rate.setAttribute('data-label', 'Rate');
@@ -1616,10 +2503,8 @@ function tradeBlock(t, main) {
   rate.appendChild(rl);
   rate.appendChild(rv);
   box.appendChild(rate);
-  var feeTxt = (Number(t.fee) > 0)
-    ? (fmtQty(t.fee) + ' ' + String(t.feeCurrency || t.currency || '').toUpperCase())
-    : '—';
-  if (n.feeFxAssumedSameRate) feeTxt += ' *';
+  var feeTxt = fmtFeeAmount(t);
+  if (n.feeFxAssumedSameRate && feeTxt !== '—') feeTxt += ' *';
   var feeRow = statRow('Fee', feeTxt, t.fee, false);
   if (n.feeFxAssumedSameRate) feeRow.title = 'Fee converted at the trade FX rate (*)';
   box.appendChild(feeRow);
@@ -1638,7 +2523,15 @@ function renderAccountDetail(st, id) {
   var main = st.settings.mainCurrency;
   var method = st.settings.costMethod;
   var dtrades = convertTrades(st.trades, main);
-  var rows = computePositions(accountTrades({ trades: dtrades }, acc.id), livePrices, method);
+  var rows = [];
+  try {
+    var pfDet = computePortfolio(dtrades, livePrices, method);
+    var mDet = pfDet.byAccount[id];
+    if (mDet) mDet.forEach(function (r) { rows.push(r); });
+    rows.sort(function (a, b) { return a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0; });
+  } catch (e) {
+    rows = computePositions(accountTrades({ trades: dtrades }, acc.id), livePrices, method);
+  }
   var atrades = accountTrades({ trades: dtrades }, acc.id);
   host.innerHTML = '';
   var head = document.createElement('div');
@@ -1694,7 +2587,20 @@ function renderAccountDetail(st, id) {
     if (r.unrealized !== null) { un += r.unrealized; unKnown = true; }
   });
   var cost = mv - un;
-  var ret = (mvKnown && unKnown && cost > 0) ? ((un + rz) / cost) * 100 : null;
+  var ret = null;
+  // Lifetime return: realized+unrealized vs lifetime buy+income cost (consistent with overview).
+  var lifetimeForRet = 0;
+  try {
+    atrades.forEach(function (t) {
+      if (!t || (t.type !== 'buy' && t.type !== 'income')) return;
+      var cn = normalizeTrade(t);
+      // For transfers-in, cost is already in dest's buy-like inflow? No: transfers carry basis via joint engine, but lifetime here should count original buys+income only (transfers move, not new money).
+      // atrades includes transfer-in with no total (total 0) so it adds 0 — safe.
+      lifetimeForRet += cn.totalMain + cn.feeMain;
+    });
+  } catch (e) { lifetimeForRet = 0; }
+  if (lifetimeForRet <= 0) lifetimeForRet = cost; // fallback to remaining (closed edge handled below)
+  if (mvKnown && unKnown && lifetimeForRet > 0) ret = ((un + rz) / lifetimeForRet) * 100;
   // Holding first, then worth, market, cost, gains: Quantity, Value,
   // Live price, Average entry, Unrealized, Realized, Total P&L, Return.
   // (Single ticker per account, so rows[0] is the position.)
@@ -1704,16 +2610,18 @@ function renderAccountDetail(st, id) {
   var pos = rows.length ? rows[0] : null;
   var closed = !!(pos && pos.qtyHeld === 0);
   var lifetimeCost = 0;
-  if (closed) {
+  if (closed || true) {
     atrades.forEach(function (t) {
-      if (!t || t.type !== 'buy') return;
+      if (!t || (t.type !== 'buy' && t.type !== 'income')) return;
       var cn = normalizeTrade(t);
       lifetimeCost += cn.totalMain + cn.feeMain;
     });
-    var closedFlag = document.createElement('p');
-    closedFlag.className = 'muted closed-flag';
-    closedFlag.textContent = 'Closed — nothing held.';
-    host.appendChild(closedFlag);
+    if (closed) {
+      var closedFlag = document.createElement('p');
+      closedFlag.className = 'muted closed-flag';
+      closedFlag.textContent = 'Closed — nothing held.';
+      host.appendChild(closedFlag);
+    }
   }
   if (pos) stats.appendChild(statCard('Quantity', fmtQty(pos.qtyHeld) + ' ' + String(pos.symbol || '').toUpperCase(), pos.qtyHeld));
   stats.appendChild(statCard('Value', mvKnown ? fmtMoney(mv, main) : (atrades.length ? '—' : 'New'), mvKnown ? mv : null));
@@ -1735,8 +2643,9 @@ function renderAccountDetail(st, id) {
   host.appendChild(stats);
   if (atrades.length) {
     host.appendChild(sectionTitle('Trades'));
+    var nameById = function (aid) { var a = accountById(st, aid); return a ? a.name : ''; };
     ledgerSortByDate(atrades).reverse().forEach(function (t) {
-      host.appendChild(tradeBlock(t, main));
+      host.appendChild(tradeBlock(t, main, nameById));
     });
   } else {
     var muted = document.createElement('p');
@@ -1786,7 +2695,9 @@ function accountTrades(st, accountId) {
   if (typeof st === 'string' && accountId === undefined) {
     return accountTrades(loadState(), st);
   }
-  return ((st && st.trades) || []).filter(function (t) { return t && t.accountId === accountId; });
+  return ((st && st.trades) || []).filter(function (t) {
+    return t && (t.accountId === accountId || t.toAccountId === accountId);
+  });
 }
 
 function fxBadgeText(t) {
@@ -1805,14 +2716,20 @@ function fxBadgeText(t) {
   return bits;
 }
 
-function createAccount(name, ticker) {
+function createAccount(name, ticker, kind, extra) {
   var st = loadState();
   var tk = String(ticker || '').trim().toUpperCase();
   var nm = String(name || '').trim();
   if (!tk) { showBanner('Ticker is required (e.g. BTC).'); return null; }
   if (!/^[A-Z0-9._-]{1,12}$/.test(tk)) { showBanner('Ticker looks invalid — letters/numbers, up to 12 chars.'); return null; }
   if (!nm) nm = tk; // name defaults to ticker
-  var acc = { id: uid(), name: nm, ticker: tk, createdAt: new Date().toISOString() };
+  var kd = (typeof kind === 'string' && kind) ? kind.trim().toLowerCase() : 'crypto';
+  if (kd !== 'crypto' && kd !== 'stock' && kd !== 'custom' && kd !== 'cash') kd = 'crypto';
+  var acc = { id: uid(), name: nm, ticker: tk, kind: kd, createdAt: new Date().toISOString() };
+  if (extra && typeof extra === 'object') {
+    if (typeof extra.address === 'string' && extra.address.trim() !== '') acc.address = extra.address.trim().slice(0, 128);
+    if (typeof extra.note === 'string' && extra.note.trim() !== '') acc.note = extra.note.trim().slice(0, 280);
+  }
   st.accounts.push(acc);
   if (!saveStateGuarded(st)) return null;
   clearBanner();
@@ -2069,6 +2986,10 @@ function buildAccountDialog() {
     '<input id="na-name" autocomplete="off" spellcheck="false" placeholder="e.g. Cold wallet">' +
     '<label for="na-ticker">Ticker</label>' +
     '<input id="na-ticker" autocomplete="off" spellcheck="false" placeholder="e.g. BTC">' +
+    '<label for="na-kind">Asset type</label>' +
+    '<select id="na-kind"><option value="crypto">Crypto (live via CoinGecko)</option><option value="stock">Stock / ETF (live via Stooq)</option><option value="custom">Custom (manual price only)</option><option value="cash">Cash</option></select>' +
+    '<label for="na-address">Wallet address / note (optional)</label>' +
+    '<input id="na-address" autocomplete="off" spellcheck="false" placeholder="e.g. bc1q… or broker">' +
     '<p id="na-error" class="banner-error" role="alert" hidden></p>' +
     '<button id="na-create" class="primary" type="button">Create account</button>';
   host.appendChild(wrap);
@@ -2078,10 +2999,11 @@ function buildAccountDialog() {
     if (!tk) { naError('Ticker is required (e.g. BTC).'); return; }
     if (!/^[A-Z0-9._-]{1,12}$/.test(tk)) { naError('Ticker looks invalid — letters/numbers, up to 12 chars.'); return; }
     var hadTrades = (loadState().trades || []).length > 0;
-    var acc = createAccount(uiVal('na-name', ''), tk);
+    var acc = createAccount(uiVal('na-name', ''), tk, uiVal('na-kind', 'crypto'), { address: uiVal('na-address', '') });
     if (!acc) { naError('Could not create the account — storage unavailable.'); return; }
     uiSetVal('na-name', '');
     uiSetVal('na-ticker', '');
+    uiSetVal('na-address', '');
     closeDialog('account-dialog');
     // Story guidance: first account + no trades yet → continue straight
     // to Step 2 instead of leaving the user on a quiet screen.
@@ -2121,23 +3043,30 @@ function buildTradeForm() {
   var wrap = document.createElement('div');
   wrap.innerHTML =
     '<form id="trade-form">' +
-    '<label for="t-side">Side</label>' +
-    '<select id="t-side"><option value="buy">Buy</option><option value="sell">Sell</option></select>' +
+    '<label for="t-side">Type</label>' +
+    '<select id="t-side"><option value="buy">Buy</option><option value="sell">Sell</option><option value="transfer">Transfer (self move + gas)</option><option value="income">Income (reward / airdrop)</option><option value="expense">Expense / fee</option><option value="swap">Swap (coin → coin)</option></select>' +
     '<div id="t-account-row"><label for="t-account">Account</label>' +
     '<select id="t-account"></select></div>' +
+    '<div id="t-toaccount-row" hidden><label for="t-toaccount">To account</label>' +
+    '<select id="t-toaccount"></select><p class="fld-hint" id="t-toaccount-hint">Transfer moves cost basis — only the network + fiat fees count as losses.</p></div>' +
     '<div class="fld-locked"><span class="fld-label">Symbol (locked to account)</span> <span id="t-symbol-locked" role="status"></span></div>' +
-    '<label for="t-qty">Quantity</label>' +
-    '<input id="t-qty" inputmode="decimal" placeholder="e.g. 1">' +
-    '<label for="t-total">Total (native currency)</label>' +
-    '<input id="t-total" inputmode="decimal" placeholder="e.g. 50000">' +
-    '<label for="t-currency">Currency</label>' +
-    '<select id="t-currency">' + ccyOptions('EUR') + '</select>' +
+    '<div id="t-qty-row"><label for="t-qty" id="t-qty-label">Quantity</label>' +
+    '<input id="t-qty" inputmode="decimal" placeholder="e.g. 1"></div>' +
+    '<div id="t-toqty-row" hidden><label for="t-toqty">Received quantity</label>' +
+    '<input id="t-toqty" inputmode="decimal" placeholder="e.g. 15.2"></div>' +
+    '<div id="t-total-row"><label for="t-total" id="t-total-label">Total (native currency)</label>' +
+    '<input id="t-total" inputmode="decimal" placeholder="e.g. 50000"></div>' +
+    '<div id="t-currency-row"><label for="t-currency">Currency</label>' +
+    '<select id="t-currency">' + ccyOptions('EUR') + '</select></div>' +
     '<label for="t-custom-ccy" id="t-custom-ccy-label" hidden>Custom currency code</label>' +
     '<input id="t-custom-ccy" autocomplete="off" spellcheck="false" placeholder="Code, e.g. JPY" hidden>' +
     '<label for="t-date">Date</label>' +
     '<input id="t-date" type="date">' +
     '<details class="adv"><summary>Details</summary>' +
-    '<label for="t-fee">Fee</label>' +
+    '<div id="t-networkfee-row" hidden><label for="t-networkfee">Network fee (in same asset)</label>' +
+    '<input id="t-networkfee" inputmode="decimal" placeholder="e.g. 0.0005">' +
+    '<p class="fld-hint">On-chain gas / miner fee taken from the moved amount. Tracked as a real loss.</p></div>' +
+    '<label for="t-fee">Fee (in money)</label>' +
     '<input id="t-fee" inputmode="decimal" placeholder="e.g. 0">' +
     '<label for="t-feeccy">Fee currency</label>' +
     '<select id="t-feeccy">' + ccyOptions('EUR', false) + '</select>' +
@@ -2149,13 +3078,19 @@ function buildTradeForm() {
     '<input id="t-manual-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '</details>' +
     '<p id="t-error" class="banner-error" role="alert" hidden></p>' +
-    '<button class="primary" type="submit">Add trade</button>' +
+    '<button class="primary" type="submit" id="t-submit">Add trade</button>' +
     '</form>';
   host.appendChild(wrap);
   var form = document.getElementById('trade-form');
   form.addEventListener('submit', onTradeSubmit);
   var acctSel = document.getElementById('t-account');
-  if (acctSel) acctSel.addEventListener('change', syncLockedSymbol);
+  if (acctSel) {
+    acctSel.addEventListener('change', function () { syncLockedSymbol(); syncTradeTypeUI(); });
+  }
+  var sideSel = document.getElementById('t-side');
+  if (sideSel) sideSel.addEventListener('change', syncTradeTypeUI);
+  var toSel = document.getElementById('t-toaccount');
+  if (toSel) toSel.addEventListener('change', function () { /* hint only */ });
   var ccy = document.getElementById('t-currency');
   var custom = document.getElementById('t-custom-ccy');
   var feeccy = document.getElementById('t-feeccy');
@@ -2178,6 +3113,62 @@ function buildTradeForm() {
   custom.addEventListener('input', function () {
     if (ccy.value === 'CUSTOM') ensureCustomFeeOption(String(custom.value || '').trim().toUpperCase());
   });
+  syncTradeTypeUI();
+}
+
+function syncTradeTypeUI() {
+  var sideEl = document.getElementById('t-side');
+  var type = sideEl ? sideEl.value : 'buy';
+  function setHidden(id, hide) { var el = document.getElementById(id); if (el) el.hidden = !!hide; }
+  function setLabel(id, txt) { var el = document.getElementById(id); if (el) el.textContent = txt; }
+  var isTransfer = type === 'transfer';
+  var isSwap = type === 'swap';
+  var isIncome = type === 'income';
+  var isExpense = type === 'expense';
+  var isBuySell = type === 'buy' || type === 'sell';
+  setHidden('t-toaccount-row', !(isTransfer || isSwap));
+  setHidden('t-toqty-row', !isSwap);
+  setHidden('t-networkfee-row', !(isTransfer));
+  // Total row: optional for income/transfer/expense, required for buy/sell/swap fiat value
+  setHidden('t-total-row', false);
+  setHidden('t-currency-row', false);
+  if (isTransfer) {
+    setLabel('t-qty-label', 'Quantity to move');
+    setLabel('t-total-label', 'Fiat fee value (optional, leave 0)');
+  } else if (isSwap) {
+    setLabel('t-qty-label', 'From quantity (you send)');
+    setLabel('t-total-label', 'Fiat value of swap (for tax, e.g. 50000)');
+  } else if (isIncome) {
+    setLabel('t-qty-label', 'Quantity received');
+    setLabel('t-total-label', 'Market value at receipt (optional, 0 = free)');
+  } else if (isExpense) {
+    setLabel('t-qty-label', 'Quantity lost (optional if cash-only)');
+    setLabel('t-total-label', 'Cash lost (optional if crypto-only)');
+  } else {
+    setLabel('t-qty-label', 'Quantity');
+    setLabel('t-total-label', 'Total (native currency)');
+  }
+  // Rebuild to-account options: transfer = same ticker only, swap = different ticker preferred
+  try {
+    var st = loadState();
+    var fromId = uiVal('t-account', '');
+    var fromAcc = accountById(st, fromId);
+    var toSel = document.getElementById('t-toaccount');
+    if (toSel && (isTransfer || isSwap)) {
+      var cur = toSel.value;
+      toSel.innerHTML = '';
+      (st.accounts || []).forEach(function (a) {
+        if (a.id === fromId) return;
+        if (isTransfer && fromAcc && String(a.ticker).toUpperCase() !== String(fromAcc.ticker).toUpperCase()) return; // same asset only
+        var o = document.createElement('option');
+        o.value = a.id;
+        o.textContent = a.name + ' · ' + String(a.ticker).toUpperCase();
+        toSel.appendChild(o);
+      });
+      if (cur) toSel.value = cur;
+    }
+  } catch (e) { /* ignore */ }
+  void isBuySell; void isIncome; void isExpense;
 }
 
 // --- Account-bound trade dialog (Task 3) ---
@@ -2194,7 +3185,9 @@ function syncLockedSymbol() {
   locked.textContent = acc ? String(acc.ticker).toUpperCase() : '';
 }
 
-function openPrefillTrade(accountId, lockIt) {
+var editingTradeId = null;
+
+function openPrefillTrade(accountId, lockIt, presetType) {
   var st = loadState();
   var accounts = Array.isArray(st.accounts) ? st.accounts : [];
   if (!accounts.length) {
@@ -2205,6 +3198,7 @@ function openPrefillTrade(accountId, lockIt) {
     }
     return null;
   }
+  editingTradeId = null;
   var target = ((typeof accountId === 'string' && accountId.length > 0) && accountById(st, accountId)) ||
     accounts[0];
   buildTradeForm(); // ensure the form exists (init normally builds it)
@@ -2219,16 +3213,91 @@ function openPrefillTrade(accountId, lockIt) {
     });
     sel.value = target.id;
   }
+  var sideSel = document.getElementById('t-side');
+  if (sideSel && presetType && TRADE_TYPES.concat(['swap']).indexOf(presetType) !== -1) sideSel.value = presetType;
   // Locked context (e.g. opened from an account page): the account is fixed,
   // so the select is hidden. From home the select stays visible.
   var row = document.getElementById('t-account-row');
   if (row) row.style.display = (lockIt && target) ? 'none' : '';
   syncLockedSymbol();
+  syncTradeTypeUI();
+  var submitBtn = document.getElementById('t-submit');
+  if (submitBtn) { submitBtn.textContent = 'Add trade'; submitBtn.disabled = false; }
+  var titleEl = document.getElementById('trade-dialog-title');
+  if (titleEl) titleEl.textContent = 'Add trade';
   var d = document.getElementById('t-date');
   if (d && !d.value) d.value = todayStr();
   tradeFormError(null);
   openDialog('trade-dialog');
   return target;
+}
+
+function openEditTrade(tradeId) {
+  var st = loadState();
+  var tr = null;
+  (st.trades || []).forEach(function (t) { if (t && t.id === tradeId) tr = t; });
+  if (!tr) return;
+  var accounts = Array.isArray(st.accounts) ? st.accounts : [];
+  if (!accounts.length) return;
+  buildTradeForm();
+  editingTradeId = tradeId;
+  var sel = document.getElementById('t-account');
+  if (sel) {
+    sel.innerHTML = '';
+    accounts.forEach(function (a) {
+      var opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name + ' · ' + String(a.ticker).toUpperCase();
+      sel.appendChild(opt);
+    });
+    sel.value = tr.accountId || accounts[0].id;
+  }
+  var row = document.getElementById('t-account-row');
+  if (row) row.style.display = '';
+  var sideSel = document.getElementById('t-side');
+  if (sideSel) {
+    var tt = tr.type === 'buy' || tr.type === 'sell' || tr.type === 'transfer' || tr.type === 'income' || tr.type === 'expense' ? tr.type : 'buy';
+    sideSel.value = tt;
+  }
+  syncLockedSymbol();
+  syncTradeTypeUI();
+  uiSetVal('t-qty', tr.qty !== undefined && tr.qty !== null ? String(tr.qty) : '');
+  uiSetVal('t-total', tr.total !== undefined && tr.total !== null ? String(tr.total) : '');
+  try {
+    var cSel = document.getElementById('t-currency');
+    if (cSel && tr.currency) {
+      var cu = String(tr.currency).toUpperCase();
+      var has = Array.prototype.some.call(cSel.options, function (o) { return o.value === cu; });
+      if (has) cSel.value = cu;
+      else { cSel.value = 'CUSTOM'; cSel.dispatchEvent(new Event('change', { bubbles: true })); uiSetVal('t-custom-ccy', cu); }
+    }
+  } catch (e) { /* ignore */ }
+  uiSetVal('t-date', tr.date || todayStr());
+  uiSetVal('t-fee', tr.fee !== undefined && tr.fee !== null ? String(tr.fee) : '');
+  try {
+    var fSel = document.getElementById('t-feeccy');
+    if (fSel && tr.feeCurrency) {
+      var fu = String(tr.feeCurrency).toUpperCase();
+      var fh = Array.prototype.some.call(fSel.options, function (o) { return o.value === fu; });
+      if (fh) fSel.value = fu;
+    }
+  } catch (e) { /* ignore */ }
+  uiSetVal('t-note', tr.note || '');
+  uiSetVal('t-networkfee', tr.networkFee !== undefined && tr.networkFee !== null ? String(tr.networkFee) : '');
+  try {
+    var toSel = document.getElementById('t-toaccount');
+    if (toSel && tr.toAccountId) {
+      // ensure options exist for transfer/swap
+      syncTradeTypeUI();
+      toSel.value = tr.toAccountId;
+    }
+  } catch (e) { /* ignore */ }
+  var submitBtn2 = document.getElementById('t-submit');
+  if (submitBtn2) { submitBtn2.textContent = 'Save changes'; submitBtn2.disabled = false; }
+  var titleEl2 = document.getElementById('trade-dialog-title');
+  if (titleEl2) titleEl2.textContent = 'Edit trade';
+  tradeFormError(null);
+  openDialog('trade-dialog');
 }
 
 function tradeFormError(msg) {
@@ -2248,44 +3317,229 @@ function onTradeSubmit(ev) {
   tradeFormError(null);
   var st0 = loadState();
   var main = st0.settings.mainCurrency;
-  var side = uiVal('t-side', 'buy') === 'sell' ? 'sell' : 'buy';
+  var rawSide = uiVal('t-side', 'buy');
+  var side = (rawSide === 'sell' || rawSide === 'transfer' || rawSide === 'income' || rawSide === 'expense' || rawSide === 'swap') ? rawSide : 'buy';
   var list = Array.isArray(st0.accounts) ? st0.accounts : [];
   var acc = accountById(st0, uiVal('t-account', '')) || list[0];
   if (!acc) { tradeFormError('Create your first account to enable Add trade.'); return; }
   var symbol = String(acc.ticker).toUpperCase();
   var accountId = acc.id;
-  var qty = Number(uiVal('t-qty', ''));
-  var total = Number(uiVal('t-total', ''));
+  var submitBtn = document.getElementById('t-submit');
+  function lockSubmit(locked, label) {
+    if (!submitBtn) return;
+    submitBtn.disabled = !!locked;
+    if (label) submitBtn.textContent = label;
+  }
+  var date = uiVal('t-date', '') || todayStr();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { tradeFormError('Date must be YYYY-MM-DD.'); return; }
+  if (!isValidDateStr(date)) { tradeFormError('Date must be YYYY-MM-DD.'); return; }
+  if (isFutureDateStr(date)) { tradeFormError('date cannot be in the future'); return; }
+  var note = uiVal('t-note', '').trim();
+  var manualRateRaw = uiVal('t-manual-rate', '').trim();
+  var manualPriceRaw = uiVal('t-manual-price', '').trim();
+  var manualRate = (manualRateRaw === '') ? null : Number(manualRateRaw);
+  if (manualRate !== null && (!isFinite(manualRate) || manualRate <= 0)) { tradeFormError('Manual rate must be > 0.'); return; }
+  var manualPrice = (manualPriceRaw === '') ? null : Number(manualPriceRaw);
+  if (manualPrice !== null && (!isFinite(manualPrice) || manualPrice <= 0)) { tradeFormError('Manual price must be > 0.'); return; }
+  var isEditing = !!(editingTradeId);
+  // --- Swap: creates a linked sell+buy pair ---
+  if (side === 'swap' && !isEditing) {
+    var toAccSwap = accountById(st0, uiVal('t-toaccount', ''));
+    if (!toAccSwap) { tradeFormError('Pick a destination account for the swap.'); return; }
+    if (toAccSwap.id === accountId) { tradeFormError('Swap needs two different accounts.'); return; }
+    var fromSym = symbol;
+    var toSym = String(toAccSwap.ticker).toUpperCase();
+    if (fromSym === toSym) { tradeFormError('Same asset — use Transfer instead of Swap.'); return; }
+    var fromQty = Number(uiVal('t-qty', ''));
+    var toQty = Number(uiVal('t-toqty', ''));
+    var swapTotal = Number(uiVal('t-total', ''));
+    var ccySelS = uiVal('t-currency', 'EUR');
+    var swapCcy = (ccySelS === 'CUSTOM' ? uiVal('t-custom-ccy', '').trim().toUpperCase() : String(ccySelS).toUpperCase());
+    var feeRawS = uiVal('t-fee', '').trim();
+    var feeS = (feeRawS === '') ? 0 : Number(feeRawS);
+    var feeCcyRawS = uiVal('t-feeccy', '');
+    var feeCcyS = feeCcyRawS ? String(feeCcyRawS).toUpperCase() : swapCcy;
+    if (!feeCcyS || feeCcyS === 'CUSTOM') feeCcyS = swapCcy;
+    if (!isFinite(fromQty) || fromQty <= 0) { tradeFormError('From quantity must be > 0.'); return; }
+    if (!isFinite(toQty) || toQty <= 0) { tradeFormError('Received quantity must be > 0.'); return; }
+    if (!isFinite(swapTotal) || swapTotal <= 0) { tradeFormError('Fiat value must be > 0 (for tax).'); return; }
+    if (!isValidCurrencyCode(swapCcy)) { tradeFormError('Currency code invalid.'); return; }
+    if (!isFinite(feeS) || feeS < 0) { tradeFormError('Fee must be >= 0.'); return; }
+    var heldFrom = 0;
+    try { heldFrom = heldForAccount(st0.trades, accountId, fromSym); } catch (e) { heldFrom = heldQtyFor(accountTrades(st0, accountId), fromSym); }
+    if (fromQty > heldFrom + LEDGER_EPS) { tradeFormError('oversell: max sellable is ' + heldFrom); return; }
+    lockSubmit(true, 'Saving…');
+    function proceedSwap(lock) {
+      var st = loadState();
+      if (manualPrice !== null) {
+        st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
+        // manual live price applies to the received asset
+        st.priceOverrides[toSym] = manualPrice;
+      }
+      var swapId = uid();
+      var sellLeg = { id: uid(), type: 'sell', symbol: fromSym, qty: fromQty, total: swapTotal, currency: swapCcy, date: date, fee: feeS, feeCurrency: feeCcyS, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: accountId, swapId: swapId, createdAt: new Date().toISOString() };
+      var buyLeg = { id: uid(), type: 'buy', symbol: toSym, qty: toQty, total: swapTotal, currency: swapCcy, date: date, fee: 0, feeCurrency: swapCcy, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: toAccSwap.id, swapId: swapId, createdAt: new Date().toISOString() };
+      var e1 = validateTrade(sellLeg, heldFrom);
+      if (e1) { tradeFormError(e1); lockSubmit(false, 'Add trade'); return; }
+      st.trades.push(sellLeg);
+      st.trades.push(buyLeg);
+      if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Add trade'); return; }
+      uiSetVal('t-qty', ''); uiSetVal('t-toqty', ''); uiSetVal('t-total', ''); uiSetVal('t-note', ''); uiSetVal('t-manual-rate', ''); uiSetVal('t-manual-price', '');
+      var dd = document.getElementById('t-date'); if (dd) dd.value = todayStr();
+      tradeFormError(null);
+      lockSubmit(false, 'Add trade');
+      refreshPrices();
+      navTo(accountId);
+      render();
+      closeDialog('trade-dialog');
+    }
+    if (swapCcy === String(main).toUpperCase()) {
+      proceedSwap({ pair: swapCcy + '/' + main, rate: 1, source: '1:1', interpolated: false });
+      return;
+    }
+    if (manualRate !== null) {
+      proceedSwap({ pair: swapCcy + '/' + main, rate: manualRate, source: 'manual', interpolated: false });
+      return;
+    }
+    lockSubmit(true, 'Saving…');
+    fetchEcbRate(date, swapCcy, main).then(function (r) {
+      proceedSwap({ pair: swapCcy + '/' + main, rate: r.rate, source: r.source, interpolated: !!r.interpolated });
+    }, function () {
+      lockSubmit(false, 'Add trade');
+      showBanner('FX rate unavailable for ' + swapCcy + ' → ' + main + ' on ' + date + ' — open “Manual FX rate” and enter a rate to save this trade.');
+      tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
+    });
+    return;
+  }
+  // --- Single-leg types (buy/sell/transfer/income/expense), new or edit ---
+  var qtyRaw = uiVal('t-qty', '');
+  var totalRaw = uiVal('t-total', '');
   var ccySel = uiVal('t-currency', 'EUR');
   var currency = (ccySel === 'CUSTOM' ? uiVal('t-custom-ccy', '').trim().toUpperCase() : String(ccySel).toUpperCase());
-  var date = uiVal('t-date', '') || todayStr();
   var feeRaw = uiVal('t-fee', '').trim();
   var fee = (feeRaw === '') ? 0 : Number(feeRaw);
   var feeCcyRaw = uiVal('t-feeccy', '');
   var feeCurrency = feeCcyRaw ? String(feeCcyRaw).toUpperCase() : currency;
   if (!feeCurrency || feeCurrency === 'CUSTOM') feeCurrency = currency; // harden: CUSTOM literal never persists
-  var note = uiVal('t-note', '').trim();
-  var manualRateRaw = uiVal('t-manual-rate', '').trim();
-  var manualPriceRaw = uiVal('t-manual-price', '').trim();
+  var netRaw = uiVal('t-networkfee', '');
+  var networkFee = (netRaw === undefined || netRaw === null || String(netRaw).trim() === '') ? 0 : Number(netRaw);
+  var toAccId = uiVal('t-toaccount', '');
   if (!symbol || !/^[A-Z0-9._-]{1,12}$/.test(symbol)) { tradeFormError('Account ticker looks invalid.'); return; }
-  if (!isFinite(qty) || qty <= 0) { tradeFormError('Quantity must be > 0.'); return; }
-  if (!isFinite(total) || total < 0) { tradeFormError('Total must be >= 0.'); return; }
-  if (!/^[A-Z]{2,10}$/.test(currency)) { tradeFormError('Currency code invalid — pick one or enter a 2–10 letter code.'); return; }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { tradeFormError('Date must be YYYY-MM-DD.'); return; }
   if (!isFinite(fee) || fee < 0) { tradeFormError('Fee must be >= 0.'); return; }
-  var manualRate = (manualRateRaw === '') ? null : Number(manualRateRaw);
-  if (manualRate !== null && (!isFinite(manualRate) || manualRate <= 0)) { tradeFormError('Manual rate must be > 0.'); return; }
-  var manualPrice = (manualPriceRaw === '') ? null : Number(manualPriceRaw);
-  if (manualPrice !== null && (!isFinite(manualPrice) || manualPrice <= 0)) { tradeFormError('Manual price must be > 0.'); return; }
+  if (!isFinite(networkFee) || networkFee < 0) { tradeFormError('Network fee must be >= 0.'); return; }
+  var qty = (side === 'expense' && String(qtyRaw).trim() === '') ? null : Number(qtyRaw);
+  var total = (String(totalRaw).trim() === '') ? (side === 'buy' || side === 'sell' ? NaN : 0) : Number(totalRaw);
+  // Per-type validation (messages match legacy for buy/sell so tests keep passing).
+  if (side === 'buy' || side === 'sell') {
+    if (!isFinite(qty) || qty <= 0) { tradeFormError('Quantity must be > 0.'); return; }
+    if (!isFinite(total) || total < 0) { tradeFormError('Total must be >= 0.'); return; }
+    if (!isValidCurrencyCode(currency)) { tradeFormError('Currency code invalid — pick one or enter a 2–10 letter code.'); return; }
+  } else if (side === 'transfer') {
+    if (!isFinite(qty) || qty <= 0) { tradeFormError('Quantity must be > 0.'); return; }
+    if (!isFinite(networkFee) || networkFee < 0 || networkFee >= qty) { tradeFormError('Network fee must be >= 0 and < qty.'); return; }
+    if (!toAccId) { tradeFormError('Pick a destination account.'); return; }
+    var toAccT = accountById(st0, toAccId);
+    if (!toAccT) { tradeFormError('Destination account not found.'); return; }
+    if (toAccT.id === accountId) { tradeFormError('Transfer needs two different accounts.'); return; }
+    if (String(toAccT.ticker).toUpperCase() !== symbol) { tradeFormError('Transfer needs the same asset in both accounts — use Swap for different assets.'); return; }
+    if (String(totalRaw).trim() !== '' && (!isFinite(total) || total < 0)) { tradeFormError('Total must be >= 0.'); return; }
+    if (String(totalRaw).trim() !== '' && !isValidCurrencyCode(currency)) { tradeFormError('Currency code invalid.'); return; }
+    if (String(totalRaw).trim() === '') { total = 0; currency = String(main).toUpperCase(); }
+  } else if (side === 'income') {
+    if (!isFinite(qty) || qty <= 0) { tradeFormError('Quantity must be > 0.'); return; }
+    if (String(totalRaw).trim() !== '' && (!isFinite(total) || total < 0)) { tradeFormError('Total must be >= 0.'); return; }
+    if (String(totalRaw).trim() !== '') {
+      if (!isValidCurrencyCode(currency)) { tradeFormError('Currency code invalid.'); return; }
+    } else { total = 0; currency = String(main).toUpperCase(); }
+  } else if (side === 'expense') {
+    var hasQ = !(String(qtyRaw).trim() === '');
+    var hasT = !(String(totalRaw).trim() === '');
+    if (!hasQ && !hasT) { tradeFormError('Expense needs a quantity or a cash amount.'); return; }
+    if (hasQ && (!isFinite(qty) || qty <= 0)) { tradeFormError('Quantity must be > 0.'); return; }
+    if (hasT && (!isFinite(total) || total <= 0)) { tradeFormError('Cash amount must be > 0.'); return; }
+    if (!hasQ) qty = null;
+    if (!hasT) { total = 0; currency = String(main).toUpperCase(); }
+    else if (!isValidCurrencyCode(currency)) { tradeFormError('Currency code invalid.'); return; }
+  }
   var from = currency;
+  // Held checks (directional: source holdings for sell/transfer/expense-qty).
+  try {
+    if (side === 'sell' || side === 'transfer' || (side === 'expense' && qty !== null)) {
+      var heldNeed = side === 'transfer' ? qty : qty;
+      var heldHave = 0;
+      try { heldHave = heldForAccount(st0.trades, accountId, symbol); }
+      catch (e) { heldHave = heldQtyFor(accountTrades(st0, accountId), symbol); }
+      // When editing, add back the old qty if same account+symbol (so saving unchanged passes).
+      if (isEditing) {
+        var oldTr = null;
+        (st0.trades || []).forEach(function (t) { if (t && t.id === editingTradeId) oldTr = t; });
+        if (oldTr && oldTr.accountId === accountId && String(oldTr.symbol).toUpperCase() === symbol) {
+          if (oldTr.type === 'sell' || oldTr.type === 'expense') heldHave += Number(oldTr.qty) || 0;
+          else if (oldTr.type === 'buy' || oldTr.type === 'income') heldHave -= 0; // buys don't reduce held for oversell check of new qty? Actually editing a buy doesn't need held check.
+          else if (oldTr.type === 'transfer' && oldTr.accountId === accountId) heldHave += Number(oldTr.qty) || 0;
+        }
+      }
+      if (side !== 'buy' && side !== 'income' && qty !== null && qty > heldHave + LEDGER_EPS) {
+        tradeFormError('oversell: max sellable is ' + heldHave);
+        return;
+      }
+    }
+  } catch (e) { /* validation continues; engine clamps anyway */ }
   // proceed() re-reads state so a slow ECB fetch cannot clobber newer writes.
   function proceed(lock) {
     var st = loadState();
-    if (manualPrice !== null) {
+    if (manualPrice !== null && (side === 'buy' || side === 'sell')) {
       st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
       st.priceOverrides[symbol] = manualPrice;
     }
-    var trade = {
+    var trade;
+    if (isEditing) {
+      var idx = -1;
+      for (var ii = 0; ii < (st.trades || []).length; ii++) if (st.trades[ii] && st.trades[ii].id === editingTradeId) { idx = ii; break; }
+      if (idx === -1) { tradeFormError('Trade not found — it may have been deleted.'); lockSubmit(false, 'Save changes'); return; }
+      var prev = st.trades[idx];
+      trade = {
+        id: prev.id,
+        type: side,
+        symbol: symbol,
+        qty: qty,
+        total: total,
+        currency: from,
+        date: date,
+        fee: fee,
+        feeCurrency: feeCurrency,
+        note: note,
+        fxLock: lock,
+        accountId: accountId,
+        createdAt: prev.createdAt || new Date().toISOString()
+      };
+      if (side === 'transfer') { trade.toAccountId = toAccId; trade.networkFee = networkFee; }
+      else if (side === 'expense' && qty === null) { delete trade.qty; }
+      if (prev.swapId) trade.swapId = prev.swapId;
+      var errE = validateTrade(trade, 1e18); // structural only; held already checked directionally above
+      if (errE && String(errE).indexOf('oversell') === -1) { tradeFormError(errE); lockSubmit(false, 'Save changes'); return; }
+      // Re-check oversell directionally with fresh state (excluding self).
+      try {
+        var others = (st.trades || []).filter(function (t) { return !t || t.id !== editingTradeId; });
+        if (side === 'sell' || side === 'transfer' || (side === 'expense' && qty !== null)) {
+          var h2 = heldForAccount(others, accountId, symbol);
+          var need2 = qty;
+          if (need2 > h2 + LEDGER_EPS) { tradeFormError('oversell: max sellable is ' + h2); lockSubmit(false, 'Save changes'); return; }
+        }
+      } catch (e2) { /* ignore */ }
+      st.trades[idx] = trade;
+      if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Save changes'); return; }
+      editingTradeId = null;
+      tradeFormError(null);
+      lockSubmit(false, 'Add trade');
+      var sb2 = document.getElementById('t-submit'); if (sb2) sb2.textContent = 'Add trade';
+      var tt2 = document.getElementById('trade-dialog-title'); if (tt2) tt2.textContent = 'Add trade';
+      refreshPrices();
+      render();
+      closeDialog('trade-dialog');
+      return;
+    }
+    trade = {
       id: uid(),
       type: side,
       symbol: symbol,
@@ -2300,34 +3554,50 @@ function onTradeSubmit(ev) {
       accountId: accountId,
       createdAt: new Date().toISOString()
     };
-    var err = validateTrade(trade, heldQtyFor(accountTrades(st, accountId), symbol));
-    if (err) { tradeFormError(err); return; }
+    if (side === 'transfer') { trade.toAccountId = toAccId; trade.networkFee = networkFee; }
+    if (side === 'expense' && qty === null) { delete trade.qty; }
+    var heldForCheck = 1e18;
+    try {
+      if (side === 'sell' || side === 'transfer' || (side === 'expense' && qty !== null)) {
+        heldForCheck = heldForAccount(st.trades, accountId, symbol);
+      }
+    } catch (e3) { heldForCheck = heldQtyFor(accountTrades(st, accountId), symbol); }
+    var err = (side === 'sell' || side === 'transfer' || (side === 'expense' && qty !== null))
+      ? validateTrade(trade, heldForCheck)
+      : validateTrade(trade, 1e18);
+    if (err) { tradeFormError(err); lockSubmit(false, 'Add trade'); return; }
     st.trades.push(trade);
-    if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); return; }
+    if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Add trade'); return; }
     uiSetVal('t-qty', '');
+    uiSetVal('t-toqty', '');
     uiSetVal('t-total', '');
     uiSetVal('t-note', '');
+    uiSetVal('t-networkfee', '');
     uiSetVal('t-manual-rate', '');
     uiSetVal('t-manual-price', '');
     var d = document.getElementById('t-date');
     if (d) d.value = todayStr();
     tradeFormError(null);
+    lockSubmit(false, 'Add trade');
     refreshPrices(); // recompute + render when fresh prices land (renders sync too)
-    navTo(accountId);
+    navTo(side === 'transfer' ? accountId : accountId);
     render(); // route() picks up the URL: the trade's account page shows the new rows
     closeDialog('trade-dialog');
   }
-  if (from === String(main).toUpperCase()) {
-    proceed({ pair: from + '/' + main, rate: 1, source: '1:1', interpolated: false });
+  var needsFx = !(from === String(main).toUpperCase()) && (total > 0 || fee > 0);
+  if (!needsFx) {
+    proceed({ pair: from + '/' + main, rate: (from === String(main).toUpperCase() ? 1 : 1), source: (from === String(main).toUpperCase() ? '1:1' : '1:1'), interpolated: false });
     return;
   }
   if (manualRate !== null) {
     proceed({ pair: from + '/' + main, rate: manualRate, source: 'manual', interpolated: false });
     return;
   }
+  lockSubmit(true, 'Saving…');
   fetchEcbRate(date, from, main).then(function (r) {
     proceed({ pair: from + '/' + main, rate: r.rate, source: r.source, interpolated: !!r.interpolated });
   }, function () {
+    lockSubmit(false, side === 'buy' || side === 'sell' ? 'Add trade' : 'Add trade');
     showBanner('FX rate unavailable for ' + from + ' → ' + main + ' on ' + date + ' — open “Manual FX rate” and enter a rate to save this trade.');
     tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
   });
@@ -2450,6 +3720,7 @@ function buildTopbar() {
       st.settings.mainCurrency = e.target.value;
       if (!saveStateGuarded(st)) return;
       clearBanner();
+      livePrices = {}; // stale prices are in the old currency — clear before repaint
       render(); // instant paint, then historical pairs fill in + repaint
       refreshPrices(); // live valuation re-fetched in the new currency
     });
@@ -2547,6 +3818,8 @@ function buildSettings() {
     '<section data-setpanel="backup" role="tabpanel" aria-label="Backup and restore" hidden>' +
     '<p class="muted set-blurb">Your data never leaves this browser. Download a backup file to move it to another device.</p>' +
     '<button id="s-download" type="button">Download backup</button>' +
+    '<button id="s-csv-trades" type="button">Export trades CSV</button>' +
+    '<button id="s-csv-lots" type="button">Export tax lots CSV (FIFO)</button>' +
     '<label for="s-upload">Restore from file</label>' +
     '<input id="s-upload" type="file" accept="application/json,.json">' +
     '</section>' +
@@ -2585,6 +3858,10 @@ function buildSettings() {
     refreshPrices();
   });
   document.getElementById('s-download').addEventListener('click', downloadBackup);
+  var csvT = document.getElementById('s-csv-trades');
+  if (csvT) csvT.addEventListener('click', downloadTradesCsv);
+  var csvL = document.getElementById('s-csv-lots');
+  if (csvL) csvL.addEventListener('click', downloadLotsCsv);
   document.getElementById('s-upload').addEventListener('change', function (e) {
     var input = e.target;
     var f = input && input.files && input.files[0];
@@ -2659,6 +3936,320 @@ function downloadBackup() {
   }, 1000);
 }
 
+function csvEsc(v) {
+  var s = String(v === null || v === undefined ? '' : v);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function downloadTextFile(name, text, mime) {
+  var blob = new Blob([text], { type: mime || 'text/csv' });
+  var urls = window.URL || window.webkitURL;
+  var url = urls.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () {
+    try { urls.revokeObjectURL(url); } catch (e) { /* ignore */ }
+    if (a.parentNode) a.parentNode.removeChild(a);
+  }, 1000);
+}
+
+function downloadTradesCsv() {
+  var st = loadState();
+  var accName = {};
+  (st.accounts || []).forEach(function (a) { accName[a.id] = a.name; });
+  var rows = [['id', 'date', 'type', 'symbol', 'qty', 'total', 'currency', 'fee', 'feeCurrency', 'networkFee', 'account', 'toAccount', 'note', 'fxRate', 'fxSource']];
+  ledgerSortByDate(st.trades || []).forEach(function (t) {
+    rows.push([
+      t.id || '', t.date || '', t.type || '', String(t.symbol || '').toUpperCase(),
+      t.qty !== undefined && t.qty !== null ? t.qty : '',
+      t.total !== undefined && t.total !== null ? t.total : '',
+      t.currency || '', t.fee !== undefined && t.fee !== null ? t.fee : '',
+      t.feeCurrency || '', t.networkFee !== undefined && t.networkFee !== null ? t.networkFee : '',
+      accName[t.accountId] || t.accountId || '',
+      (t.toAccountId ? (accName[t.toAccountId] || t.toAccountId) : ''),
+      t.note || '',
+      (t.fxLock && t.fxLock.rate) || '',
+      (t.fxLock && t.fxLock.source) || ''
+    ]);
+  });
+  downloadTextFile('plutus-trades.csv', rows.map(function (r) { return r.map(csvEsc).join(','); }).join('\n'), 'text/csv');
+}
+
+function downloadLotsCsv() {
+  var st = loadState();
+  var main = st.settings.mainCurrency;
+  var dtrades = convertTrades(st.trades, main);
+  var fifo = computeFifo(dtrades);
+  var accName = {};
+  (st.accounts || []).forEach(function (a) { accName[a.id] = a.name; });
+  var rows = [['symbol', 'openDate', 'closeDate', 'qty', 'proceeds_' + main, 'cost_' + main, 'gain_' + main, 'holdingDays', 'accountId']];
+  // Lots are per-symbol globally; attribute account where possible via close trade? FIFO lots don't carry account, but joint lots do.
+  // Use joint portfolio lots (with accountId) for accuracy.
+  try {
+    var pf = computePortfolio(dtrades, {}, 'fifo');
+    Object.keys(pf.states || {}).forEach(function (accId) {
+      var syms = pf.states[accId];
+      Object.keys(syms).forEach(function (sym) {
+        (syms[sym].lots || []).forEach(function (l) {
+          rows.push([sym, l.openDate || '', l.closeDate || '', l.qty, Math.round(l.proceeds * 100) / 100, Math.round(l.cost * 100) / 100, Math.round(l.gain * 100) / 100, l.holdingDays, accName[accId] || accId]);
+        });
+      });
+    });
+  } catch (e) {
+    fifo.forEach(function (v, sym) {
+      (v.lots || []).forEach(function (l) {
+        rows.push([sym, l.openDate || '', l.closeDate || '', l.qty, Math.round(l.proceeds * 100) / 100, Math.round(l.cost * 100) / 100, Math.round(l.gain * 100) / 100, l.holdingDays, '']);
+      });
+    });
+  }
+  downloadTextFile('plutus-tax-lots.csv', rows.map(function (r) { return r.map(csvEsc).join(','); }).join('\n'), 'text/csv');
+}
+
+// --- Allocation / Insights / Activity (ultimate tracker, additive; no-ops when containers absent) ---
+var activityFilter = { q: '', type: '' };
+
+function allocationData(st, dtrades) {
+  var method = st.settings.costMethod;
+  var pf = null;
+  try { pf = computePortfolio(dtrades, livePrices, method); } catch (e) { pf = null; }
+  var bySym = {};
+  if (pf && pf.byAccount) {
+    Object.keys(pf.byAccount).forEach(function (accId) {
+      pf.byAccount[accId].forEach(function (p, sym) {
+        var key = p.symbol;
+        if (p.marketValue === null) {
+          // unknown price: count cost as fallback so allocation still shows something?
+          return;
+        }
+        bySym[key] = (bySym[key] || 0) + p.marketValue;
+      });
+    });
+  }
+  var total = 0;
+  Object.keys(bySym).forEach(function (k) { total += bySym[k]; });
+  var arr = Object.keys(bySym).map(function (k) { return { symbol: k, value: bySym[k], pct: total > 0 ? (bySym[k] / total) * 100 : 0 }; });
+  arr.sort(function (a, b) { return b.value - a.value; });
+  return { items: arr, total: total };
+}
+
+function renderAllocation(st) {
+  var host = document.getElementById('allocation');
+  if (!host) return;
+  var main = st.settings.mainCurrency;
+  if (!st.accounts.length || !st.trades.length) { host.hidden = true; host.innerHTML = ''; return; }
+  var dtrades = convertTrades(st.trades, main);
+  var al = allocationData(st, dtrades);
+  if (!al.items.length) { host.hidden = true; host.innerHTML = ''; return; }
+  host.hidden = false;
+  host.innerHTML = '';
+  var h = document.createElement('h2');
+  h.className = 'section-title';
+  h.textContent = 'Allocation';
+  host.appendChild(h);
+  var wrap = document.createElement('div');
+  wrap.className = 'alloc-wrap';
+  var svgNS = 'http://www.w3.org/2000/svg';
+  var svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('viewBox', '0 0 120 120');
+  svg.setAttribute('class', 'donut');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Portfolio allocation by asset');
+  var palette = ['#e3c57c', '#7dd3fc', '#34d399', '#f472b6', '#a78bfa', '#fbbf24', '#60a5fa', '#f87171', '#4ade80', '#22d3ee'];
+  var cx = 60, cy = 60, r = 46, circ = 2 * Math.PI * r;
+  var off = 0;
+  al.items.slice(0, 10).forEach(function (it, i) {
+    var frac = it.pct / 100;
+    var c = document.createElementNS(svgNS, 'circle');
+    c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', r);
+    c.setAttribute('fill', 'none');
+    c.setAttribute('stroke', palette[i % palette.length]);
+    c.setAttribute('stroke-width', '14');
+    c.setAttribute('stroke-dasharray', (frac * circ) + ' ' + circ);
+    c.setAttribute('stroke-dashoffset', String(-off * circ));
+    c.setAttribute('stroke-linecap', 'butt');
+    c.setAttribute('transform', 'rotate(-90 60 60)');
+    svg.appendChild(c);
+    off += frac;
+  });
+  wrap.appendChild(svg);
+  var leg = document.createElement('ul');
+  leg.className = 'alloc-legend';
+  al.items.slice(0, 10).forEach(function (it, i) {
+    var li = document.createElement('li');
+    var dot = document.createElement('span');
+    dot.className = 'alloc-dot';
+    dot.style.background = palette[i % palette.length];
+    li.appendChild(dot);
+    var tx = document.createElement('span');
+    tx.textContent = it.symbol + ' · ' + fmtPct(it.pct) + ' · ' + fmtMoney(it.value, main);
+    li.appendChild(tx);
+    leg.appendChild(li);
+  });
+  wrap.appendChild(leg);
+  host.appendChild(wrap);
+}
+
+function renderInsights(st) {
+  var host = document.getElementById('insights');
+  if (!host) return;
+  var main = st.settings.mainCurrency;
+  if (!st.accounts.length || !st.trades.length) { host.hidden = true; host.innerHTML = ''; return; }
+  var dtrades = convertTrades(st.trades, main);
+  var an = null;
+  try { an = computeAnalytics(dtrades, livePrices, st.settings.costMethod); } catch (e) { an = null; }
+  if (!an) { host.hidden = true; host.innerHTML = ''; return; }
+  host.hidden = false;
+  host.innerHTML = '';
+  var h = document.createElement('h2');
+  h.className = 'section-title';
+  h.textContent = 'Insights · fees, income & cash flow';
+  host.appendChild(h);
+  var grid = document.createElement('div');
+  grid.className = 'cards insights-grid';
+  function card(label, text, raw) {
+    var c = statCard(label, text, raw);
+    if (label !== 'Invested' && label !== 'Withdrawn') {
+      var sc = plClass(label === 'Fees paid' || label === 'Cash expenses' ? -Math.abs(Number(raw) || 0) : raw);
+      if (sc) c.querySelector('.card-value').classList.add(sc);
+    }
+    return c;
+  }
+  grid.appendChild(card('Invested', fmtMoney(an.invested, main), an.invested));
+  grid.appendChild(card('Withdrawn', fmtMoney(an.withdrawn, main), an.withdrawn));
+  grid.appendChild(card('Income', fmtMoney(an.income, main), an.income));
+  var feesTxt = fmtMoney(an.feesTotal, main);
+  grid.appendChild(card('Fees paid', an.feesTotal > 0 ? feesTxt : fmtMoney(0, main), -Math.abs(an.feesTotal)));
+  host.appendChild(grid);
+  if ((an.feesCryptoQty > 0 || an.feesFiat > 0 || an.expensesFiat > 0)) {
+    var sub = document.createElement('p');
+    sub.className = 'muted insights-sub';
+    var bits = [];
+    if (an.feesCryptoQty > 0) bits.push('on-chain ' + fmtQty(an.feesCryptoQty) + ' (≈ ' + fmtMoney(an.feesCryptoMain, main) + ')');
+    if (an.feesFiat > 0) bits.push('money fees ' + fmtMoney(an.feesFiat, main));
+    if (an.expensesFiat > 0) bits.push('cash expenses ' + fmtMoney(an.expensesFiat, main));
+    sub.textContent = 'Fee drag: ' + bits.join(' + ') + ' — transfers move basis, only fees count as losses.';
+    host.appendChild(sub);
+  }
+  // Monthly realized bars from FIFO lots (closed trades only).
+  try {
+    var lots = [];
+    var pfM = computePortfolio(dtrades, {}, 'fifo');
+    Object.keys(pfM.states || {}).forEach(function (accId) {
+      var syms = pfM.states[accId];
+      Object.keys(syms).forEach(function (sym) {
+        (syms[sym].lots || []).forEach(function (l) {
+          if (!l.closeDate) return;
+          lots.push(l);
+        });
+      });
+    });
+    if (lots.length) {
+      var byMonth = {};
+      lots.forEach(function (l) {
+        var m = String(l.closeDate).slice(0, 7);
+        byMonth[m] = (byMonth[m] || 0) + l.gain;
+      });
+      var months = Object.keys(byMonth).sort().slice(-12);
+      if (months.length) {
+        var bh = document.createElement('h3');
+        bh.className = 'section-title';
+        bh.textContent = 'Realized per month';
+        host.appendChild(bh);
+        var bars = document.createElement('div');
+        bars.className = 'bars';
+        var maxAbs = 1;
+        months.forEach(function (m) { maxAbs = Math.max(maxAbs, Math.abs(byMonth[m])); });
+        months.forEach(function (m) {
+          var row = document.createElement('div');
+          row.className = 'bar-row';
+          var lab = document.createElement('span');
+          lab.className = 'bar-label muted';
+          lab.textContent = m;
+          var track = document.createElement('span');
+          track.className = 'bar-track';
+          var fill = document.createElement('span');
+          fill.className = 'bar-fill ' + (byMonth[m] >= 0 ? 'gain' : 'loss');
+          fill.style.width = (Math.abs(byMonth[m]) / maxAbs * 100) + '%';
+          fill.title = fmtMoney(byMonth[m], main);
+          track.appendChild(fill);
+          var val = document.createElement('span');
+          val.className = 'bar-val num ' + plClass(byMonth[m]);
+          val.textContent = fmtMoney(byMonth[m], main);
+          row.appendChild(lab); row.appendChild(track); row.appendChild(val);
+          bars.appendChild(row);
+        });
+        host.appendChild(bars);
+      }
+    }
+  } catch (e) { /* charts are best-effort */ }
+}
+
+function renderActivity(st) {
+  var host = document.getElementById('activity');
+  if (!host) return;
+  if (!st.accounts.length || !st.trades.length) { host.hidden = true; host.innerHTML = ''; return; }
+  host.hidden = false;
+  host.innerHTML = '';
+  var h = document.createElement('h2');
+  h.className = 'section-title';
+  h.textContent = 'Activity';
+  host.appendChild(h);
+  var tools = document.createElement('div');
+  tools.className = 'activity-tools';
+  var q = document.createElement('input');
+  q.id = 'act-q';
+  q.setAttribute('placeholder', 'Search symbol, note…');
+  q.setAttribute('aria-label', 'Search trades');
+  q.value = activityFilter.q || '';
+  var sel = document.createElement('select');
+  sel.id = 'act-type';
+  sel.setAttribute('aria-label', 'Filter by type');
+  [['', 'All types'], ['buy', 'Buys'], ['sell', 'Sells'], ['transfer', 'Transfers'], ['income', 'Income'], ['expense', 'Expenses']].forEach(function (o) {
+    var op = document.createElement('option');
+    op.value = o[0]; op.textContent = o[1];
+    if ((activityFilter.type || '') === o[0]) op.selected = true;
+    sel.appendChild(op);
+  });
+  tools.appendChild(q);
+  tools.appendChild(sel);
+  host.appendChild(tools);
+  q.addEventListener('input', function () {
+    activityFilter.q = q.value;
+    renderActivity(loadState());
+    var nq = document.getElementById('act-q');
+    if (nq) { try { nq.focus(); nq.setSelectionRange(nq.value.length, nq.value.length); } catch (e) { /* ignore */ } }
+  });
+  sel.addEventListener('change', function () { activityFilter.type = sel.value; renderActivity(loadState()); });
+  var main = st.settings.mainCurrency;
+  var dtrades = convertTrades(st.trades, main);
+  var nameById = {};
+  (st.accounts || []).forEach(function (a) { nameById[a.id] = a.name; });
+  var ql = String(activityFilter.q || '').trim().toUpperCase();
+  var tf = activityFilter.type || '';
+  var list = ledgerSortByDate(dtrades).reverse().filter(function (t) {
+    if (tf && t.type !== tf) return false;
+    if (ql) {
+      var hay = (String(t.symbol || '') + ' ' + String(t.note || '') + ' ' + String(t.date || '') + ' ' + (nameById[t.accountId] || '')).toUpperCase();
+      if (hay.indexOf(ql) === -1) return false;
+    }
+    return true;
+  }).slice(0, 120);
+  if (!list.length) {
+    var p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'No trades match this filter.';
+    host.appendChild(p);
+    return;
+  }
+  list.forEach(function (t) {
+    host.appendChild(tradeBlock(t, main, function (aid) { return nameById[aid] || ''; }));
+  });
+}
+
 function clearAllData() {
   confirmAction('Clear everything', 'Delete all accounts, trades, overrides and settings? This cannot be undone.', 'Delete everything', true).then(function (ok) {
     if (!ok) return;
@@ -2673,18 +4264,29 @@ function clearAllData() {
 
 function refreshPrices() {
   var st = loadState();
+  var mainNow = st.settings.mainCurrency;
   var syms = uniqueSymbols(st.trades);
+  var kinds = {};
   (st.accounts || []).forEach(function (a) {
     if (a && a.ticker) {
       var t = String(a.ticker).toUpperCase();
       if (syms.indexOf(t) === -1) syms.push(t); // unique: trades may already list it
+      if (a.kind) kinds[t] = a.kind;
     }
+  });
+  // Trade symbols inherit their account's kind (stock accounts fetch via Stooq).
+  (st.trades || []).forEach(function (tr) {
+    if (!tr || !tr.symbol || !tr.accountId) return;
+    var s = String(tr.symbol).toUpperCase();
+    if (kinds[s]) return;
+    var a = accountById(st, tr.accountId);
+    if (a && a.kind) kinds[s] = a.kind;
   });
   if (!syms.length) {
     render();
     return Promise.resolve({});
   }
-  return refreshAllPrices(syms, st.settings.mainCurrency).then(function (out) {
+  return refreshAllPrices(syms, mainNow, kinds).then(function (out) {
     Object.keys(out).forEach(function (k) {
       var v = out[k];
       if (isFinite(Number(v)) && Number(v) > 0) livePrices[k] = Number(v);
@@ -2698,7 +4300,7 @@ function refreshPrices() {
     // One gentle retry for transient failures (e.g. CoinGecko 429) before
     // telling the user anything — most hiccups heal within seconds.
     return new Promise(function (res) { setTimeout(res, 2500); }).then(function () {
-      return refreshAllPrices(missing, loadState().settings.mainCurrency);
+      return refreshAllPrices(missing, mainNow, kinds);
     }).then(function (out2) {
       Object.keys(out2).forEach(function (k) {
         var v = out2[k];
@@ -2725,6 +4327,9 @@ function render() {
   }
   if (!st || !st.settings) st = defaultState();
   renderAccounts(st);
+  try { renderAllocation(st); } catch (e) { /* best-effort */ }
+  try { renderInsights(st); } catch (e) { /* best-effort */ }
+  try { renderActivity(st); } catch (e) { /* best-effort */ }
   syncTopbar(st);
   var ver = document.getElementById('app-ver');
   if (ver) ver.textContent = 'INOCULENS PLUTUS v' + APP_VERSION + ' · local-only, no account, no server';
@@ -2747,6 +4352,9 @@ function refreshDisplayRates(st) {
       } catch (e) { return; }
       if (!s2 || !s2.settings) return;
       renderAccounts(s2);
+      try { renderAllocation(s2); } catch (e) { /* ignore */ }
+      try { renderInsights(s2); } catch (e) { /* ignore */ }
+      try { renderActivity(s2); } catch (e) { /* ignore */ }
       syncTopbar(s2);
       route();
     }, function () { /* offline: keep current paint */ });
@@ -2808,13 +4416,20 @@ if (typeof window !== 'undefined') {
   window.Inoculens.accountTrades = accountTrades;
   window.Inoculens.heldQtyFor = heldQtyFor;
   window.Inoculens.openPrefillTrade = openPrefillTrade;
+  window.Inoculens.openEditTrade = openEditTrade;
   window.Inoculens.syncLockedSymbol = syncLockedSymbol;
+  window.Inoculens.syncTradeTypeUI = syncTradeTypeUI;
   window.Inoculens.route = route;
   window.Inoculens.renderAccountDetail = renderAccountDetail;
   window.Inoculens.accountDetailId = accountDetailId;
   window.Inoculens.currentRouteId = currentRouteId;
   window.Inoculens.navTo = navTo;
   window.Inoculens.navHome = navHome;
+  window.Inoculens.renderAllocation = renderAllocation;
+  window.Inoculens.renderInsights = renderInsights;
+  window.Inoculens.renderActivity = renderActivity;
+  window.Inoculens.downloadTradesCsv = downloadTradesCsv;
+  window.Inoculens.downloadLotsCsv = downloadLotsCsv;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
     document.addEventListener('DOMContentLoaded', init);
   }
