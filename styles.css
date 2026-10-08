@@ -1041,8 +1041,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 .hero-alloc[hidden] { display: none; }
 
 .donut-sm {
-  width: 4.25rem;
-  height: 4.25rem;
+  width: 6rem;
+  height: 6rem;
   flex-shrink: 0;
   filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
 }
