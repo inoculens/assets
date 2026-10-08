@@ -1633,7 +1633,32 @@ var SYMBOL_MAP = {
   JUP: 'jupiter-exchange-solana',
   PYTH: 'pyth-network',
   ONDO: 'ondo-finance',
-  TAO: 'bittensor'
+  TAO: 'bittensor',
+  XMR: 'monero',
+  CRO: 'crypto-com-chain',
+  GRT: 'the-graph',
+  IMX: 'immutable-x',
+  ENS: 'ethereum-name-service',
+  LRC: 'loopring',
+  QNT: 'quant-network',
+  CAKE: 'pancakeswap-token',
+  EGLD: 'elrond-erd-2',
+  FLOW: 'flow',
+  GALA: 'gala',
+  APE: 'apecoin',
+  JASMY: 'jasmycoin',
+  HNT: 'helium',
+  WIF: 'dogwifcoin',
+  BONK: 'bonk',
+  FLOKI: 'floki',
+  RAY: 'raydium',
+  PENDLE: 'pendle',
+  ENA: 'ethena',
+  STRK: 'starknet',
+  ZK: 'zksync',
+  W: 'wormhole',
+  BLUR: 'blur',
+  ORCA: 'orca'
 };
 
 var PRICE_CACHE_TTL_MS = 60000;
