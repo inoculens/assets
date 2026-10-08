@@ -2083,7 +2083,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '366bc39 (#124)';
+var APP_VERSION = '1795f4d (#125)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2322,6 +2322,27 @@ function statCard(label, text, raw) {
   return d;
 }
 
+// Auto-fit hero digits: fixed box, fluid numbers. Starts from the CSS clamp
+// size and steps down until the amount fits one line (floor ~1.4rem);
+// ellipsis remains as the last resort. Re-run on render + resize.
+function fitHeroValue() {
+  try {
+    var hv = document.getElementById('hero-value');
+    if (!hv || !hv.style) return;
+    hv.style.fontSize = '';
+    if (typeof getComputedStyle !== 'function') return;
+    var size = parseFloat(getComputedStyle(hv).fontSize);
+    if (!isFinite(size) || size <= 0) return;
+    var floor = 22;
+    var guard = 0;
+    while (guard < 30 && size > floor && hv.scrollWidth > hv.clientWidth + 1) {
+      size -= 2;
+      hv.style.fontSize = size + 'px';
+      guard++;
+    }
+  } catch (e) { /* ignore */ }
+}
+
 function renderSummaryCards(st, rows, dtradesOpt, nAcctsOpt) {
   var main = st.settings.mainCurrency;
   var mv = 0;
@@ -2408,6 +2429,7 @@ function renderSummaryCards(st, rows, dtradesOpt, nAcctsOpt) {
     hv.textContent = rows.length ? (mvKnown ? fmtMoney(mv, main) : '—') : '—';
     hv.title = hv.textContent;
   }
+  fitHeroValue();
   var hp = document.getElementById('hero-pl');
   if (hp) {
     if (!rows.length || !plKnown) {
@@ -5655,7 +5677,7 @@ function init() {
     var heroRt = null;
     window.addEventListener('resize', function () {
       if (heroRt) { try { clearTimeout(heroRt); } catch (e) { /* ignore */ } }
-      heroRt = setTimeout(syncHeroAllocHeight, 150);
+      heroRt = setTimeout(function () { fitHeroValue(); syncHeroAllocHeight(); }, 150);
     });
     try {
       if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
@@ -5716,6 +5738,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.navHome = navHome;
   window.Inoculens.renderHeroAlloc = renderHeroAlloc;
   window.Inoculens.syncHeroAllocHeight = syncHeroAllocHeight;
+  window.Inoculens.fitHeroValue = fitHeroValue;
   window.Inoculens.downloadTradesCsv = downloadTradesCsv;
   window.Inoculens.downloadLotsCsv = downloadLotsCsv;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
