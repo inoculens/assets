@@ -2417,6 +2417,12 @@ function tradeTypeMeta(type) {
   return { label: 'Buy', cls: 'side-buy' };
 }
 
+function openNoteDialog(text) {
+  var p = document.getElementById('note-dialog-text');
+  if (p) p.textContent = String(text === undefined || text === null ? '' : text);
+  openDialog('note-dialog');
+}
+
 function tradeBlock(t, main, accountNameById) {
   var n = normalizeTrade(t);
   var box = document.createElement('article');
@@ -2518,11 +2524,15 @@ function tradeBlock(t, main, accountNameById) {
       noteVal.setAttribute('aria-label', 'Show full note');
       noteVal.title = String(t.note);
       noteVal.addEventListener('click', function () {
-        var isOpen = noteVal.classList.toggle('open');
-        noteVal.setAttribute('aria-label', isOpen ? 'Collapse note' : 'Show full note');
+        // Popup only when the text actually overflows the row.
+        if (noteVal.scrollWidth <= noteVal.clientWidth + 1) return;
+        openNoteDialog(t.note);
       });
       noteVal.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); noteVal.click(); }
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          noteVal.click();
+        }
       });
     }
     box.appendChild(noteRow);
@@ -3754,6 +3764,7 @@ function buildTopbar() {
   wireDialog('settings-dialog');
   wireDialog('account-dialog');
   wireDialog('confirm-dialog');
+  wireDialog('note-dialog');
   var bclose = document.getElementById('banner-close');
   if (bclose && !bclose.getAttribute('data-wired')) {
     bclose.setAttribute('data-wired', '1');
@@ -4321,6 +4332,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.heldQtyFor = heldQtyFor;
   window.Inoculens.openPrefillTrade = openPrefillTrade;
   window.Inoculens.openEditTrade = openEditTrade;
+  window.Inoculens.openNoteDialog = openNoteDialog;
   window.Inoculens.syncLockedSymbol = syncLockedSymbol;
   window.Inoculens.syncTradeTypeUI = syncTradeTypeUI;
   window.Inoculens.route = route;

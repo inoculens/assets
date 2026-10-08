@@ -684,6 +684,7 @@ section h2, aside h2 {
 .trade-head { flex: 1 1 100%; }
 .trade-block .stat-row {
   flex: 1 1 9rem;
+  min-width: 0;
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
@@ -700,7 +701,12 @@ section h2, aside h2 {
   text-overflow: ellipsis;
   cursor: pointer;
 }
-.trade-block .stat-row[data-label="Note"] .stat-val.open { white-space: normal; }
+#note-dialog-text {
+  margin: 0.4rem 0 0;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .trade-block .rate-line .stat-val { max-width: none; }
 .trade-foot { display: flex; justify-content: flex-end; padding: 0.5rem 0 0.35rem; }
 .trade-del { margin-left: 0.25rem; padding: 0.45rem 0.7rem; min-height: 2.5rem; font-size: 1.05rem; line-height: 1; }
