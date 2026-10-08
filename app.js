@@ -2068,7 +2068,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = 'f6d6c5b (#112)';
+var APP_VERSION = '2e915f6 (#113)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -3073,9 +3073,9 @@ function renderAccountDetail(st, id) {
   menu.appendChild(mbox);
   head.appendChild(menu);
   host.appendChild(head);
-  // Wallet address / note entered at creation (stored on the account, not on
-  // trades) — shown here with popup-on-overflow like trade notes.
-  if (acc.address) host.appendChild(detailMetaRow('Wallet', acc.address, 'Wallet address'));
+  // Optional free-text label entered at creation (wallet, note, anything) —
+  // shown here with popup-on-overflow like trade notes.
+  if (acc.address) host.appendChild(detailMetaRow('Label', acc.address, 'Label'));
   if (acc.note) host.appendChild(detailMetaRow('Note', acc.note, 'Account note'));
   var stats = document.createElement('div');
   stats.className = 'cards detail-stats';
@@ -3685,8 +3685,8 @@ function buildAccountDialog() {
     '<input id="na-ticker" autocomplete="off" spellcheck="false" placeholder="e.g. BTC">' +
     '<label for="na-kind">Asset type</label>' +
     '<select id="na-kind"><option value="crypto">Crypto (live via CoinGecko)</option><option value="stock">Stock / ETF (live via Stooq)</option><option value="custom">Custom (manual price only)</option><option value="cash">Cash</option></select>' +
-    '<label for="na-address">Wallet address / note (optional)</label>' +
-    '<input id="na-address" autocomplete="off" spellcheck="false" placeholder="e.g. bc1q… or broker">' +
+    '<label for="na-address">Label (optional)</label>' +
+    '<input id="na-address" autocomplete="off" spellcheck="false" placeholder="e.g. cold storage">' +
     '<p id="na-error" class="banner-error" role="alert" hidden></p>' +
     '<button id="na-create" class="primary" type="button">Create account</button>';
   host.appendChild(wrap);
