@@ -2044,7 +2044,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.22';
+var APP_VERSION = '2026-10-08.23';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -4538,7 +4538,7 @@ function renderHeroAlloc(st) {
   var palette = ['#e3c57c', '#7dd3fc', '#34d399', '#f472b6', '#a78bfa', '#fbbf24'];
   var leg = document.createElement('ul');
   leg.className = 'hero-alloc-legend';
-  al.items.slice(0, 6).forEach(function (it, i) {
+  al.items.forEach(function (it, i) {
     var li = document.createElement('li');
     var dot = document.createElement('span');
     dot.className = 'hero-alloc-dot';
@@ -4558,7 +4558,7 @@ function renderHeroAlloc(st) {
   svg.setAttribute('aria-label', 'Allocation by asset');
   var cx = 60, cy = 60, r = 46, circ = 2 * Math.PI * r;
   var off = 0;
-  al.items.slice(0, 6).forEach(function (it, i) {
+  al.items.forEach(function (it, i) {
     var frac = it.pct / 100;
     var c = document.createElementNS(svgNS, 'circle');
     c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', r);
@@ -4573,6 +4573,23 @@ function renderHeroAlloc(st) {
     off += frac;
   });
   host.appendChild(svg);
+  syncHeroAllocHeight();
+}
+
+// The legend never stretches its box: it scrolls inside the height of the
+// left amount block instead. Re-synced on render + viewport/font changes
+// because the amount scales with the viewport.
+function syncHeroAllocHeight() {
+  try {
+    var host = document.getElementById('hero-alloc');
+    if (!host || host.hidden) return;
+    var hero = document.getElementById('hero');
+    var main = hero ? hero.querySelector('.hero-main') : null;
+    var leg = host.querySelector('.hero-alloc-legend');
+    if (!main || !leg) return;
+    var h = main.clientHeight;
+    if (h > 0) leg.style.maxHeight = h + 'px';
+  } catch (e) { /* ignore */ }
 }
 
 function clearAllData() {
@@ -4689,6 +4706,7 @@ function refreshDisplayRates(st) {
 }
 
 var hashWired = false;
+var heroResizeWired = false;
 
 function init() {
   if (uiBooted) {
@@ -4706,6 +4724,19 @@ function init() {
     hashWired = true;
     window.addEventListener('hashchange', route); // hash mode (file://, legacy links)
     window.addEventListener('popstate', route); // history mode (clean URLs)
+  }
+  if (!heroResizeWired && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    heroResizeWired = true;
+    var heroRt = null;
+    window.addEventListener('resize', function () {
+      if (heroRt) { try { clearTimeout(heroRt); } catch (e) { /* ignore */ } }
+      heroRt = setTimeout(syncHeroAllocHeight, 150);
+    });
+    try {
+      if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+        document.fonts.ready.then(function () { syncHeroAllocHeight(); });
+      }
+    } catch (e) { /* ignore */ }
   }
   var back = document.getElementById('acct-back');
   if (back && !back.getAttribute('data-wired')) {
@@ -4758,6 +4789,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.navTo = navTo;
   window.Inoculens.navHome = navHome;
   window.Inoculens.renderHeroAlloc = renderHeroAlloc;
+  window.Inoculens.syncHeroAllocHeight = syncHeroAllocHeight;
   window.Inoculens.downloadTradesCsv = downloadTradesCsv;
   window.Inoculens.downloadLotsCsv = downloadLotsCsv;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
