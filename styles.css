@@ -524,7 +524,7 @@ section h2, aside h2 {
   top: calc(100% + 0.4rem);
   z-index: 30;
   min-width: 12rem;
-  max-height: 50vh;
+  max-height: 17rem;
   overflow-y: auto;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
@@ -591,6 +591,28 @@ section h2, aside h2 {
   border-color: var(--border-strong);
   background: linear-gradient(180deg, rgba(255,255,255,0.045), transparent), var(--surface-2);
 }
+
+.drag-handle {
+  width: 1rem;
+  height: 1.75rem;
+  flex-shrink: 0;
+  align-self: center;
+  border-radius: 4px;
+  cursor: grab;
+  opacity: 0.6;
+  touch-action: none;
+  background-image: radial-gradient(circle, var(--muted-2) 1.2px, transparent 1.4px);
+  background-size: 0.5rem 0.58rem;
+  background-position: center;
+  background-repeat: repeat;
+}
+
+.drag-handle:hover { opacity: 1; }
+.drag-handle:active { cursor: grabbing; }
+
+.account-card.dragging { opacity: 0.45; }
+.account-card.drop-before { box-shadow: 0 -2px 0 var(--gold); }
+.account-card.drop-after { box-shadow: 0 2px 0 var(--gold); }
 
 .acct-avatar {
   width: 2.9rem;
