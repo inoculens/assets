@@ -692,8 +692,7 @@ section h2, aside h2 {
   padding: 0.55rem 0 0.35rem;
 }
 .trade-block .stat-label { flex: none; }
-.trade-block .stat-val { flex: none; text-align: left; }
-.trade-block .stat-row[data-label="Note"] { flex-basis: 100%; }
+.trade-block .stat-val { flex: none; text-align: left; min-width: 0; }
 .trade-block .stat-row[data-label="Note"] .stat-val {
   display: block;
   white-space: nowrap;
@@ -1060,13 +1059,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   gap: 0.9rem;
   flex-shrink: 0;
   margin-left: auto;
+  align-self: stretch;
 }
 
 .hero-alloc[hidden] { display: none; }
 
 .donut-sm {
-  width: clamp(2.4rem, 6vw, 3.4rem);
-  height: clamp(2.4rem, 6vw, 3.4rem);
+  height: 100%;
+  width: auto;
+  aspect-ratio: 1 / 1;
   flex-shrink: 0;
   filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
 }
@@ -1116,8 +1117,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 
 @media (max-width: 720px) {
   #hero { flex-direction: column; align-items: stretch; }
-  .hero-alloc { justify-content: flex-start; margin-left: 0; }
-  .donut-sm { width: 2.4rem; height: 2.4rem; }
+  .hero-alloc { justify-content: flex-start; margin-left: 0; align-self: auto; }
+  .donut-sm { width: 3.5rem; height: 3.5rem; }
 }
 
 @media print {

@@ -2488,7 +2488,6 @@ function tradeBlock(t, main, accountNameById) {
       box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
     }
   } else {
-    box.appendChild(statRow('Amount', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
     box.appendChild(statRow('Paid', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
     box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
   }
@@ -2527,6 +2526,9 @@ function tradeBlock(t, main, accountNameById) {
       });
     }
     box.appendChild(noteRow);
+  }
+  if (t.type === 'buy' || t.type === 'sell') {
+    box.appendChild(statRow('Amount', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
   }
   return box;
 }
