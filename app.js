@@ -1908,7 +1908,7 @@ if (typeof window !== 'undefined') {
 // users only ever see that version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = '2026-10-08.12';
+var APP_VERSION = '2026-10-08.13';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
@@ -2307,9 +2307,9 @@ function renderAccounts(st) {
     var tradeBtn = document.createElement('button');
     tradeBtn.type = 'button';
     tradeBtn.className = 'quiet';
-    tradeBtn.textContent = '+ Trade';
+    tradeBtn.textContent = '+ Record';
     tradeBtn.setAttribute('data-account-trade', acc.id);
-    tradeBtn.setAttribute('aria-label', 'Add trade to ' + acc.name);
+    tradeBtn.setAttribute('aria-label', 'Add record to ' + acc.name);
     card.appendChild(tradeBtn);
     var openBtn = document.createElement('button');
     openBtn.type = 'button';
@@ -2504,7 +2504,7 @@ function tradeBlock(t, main, accountNameById) {
   edit.className = 'quiet trade-edit';
   edit.textContent = '✎';
   edit.setAttribute('data-edit', t.id || '');
-  edit.setAttribute('aria-label', 'Edit trade ' + String(t.symbol || '') + ' ' + String(t.date || ''));
+  edit.setAttribute('aria-label', 'Edit record ' + String(t.symbol || '') + ' ' + String(t.date || ''));
   edit.addEventListener('click', function () { openEditTrade(edit.getAttribute('data-edit')); });
   head.appendChild(edit);
   var del = document.createElement('button');
@@ -2658,7 +2658,7 @@ function renderAccountDetail(st, id) {
     mbox.appendChild(b);
     return b;
   }
-  menuBtn('+ Trade', 'Add trade to', function () { openPrefillTrade(acc.id, true); });
+  menuBtn('+ Record', 'Add record to', function () { openPrefillTrade(acc.id, true); });
   menuBtn('Rename', 'Rename', function () { startInlineRename(acc.id, head, nameEl); });
   menuBtn('Delete', 'Delete', function () { deleteAccount(acc.id); });
   menu.appendChild(mbox);
@@ -2752,8 +2752,8 @@ function renderAccountDetail(st, id) {
     var tAdd = document.createElement('button');
     tAdd.type = 'button';
     tAdd.className = 'ghost';
-    tAdd.textContent = '+ Trade';
-    tAdd.setAttribute('aria-label', 'Add trade to ' + acc.name);
+    tAdd.textContent = '+ Record';
+    tAdd.setAttribute('aria-label', 'Add record to ' + acc.name);
     tAdd.addEventListener('click', function () { openPrefillTrade(acc.id, true); });
     tHead.appendChild(tAdd);
     host.appendChild(tHead);
@@ -2772,8 +2772,8 @@ function renderAccountDetail(st, id) {
     var eAdd = document.createElement('button');
     eAdd.type = 'button';
     eAdd.className = 'primary';
-    eAdd.textContent = '+ Trade';
-    eAdd.setAttribute('aria-label', 'Add trade to ' + acc.name);
+    eAdd.textContent = '+ Record';
+    eAdd.setAttribute('aria-label', 'Add record to ' + acc.name);
     eAdd.addEventListener('click', function () { openPrefillTrade(acc.id, true); });
     emptyTrades.appendChild(eAdd);
     host.appendChild(emptyTrades);
@@ -2840,7 +2840,7 @@ function syncTradeButtons() {
   var hasAccts = Array.isArray(st.accounts) && st.accounts.length > 0;
   var hasTrades = Array.isArray(st.trades) && st.trades.length > 0;
   // Entry points live with their lists now (+ Account above accounts,
-  // + Trade above trades), so the top-bar duplicates stay hidden everywhere
+  // + Record above trades), so the top-bar duplicates stay hidden everywhere
   // (elements remain in the DOM for tests and programmatic use).
   var add = document.getElementById('tb-add');
   if (add) add.hidden = true;
@@ -3241,7 +3241,7 @@ function buildTradeForm() {
     '<input id="t-manual-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '</details>' +
     '<p id="t-error" class="banner-error" role="alert" hidden></p>' +
-    '<button class="primary" type="submit" id="t-submit">Add trade</button>' +
+    '<button class="primary" type="submit" id="t-submit">Add record</button>' +
     '</form>';
   host.appendChild(wrap);
   var form = document.getElementById('trade-form');
@@ -3393,9 +3393,9 @@ function resetTradeForm() {
   var toSel = document.getElementById('t-toaccount');
   if (toSel) toSel.innerHTML = '';
   var submitBtn0 = document.getElementById('t-submit');
-  if (submitBtn0) { submitBtn0.textContent = 'Add trade'; submitBtn0.disabled = false; }
+  if (submitBtn0) { submitBtn0.textContent = 'Add record'; submitBtn0.disabled = false; }
   var titleEl0 = document.getElementById('trade-dialog-title');
-  if (titleEl0) titleEl0.textContent = 'Add trade';
+  if (titleEl0) titleEl0.textContent = 'Add record';
   var dd = document.getElementById('t-date');
   if (dd) dd.value = todayStr();
   tradeFormError(null);
@@ -3405,7 +3405,7 @@ function openPrefillTrade(accountId, lockIt, presetType) {
   var st = loadState();
   var accounts = Array.isArray(st.accounts) ? st.accounts : [];
   if (!accounts.length) {
-    showBanner('Create your first account to enable Add trade.');
+    showBanner('Create your first account to enable Add record.');
     var host = document.getElementById('accounts');
     if (host && host.scrollIntoView) {
       try { host.scrollIntoView(); } catch (e) { /* ignore */ }
@@ -3505,7 +3505,7 @@ function openEditTrade(tradeId) {
   var submitBtn2 = document.getElementById('t-submit');
   if (submitBtn2) { submitBtn2.textContent = 'Save changes'; submitBtn2.disabled = false; }
   var titleEl2 = document.getElementById('trade-dialog-title');
-  if (titleEl2) titleEl2.textContent = 'Edit trade';
+  if (titleEl2) titleEl2.textContent = 'Edit record';
   tradeFormError(null);
   openDialog('trade-dialog');
 }
@@ -3531,7 +3531,7 @@ function onTradeSubmit(ev) {
   var side = (rawSide === 'sell' || rawSide === 'transfer' || rawSide === 'income' || rawSide === 'expense' || rawSide === 'swap') ? rawSide : 'buy';
   var list = Array.isArray(st0.accounts) ? st0.accounts : [];
   var acc = accountById(st0, uiVal('t-account', '')) || list[0];
-  if (!acc) { tradeFormError('Create your first account to enable Add trade.'); return; }
+  if (!acc) { tradeFormError('Create your first account to enable Add record.'); return; }
   var symbol = String(acc.ticker).toUpperCase();
   var accountId = acc.id;
   var submitBtn = document.getElementById('t-submit');
@@ -3590,14 +3590,14 @@ function onTradeSubmit(ev) {
       var sellLeg = { id: uid(), type: 'sell', symbol: fromSym, qty: fromQty, total: swapTotal, currency: swapCcy, date: date, fee: feeS, feeCurrency: feeCcyS, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: accountId, swapId: swapId, createdAt: new Date().toISOString() };
       var buyLeg = { id: uid(), type: 'buy', symbol: toSym, qty: toQty, total: swapTotal, currency: swapCcy, date: date, fee: 0, feeCurrency: swapCcy, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: toAccSwap.id, swapId: swapId, createdAt: new Date().toISOString() };
       var e1 = validateTrade(sellLeg, heldFrom);
-      if (e1) { tradeFormError(e1); lockSubmit(false, 'Add trade'); return; }
+      if (e1) { tradeFormError(e1); lockSubmit(false, 'Add record'); return; }
       st.trades.push(sellLeg);
       st.trades.push(buyLeg);
-      if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Add trade'); return; }
+      if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Add record'); return; }
       uiSetVal('t-qty', ''); uiSetVal('t-toqty', ''); uiSetVal('t-total', ''); uiSetVal('t-note', ''); uiSetVal('t-manual-rate', ''); uiSetVal('t-manual-price', '');
       var dd = document.getElementById('t-date'); if (dd) dd.value = todayStr();
       tradeFormError(null);
-      lockSubmit(false, 'Add trade');
+      lockSubmit(false, 'Add record');
       refreshPrices();
       navTo(accountId);
       render();
@@ -3615,7 +3615,7 @@ function onTradeSubmit(ev) {
     fetchEcbRate(date, swapCcy, main).then(function (r) {
       proceedSwap({ pair: swapCcy + '/' + main, rate: r.rate, source: r.source, interpolated: !!r.interpolated });
     }, function () {
-      lockSubmit(false, 'Add trade');
+      lockSubmit(false, 'Add record');
       showBanner('FX rate unavailable for ' + swapCcy + ' → ' + main + ' on ' + date + ' — open “Manual FX rate” and enter a rate to save this trade.');
       tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
     });
@@ -3745,9 +3745,9 @@ function onTradeSubmit(ev) {
       if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Save changes'); return; }
       editingTradeId = null;
       tradeFormError(null);
-      lockSubmit(false, 'Add trade');
-      var sb2 = document.getElementById('t-submit'); if (sb2) sb2.textContent = 'Add trade';
-      var tt2 = document.getElementById('trade-dialog-title'); if (tt2) tt2.textContent = 'Add trade';
+      lockSubmit(false, 'Add record');
+      var sb2 = document.getElementById('t-submit'); if (sb2) sb2.textContent = 'Add record';
+      var tt2 = document.getElementById('trade-dialog-title'); if (tt2) tt2.textContent = 'Add record';
       refreshPrices();
       render();
       closeDialog('trade-dialog');
@@ -3779,9 +3779,9 @@ function onTradeSubmit(ev) {
     var err = (side === 'sell' || side === 'transfer' || (side === 'expense' && qty !== null))
       ? validateTrade(trade, heldForCheck)
       : validateTrade(trade, 1e18);
-    if (err) { tradeFormError(err); lockSubmit(false, 'Add trade'); return; }
+    if (err) { tradeFormError(err); lockSubmit(false, 'Add record'); return; }
     st.trades.push(trade);
-    if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Add trade'); return; }
+    if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Add record'); return; }
     uiSetVal('t-qty', '');
     uiSetVal('t-toqty', '');
     uiSetVal('t-total', '');
@@ -3792,7 +3792,7 @@ function onTradeSubmit(ev) {
     var d = document.getElementById('t-date');
     if (d) d.value = todayStr();
     tradeFormError(null);
-    lockSubmit(false, 'Add trade');
+    lockSubmit(false, 'Add record');
     refreshPrices(); // recompute + render when fresh prices land (renders sync too)
     navTo(side === 'transfer' ? accountId : accountId);
     render(); // route() picks up the URL: the trade's account page shows the new rows
@@ -3811,14 +3811,14 @@ function onTradeSubmit(ev) {
   fetchEcbRate(date, from, main).then(function (r) {
     proceed({ pair: from + '/' + main, rate: r.rate, source: r.source, interpolated: !!r.interpolated });
   }, function () {
-    lockSubmit(false, side === 'buy' || side === 'sell' ? 'Add trade' : 'Add trade');
+    lockSubmit(false, side === 'buy' || side === 'sell' ? 'Add record' : 'Add record');
     showBanner('FX rate unavailable for ' + from + ' → ' + main + ' on ' + date + ' — open “Manual FX rate” and enter a rate to save this trade.');
     tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
   });
 }
 
 // --- Top bar + dialogs ---
-// Sticky top panel: totals, main currency, cost toggle, Add trade +
+// Sticky top panel: totals, main currency, cost toggle, Add record +
 // Settings buttons. The trade form and settings live in modal <dialog>s
 // so the page never scrolls through them. Dialog content keeps the same
 // element IDs, so tests.html and existing handlers keep working.
@@ -3999,7 +3999,7 @@ function buildTopbar() {
     add.addEventListener('click', function () {
       var cur = loadState();
       if (!Array.isArray(cur.accounts) || cur.accounts.length === 0) {
-        showBanner('Create your first account to enable Add trade.');
+        showBanner('Create your first account to enable Add record.');
         var host = document.getElementById('accounts');
         if (host && host.scrollIntoView) {
           try { host.scrollIntoView(); } catch (e) { /* ignore */ }
