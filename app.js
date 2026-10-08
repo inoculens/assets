@@ -2057,6 +2057,8 @@ if (typeof window !== 'undefined') {
 // entry points (also used by tests.html).
 
 // === Version contract (for any AI or human editing this app) ===
+// Full rules live in AGENTS.md at the repo root — coding agents load it
+// automatically, no prompt needed. Summary:
 // The footer version is the commit id + commit count, e.g. "c03f772 (#110)".
 // That id only exists AFTER committing, so nobody hand-writes it: the deploy
 // build (stamp-version.sh, wired in netlify.toml) stamps the exact values
@@ -2066,7 +2068,7 @@ if (typeof window !== 'undefined') {
 // ever see the footer version string, never this note.
 // === End version contract ===
 
-var APP_VERSION = 'c03f772 (#110)';
+var APP_VERSION = 'c493d6f (#111)';
 
 var uiBooted = false;
 var livePrices = {}; // SYM (uppercased) -> number|null, latest known live price
