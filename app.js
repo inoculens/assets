@@ -5501,7 +5501,7 @@ function buildSettings() {
     '<div class="set-tabs" role="tablist" aria-label="Settings sections">' +
     '<button type="button" role="tab" data-settab="overrides" aria-selected="true">Price overrides</button>' +
     '<button type="button" role="tab" data-settab="backup" aria-selected="false">Backup &amp; restore</button>' +
-    '<button type="button" role="tab" data-settab="sync" aria-selected="false">Sync</button>' +
+    '<button type="button" role="tab" data-settab="sync" aria-selected="false">Cloud Sync</button>' +
     '<button type="button" role="tab" data-settab="danger" aria-selected="false">Danger zone</button>' +
     '</div>' +
     '<div class="set-panels">' +
