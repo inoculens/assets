@@ -5469,7 +5469,6 @@ function buildSettings() {
     '<option value="webdav">WebDAV / Nextcloud</option>' +
     '<option value="gdrive">Google Drive</option>' +
     '<option value="dropbox">Dropbox</option>' +
-    '<option value="onedrive">OneDrive</option>' +
     '<option value="megas3">MEGA (S4 object storage)</option>' +
     '</select>' +
     '<p class="muted set-blurb" id="sy-hint"></p>' +
@@ -6085,8 +6084,8 @@ if (typeof window !== 'undefined') {
 // the user only needs the drive login plus the passphrase. A wrong
 // passphrase fails closed (AES-GCM auth) and local data is never touched
 // until a downloaded backup fully validates via importState().
-// Providers: WebDAV/Nextcloud (Basic), Google Drive / Dropbox / OneDrive
-// (OAuth PKCE with the user's own app credentials), MEGA S4 (S3-compatible
+// Providers: WebDAV/Nextcloud (Basic), Google Drive / Dropbox
+// (OAuth one-click or PKCE with the user's own app), MEGA S4 (S3-compatible
 // SigV4 with the user's own access keys).
 
 var SYNC_APP = 'inoculens-plutus-sync';
@@ -6099,14 +6098,12 @@ var SYNC_PROVIDERS = [
   { id: 'webdav', label: 'WebDAV / Nextcloud', kind: 'basic' },
   { id: 'gdrive', label: 'Google Drive', kind: 'oauth' },
   { id: 'dropbox', label: 'Dropbox', kind: 'oauth' },
-  { id: 'onedrive', label: 'OneDrive', kind: 'oauth' },
   { id: 'megas3', label: 'MEGA (S4 object storage)', kind: 's3' }
 ];
 var SYNC_HINTS = {
   webdav: 'Nextcloud or any WebDAV host. Create a folder (e.g. Plutus), paste its URL, and sign in with an app password. Only ciphertext is uploaded.',
   gdrive: 'One-click Google sign-in when enabled below — otherwise expand the advanced box and use your own OAuth app (Web application, Drive API enabled). The app only sees files it created.',
   dropbox: 'One-click Dropbox sign-in when enabled below — otherwise your own Dropbox app (Scoped access, App folder) plus its app key in the advanced box. Files stay in the private app folder.',
-  onedrive: 'One-click Microsoft sign-in when enabled below — otherwise your own app registration (Single-page application, Files.ReadWrite.AppFolder) plus its client ID. Files land in the private app folder.',
   megas3: 'MEGA S4 object storage (needs a MEGA account with S4). Create a bucket and access keys under Object Storage, then fill endpoint, region, bucket and keys. Only ciphertext is stored.'
 };
 
@@ -6115,7 +6112,7 @@ var SYNC_HINTS = {
 // provider; tokens and ciphertext still flow directly browser<->provider
 // with no Plutus server anywhere). Empty until the app owner registers
 // them; while empty, users fall back to their own OAuth app below.
-var SYNC_SHARED_APPS = { gdrive: '', dropbox: '', onedrive: '' };
+var SYNC_SHARED_APPS = { gdrive: '', dropbox: '' };
 
 function syncSharedId(providerId) {
   var v = SYNC_SHARED_APPS[providerId];
@@ -6636,16 +6633,7 @@ function syncOAuthAuthUrl(providerId, clientId, redirectUri, challenge, state) {
       '&token_access_type=offline' +
       '&state=' + encodeURIComponent(state);
   }
-  scope = 'Files.ReadWrite.AppFolder offline_access';
-  return 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize' +
-    '?client_id=' + encodeURIComponent(clientId) +
-    '&redirect_uri=' + encodeURIComponent(redirectUri) +
-    '&response_type=code' +
-    '&scope=' + encodeURIComponent(scope) +
-    '&code_challenge=' + encodeURIComponent(challenge) +
-    '&code_challenge_method=S256' +
-    '&response_mode=query' +
-    '&state=' + encodeURIComponent(state);
+  return '';
 }
 
 function syncOAuthTokenExchange(providerId, cfg, code, verifier) {
@@ -6669,12 +6657,7 @@ function syncOAuthTokenExchange(providerId, cfg, code, verifier) {
       '&client_id=' + encodeURIComponent(cid) +
       '&code_verifier=' + encodeURIComponent(verifier);
   } else {
-    url = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
-    body = 'grant_type=authorization_code' +
-      '&code=' + encodeURIComponent(code) +
-      '&redirect_uri=' + encodeURIComponent(redirect) +
-      '&client_id=' + encodeURIComponent(cid) +
-      '&code_verifier=' + encodeURIComponent(verifier);
+    return Promise.reject(new Error('sync failed: unknown provider.'));
   }
   return syncPostForm(url, body).then(function (tok) {
     return syncNormalizeTokens(tok);
@@ -6699,11 +6682,7 @@ function syncOAuthRefresh(providerId, cfg) {
       '&refresh_token=' + encodeURIComponent(t.refresh) +
       '&client_id=' + encodeURIComponent(cid);
   } else {
-    url = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
-    body = 'grant_type=refresh_token' +
-      '&refresh_token=' + encodeURIComponent(t.refresh) +
-      '&client_id=' + encodeURIComponent(cid) +
-      '&redirect_uri=' + encodeURIComponent(syncRedirectUri());
+    return Promise.reject(new Error('sync failed: unknown provider.'));
   }
   return syncPostForm(url, body).then(function (tok) {
     var n = syncNormalizeTokens(tok);
@@ -6930,32 +6909,6 @@ function syncDropboxDownload(access, name) {
   });
 }
 
-function syncOneDriveUrl(name) {
-  return 'https://graph.microsoft.com/v1.0/me/drive/special/approot:/' + encodeURIComponent(name) + ':/content';
-}
-
-function syncOneDriveUpload(access, name, text) {
-  return syncFetch(syncOneDriveUrl(name), {
-    method: 'PUT',
-    headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
-    body: text
-  }, 'OneDrive').then(function (res) {
-    if (res.ok) return true;
-    throw new Error('sync failed: OneDrive upload refused (HTTP ' + res.status + ').');
-  });
-}
-
-function syncOneDriveDownload(access, name) {
-  return syncFetch(syncOneDriveUrl(name), {
-    method: 'GET',
-    headers: { 'Authorization': 'Bearer ' + access }
-  }, 'OneDrive').then(function (res) {
-    if (res.ok) return res.text();
-    if (res.status === 404) throw new Error('sync failed: no backup found on the server yet.');
-    throw new Error('sync failed: OneDrive download refused (HTTP ' + res.status + ').');
-  });
-}
-
 // --- MEGA S4 (S3-compatible SigV4; standard HMAC-SHA256, no custom crypto) ---
 
 function syncSplitUrl(url) {
@@ -7109,7 +7062,7 @@ function syncRemoteUpload(cfg, text) {
   return syncEnsureAccessToken(cfg).then(function (access) {
     if (cfg.provider === 'gdrive') return syncDriveUpload(access, cfg.filename, text);
     if (cfg.provider === 'dropbox') return syncDropboxUpload(access, cfg.filename, text);
-    return syncOneDriveUpload(access, cfg.filename, text);
+    return Promise.reject(new Error('sync failed: unknown provider.'));
   });
 }
 
@@ -7119,7 +7072,7 @@ function syncRemoteDownload(cfg) {
   return syncEnsureAccessToken(cfg).then(function (access) {
     if (cfg.provider === 'gdrive') return syncDriveDownload(access, cfg.filename);
     if (cfg.provider === 'dropbox') return syncDropboxDownload(access, cfg.filename);
-    return syncOneDriveDownload(access, cfg.filename);
+    return Promise.reject(new Error('sync failed: unknown provider.'));
   });
 }
 
@@ -7492,7 +7445,7 @@ function syncRefreshSyncPanel() {
   if (!document.getElementById('sy-provider')) return;
   var cfg = syncLoadConfig();
   syncSetVal('sy-provider', cfg.provider);
-  var groups = { webdav: 'sy-g-webdav', gdrive: 'sy-g-oauth', dropbox: 'sy-g-oauth', onedrive: 'sy-g-oauth', megas3: 'sy-g-megas3' };
+  var groups = { webdav: 'sy-g-webdav', gdrive: 'sy-g-oauth', dropbox: 'sy-g-oauth', megas3: 'sy-g-megas3' };
   var i, g;
   var ids = ['sy-g-webdav', 'sy-g-oauth', 'sy-g-megas3'];
   for (i = 0; i < ids.length; i++) {
@@ -7576,7 +7529,7 @@ function syncStartOAuth() {
   var rd = syncReadForm();
   var cfg = rd.cfg;
   // WebDAV / MEGA have no OAuth dance: Connect simply tests the login.
-  if (cfg.provider !== 'gdrive' && cfg.provider !== 'dropbox' && cfg.provider !== 'onedrive') {
+  if (cfg.provider !== 'gdrive' && cfg.provider !== 'dropbox') {
     syncTestConnection();
     return;
   }
@@ -7945,8 +7898,6 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncDriveFind = syncDriveFind;
   window.Inoculens.syncDropboxUpload = syncDropboxUpload;
   window.Inoculens.syncDropboxDownload = syncDropboxDownload;
-  window.Inoculens.syncOneDriveUpload = syncOneDriveUpload;
-  window.Inoculens.syncOneDriveDownload = syncOneDriveDownload;
   window.Inoculens.syncS3Put = syncS3Put;
   window.Inoculens.syncS3Get = syncS3Get;
   window.Inoculens.syncRemoteUpload = syncRemoteUpload;

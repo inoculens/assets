@@ -59,15 +59,14 @@
       <li><strong>Hosting (Netlify).</strong> This page and the app are static files. Like any web host, Netlify sees standard server logs (IP address, user agent, timestamps).</li>
       <li><strong>Price services.</strong> To show live values the app queries public market data: CoinGecko (coin + currency), Frankfurter/ECB rates (currency pair + date) and Stooq (stock symbol). These are market-data lookups only — your portfolio is never sent. These services see your IP address like any website you visit; their own privacy policies apply.</li>
       <li><strong>Fonts.</strong> The app loads its typefaces from Google Fonts.</li>
-      <li><strong>Sync destinations — only if you enable sync.</strong> Google Drive, Dropbox, OneDrive, MEGA object storage or your own WebDAV server receive a single file encrypted with AES-256-GCM. The provider <strong>cannot read it</strong>: decryption happens only in your browser with your passphrase, which is never transmitted or stored. Google's sign-in helper script loads only at the moment you press Connect.</li>
-      <li><strong>Sign-in providers.</strong> When you connect a drive, Google, Dropbox or Microsoft verify your identity for <em>your</em> drive. Plutus receives only access tokens, which stay in your browser.</li>
+      <li><strong>Sync destinations — only if you enable sync.</strong> Google Drive, Dropbox, MEGA object storage or your own WebDAV server receive a single file encrypted with AES-256-GCM. The provider <strong>cannot read it</strong>: decryption happens only in your browser with your passphrase, which is never transmitted or stored. Google's sign-in helper script loads only at the moment you press Connect.</li>
+      <li><strong>Sign-in providers.</strong> When you connect a drive, Google or Dropbox verify your identity for <em>your</em> drive. Plutus receives only access tokens, which stay in your browser.</li>
     </ul>
 
     <h2>Why each drive permission is needed</h2>
     <ul>
       <li><strong>Google Drive (<code>drive.file</code>):</strong> access only to files the Plutus app itself created — your other Drive files stay invisible to it.</li>
       <li><strong>Dropbox (app folder):</strong> an isolated app folder Plutus can read and write; the rest of your Dropbox is untouched.</li>
-      <li><strong>OneDrive (app folder + staying signed in):</strong> a private app folder, plus the standard permission that lets the app refresh its own sign-in without asking you every hour.</li>
     </ul>
 
     <h2>How sync encryption works</h2>
@@ -77,7 +76,7 @@
     <p>Legal bases: your consent for optional features such as sync, and our legitimate interest in serving a secure static site. Because we hold no data about you server-side:</p>
     <ul>
       <li><strong>Access / portability:</strong> use Download backup and the CSV exports inside the app at any time.</li>
-      <li><strong>Erasure:</strong> use Clear all data in Settings (Danger zone), delete any drive copies, and revoke the app's access in your Google/Dropbox/Microsoft account settings.</li>
+      <li><strong>Erasure:</strong> use Clear all data in Settings (Danger zone), delete any drive copies, and revoke the app's access in your Google/Dropbox account settings.</li>
       <li><strong>Objection / restriction:</strong> stop using sync (Disconnect) or stop using the app; without local data there is nothing to process.</li>
       <li>To exercise any right against us directly, contact us at the address above — though in practice there is nothing for us to hand over or delete.</li>
     </ul>

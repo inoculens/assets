@@ -1562,11 +1562,11 @@
         return new Uint8Array(a);
       }
 
-      test('sync providers cover five drives', function () {
-        assert(S.SYNC_PROVIDERS && S.SYNC_PROVIDERS.length === 5, 'expected 5 providers');
+      test('sync providers cover four drives', function () {
+        assert(S.SYNC_PROVIDERS && S.SYNC_PROVIDERS.length === 4, 'expected 4 providers');
         var ids = S.SYNC_PROVIDERS.map(function (p) { return p.id; });
-        assert(ids.join(',') === 'webdav,gdrive,dropbox,onedrive,megas3', 'bad provider ids: ' + ids.join(','));
-        assert(S.syncIsProvider('megas3') && !S.syncIsProvider('nope'), 'syncIsProvider wrong');
+        assert(ids.join(',') === 'webdav,gdrive,dropbox,megas3', 'bad provider ids: ' + ids.join(','));
+        assert(S.syncIsProvider('megas3') && !S.syncIsProvider('nope') && !S.syncIsProvider('onedrive'), 'syncIsProvider wrong');
       });
 
       test('sync base64 RFC4648 vectors + rejects', function () {
@@ -1646,8 +1646,7 @@
         assert(g.indexOf('drive.file') !== -1 && g.indexOf('client_id=CID') !== -1, 'gdrive params');
         var d = S.syncOAuthAuthUrl('dropbox', 'KEY', 'https://app.test/', 'CH', 'ST');
         assert(d.indexOf('https://www.dropbox.com/oauth2/authorize') === 0, 'dropbox host');
-        var m = S.syncOAuthAuthUrl('onedrive', 'CID', 'https://app.test/', 'CH', 'ST');
-        assert(m.indexOf('login.microsoftonline.com') !== -1 && m.indexOf('AppFolder') !== -1, 'onedrive params');
+        assert(S.syncOAuthAuthUrl('nope', 'KEY', 'https://app.test/', 'CH', 'ST') === '', 'unknown provider must yield no url');
       });
 
       testAsync('sync sha256 known vector (or skip without WebCrypto)', function () {
