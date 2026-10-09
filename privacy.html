@@ -49,7 +49,7 @@
     <p>We operate no database and receive no data from the app. Everything below stays on your device unless you actively send it somewhere yourself:</p>
     <ul>
       <li><strong>Portfolio data</strong> — accounts, trades, settings and price overrides, kept in your browser's local storage so the app works offline and privately.</li>
-      <li><strong>Sync configuration</strong> — only if you use sync: which provider you chose, filenames, and sign-in tokens. Your sync <strong>passphrase is never stored anywhere</strong>.</li>
+      <li><strong>Sync configuration</strong> — only if you use sync: which provider you chose, filenames, and sign-in tokens. Your sync <strong>passphrase stays in the form unless you explicitly tick “Remember passphrase in this browser”</strong>, in which case it is kept in the same browser storage — and it is never transmitted anywhere either way.</li>
       <li><strong>Price cache</strong> — recent market prices and currency rates, to limit network requests.</li>
       <li><strong>Backup files</strong> — only where you choose to download or upload them.</li>
     </ul>
@@ -59,7 +59,7 @@
       <li><strong>Hosting (Netlify).</strong> This page and the app are static files. Like any web host, Netlify sees standard server logs (IP address, user agent, timestamps).</li>
       <li><strong>Price services.</strong> To show live values the app queries public market data: CoinGecko (coin + currency), Frankfurter/ECB rates (currency pair + date) and Stooq (stock symbol). These are market-data lookups only — your portfolio is never sent. These services see your IP address like any website you visit; their own privacy policies apply.</li>
       <li><strong>Fonts.</strong> The app loads its typefaces from Google Fonts.</li>
-      <li><strong>Sync destinations — only if you enable sync.</strong> Google Drive, Dropbox, MEGA object storage or your own WebDAV server receive a single file encrypted with AES-256-GCM. The provider <strong>cannot read it</strong>: decryption happens only in your browser with your passphrase, which is never transmitted or stored. Google's sign-in helper script loads only at the moment you press Connect.</li>
+      <li><strong>Sync destinations — only if you enable sync.</strong> Google Drive, Dropbox, MEGA object storage or your own WebDAV server receive a single file encrypted with AES-256-GCM. The provider <strong>cannot read it</strong>: decryption happens only in your browser with your passphrase, which is never transmitted. Google's sign-in helper script loads only at the moment you press Connect.</li>
       <li><strong>Sign-in providers.</strong> When you connect a drive, Google or Dropbox verify your identity for <em>your</em> drive. Plutus receives only access tokens, which stay in your browser.</li>
     </ul>
 

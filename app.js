@@ -5533,6 +5533,7 @@ function buildSettings() {
     '</div>' +
     '<label for="sy-pass">Sync passphrase</label>' +
     '<input id="sy-pass" type="password" autocomplete="new-password" placeholder="Required — only you know it">' +
+    '<label class="sync-check" for="sy-remember-pass"><input id="sy-remember-pass" type="checkbox"> Remember passphrase in this browser</label>' +
     '<p class="muted set-blurb" id="sy-fp">Key fingerprint: —</p>' +
     '<p class="muted set-blurb" id="sy-status">Not connected.</p>' +
     '<label class="sync-check" for="sy-auto"><input id="sy-auto" type="checkbox"> Sync automatically on every change</label>' +
@@ -6099,10 +6100,11 @@ if (typeof window !== 'undefined') {
 //   {"app":"plutus.inoculens.com","v":1,"iter":N,"salt":b64,"iv":b64,
 //    "ciphertext":b64}
 //
-// The passphrase is never stored anywhere. To sync from another computer
-// the user only needs the drive login plus the passphrase. A wrong
-// passphrase fails closed (AES-GCM auth) and local data is never touched
-// until a downloaded backup fully validates via importState().
+// The passphrase lives only in the form (and, only if the user ticks
+// Remember, in this browser's local storage — never on any server). To sync
+// from another computer the user only needs the drive login plus the
+// passphrase. A wrong passphrase fails closed (AES-GCM auth) and local data
+// is never touched until a downloaded backup fully validates via importState().
 // Providers: WebDAV/Nextcloud (Basic), Google Drive / Dropbox
 // (OAuth one-click or PKCE with the user's own app), MEGA S4 (S3-compatible
 // SigV4 with the user's own access keys).
@@ -6386,6 +6388,8 @@ function syncDefaultConfig() {
     username: '',
     password: '',
     rememberPassword: false,
+    passphrase: '',
+    rememberPassphrase: false,
     clientId: '',
     clientSecret: '',
     tokens: null,
@@ -6415,6 +6419,11 @@ function syncSanitizeConfig(raw) {
   if (typeof c.password === 'string') d.password = c.password.slice(0, 512);
   d.rememberPassword = (c.rememberPassword === true);
   if (!d.rememberPassword) d.password = '';
+  // Sync passphrase: persisted only with explicit opt-in, exactly like the
+  // drive passwords above. Needed for auto-sync across reloads.
+  d.rememberPassphrase = (c.rememberPassphrase === true);
+  if (d.rememberPassphrase && typeof c.passphrase === 'string') d.passphrase = c.passphrase.slice(0, 512);
+  else d.passphrase = '';
   if (typeof c.clientId === 'string') d.clientId = c.clientId.trim().slice(0, 256);
   if (typeof c.clientSecret === 'string') d.clientSecret = c.clientSecret.slice(0, 512);
   if (c.tokens && typeof c.tokens === 'object' && typeof c.tokens.access === 'string' && c.tokens.access !== '') {
@@ -7511,7 +7520,7 @@ function syncPushFlow(opts) {
     if (auto) return;
     showBanner('Enter a sync passphrase first — it encrypts everything you upload.', 'error', {
       title: 'Sync needs a passphrase',
-      lines: ['Type a passphrase in the Sync tab. It is never stored or sent anywhere.']
+      lines: ['Type a passphrase in the Sync tab. It is never sent anywhere.']
     });
     return;
   }
@@ -7715,7 +7724,7 @@ function syncDownloadEncrypted() {
   if (!pass) {
     showBanner('Enter a sync passphrase first — it encrypts the file.', 'error', {
       title: 'Encrypted file',
-      lines: ['Type a passphrase in the Sync tab. It is never stored.']
+      lines: ['Type a passphrase in the Sync tab. It is never sent anywhere.']
     });
     return;
   }
@@ -7858,7 +7867,16 @@ function syncReadForm() {
   }
   var out = syncSanitizeConfig(cfg);
   out.autoSync = !!checked('sy-auto');
-  return { cfg: out, passphrase: val('sy-pass', '') };
+  var formPass = val('sy-pass', '');
+  var rememberPass = checked('sy-remember-pass');
+  out.rememberPassphrase = rememberPass;
+  if (rememberPass) {
+    if (formPass !== '') out.passphrase = formPass;
+  } else {
+    out.passphrase = '';
+  }
+  var passphrase = formPass || out.passphrase;
+  return { cfg: out, passphrase: passphrase };
 }
 
 function syncPersistFormSecrets(cfg) {
@@ -7958,6 +7976,9 @@ function syncRefreshSyncPanel() {
   } else connected = !!(cfg.tokens && cfg.tokens.access);
   var autoBox = document.getElementById('sy-auto');
   if (autoBox) autoBox.checked = !!cfg.autoSync;
+  if (cfg.passphrase) syncSetVal('sy-pass', cfg.passphrase);
+  var rememberPassBox = document.getElementById('sy-remember-pass');
+  if (rememberPassBox) rememberPassBox.checked = !!cfg.rememberPassphrase;
   var last = cfg.lastSyncAt ? (' Last sync ' + String(cfg.lastSyncAt).slice(0, 19).replace('T', ' ') + ' UTC.') : '';
   if (!syncBusy) syncSetStatus((connected ? ('Connected to ' + syncProviderLabel(cfg.provider) + '.') : 'Not connected.') + last);
   // Connection state is unmistakable on every visit: Connect locks once
@@ -8003,11 +8024,15 @@ function syncPassphraseOrBanner() {
   try {
     var el = (typeof document !== 'undefined') ? document.getElementById('sy-pass') : null;
     pass = el ? el.value : '';
+    if (!pass) {
+      var cfg = syncLoadConfig();
+      if (cfg.rememberPassphrase && cfg.passphrase) pass = cfg.passphrase;
+    }
   } catch (e) { pass = ''; }
   if (!pass) {
     showBanner('Enter a sync passphrase first — sync only works encrypted.', 'error', {
       title: 'Sync needs a passphrase',
-      lines: ['Type a passphrase in the Sync tab. It encrypts everything you upload and is never stored or sent anywhere.']
+      lines: ['Type a passphrase in the Sync tab. It encrypts everything you upload and is never sent anywhere.']
     });
     return null;
   }
@@ -8171,12 +8196,17 @@ function syncDisconnect() {
   cfg.rememberPassword = false;
   cfg.secretKey = '';
   cfg.rememberSecret = false;
+  cfg.passphrase = '';
+  cfg.rememberPassphrase = false;
   syncMemSecrets.password = '';
   syncMemSecrets.secretKey = '';
   syncSaveConfig(cfg);
   syncClearOAuthAttempt();
   syncSetVal('sy-passwd', '');
   syncSetVal('sy-skey', '');
+  syncSetVal('sy-pass', '');
+  var rememberPassBox = (typeof document !== 'undefined') ? document.getElementById('sy-remember-pass') : null;
+  if (rememberPassBox) rememberPassBox.checked = false;
   syncRefreshSyncPanel();
   clearBanner();
 }
@@ -8421,6 +8451,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncRemoteDownload = syncRemoteDownload;
   window.Inoculens.syncLoadConfig = syncLoadConfig;
   window.Inoculens.syncSaveConfig = syncSaveConfig;
+  window.Inoculens.syncReadForm = syncReadForm;
   window.Inoculens.syncPushFlow = syncPushFlow;
   window.Inoculens.syncPullFlow = syncPullFlow;
   window.Inoculens.syncDisconnect = syncDisconnect;

@@ -2072,6 +2072,37 @@
         }
       });
 
+      test('sync passphrase remember round-trip', function () {
+        var sy = null;
+        try { sy = localStorage.getItem('inoculens.sync.v1'); } catch (e) { sy = null; }
+        try {
+          if (typeof init === 'function') init();
+          var passEl = document.getElementById('sy-pass');
+          var box = document.getElementById('sy-remember-pass');
+          assert(passEl && box, 'passphrase controls missing');
+          try { localStorage.removeItem('inoculens.sync.v1'); } catch (e) { /* ignore */ }
+          passEl.value = 'pw-secret';
+          box.checked = true;
+          document.getElementById('sy-provider').dispatchEvent(new Event('change', { bubbles: true }));
+          var back = S.syncLoadConfig();
+          assert(back.passphrase === 'pw-secret' && back.rememberPassphrase === true, 'remembered passphrase must persist');
+          passEl.value = '';
+          S.syncRefreshSyncPanel();
+          assert(passEl.value === 'pw-secret', 'panel must prefill the remembered passphrase');
+          assert(box.checked === true, 'remember box must persist');
+          box.checked = false;
+          document.getElementById('sy-provider').dispatchEvent(new Event('change', { bubbles: true }));
+          assert(S.syncLoadConfig().passphrase === '', 'uncheck must clear the stored passphrase');
+          passEl.value = '';
+        } finally {
+          try {
+            if (sy === null) localStorage.removeItem('inoculens.sync.v1');
+            else localStorage.setItem('inoculens.sync.v1', sy);
+          } catch (e) { /* ignore */ }
+          try { S.syncRefreshSyncPanel(); } catch (e) { /* ignore */ }
+        }
+      });
+
       test('modal-born errors die with the dialog; page errors return', function () {
         if (typeof init === 'function') init();
         ['trade-dialog', 'account-dialog', 'confirm-dialog', 'note-dialog', 'error-dialog', 'color-dialog'].forEach(function (id) {
