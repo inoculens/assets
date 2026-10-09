@@ -1162,6 +1162,40 @@
           assert(r && r.interpolated === true, 'walk-back must flag interpolated');
         }, function (e) { restore(); throw e; });
       });
+
+      testAsync('failed history is not refetched every render (session backoff)', function () {
+        var origFetch = window.fetch;
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        try { H.clearHistCache(); } catch (e) { /* ignore */ }
+        var calls = 0;
+        window.fetch = function () { calls++; return Promise.resolve({ ok: false, status: 429 }); };
+        function restore() { window.fetch = origFetch; restoreState(); }
+        var trades = [{ id: 'fb-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-15', fee: 0, feeCurrency: 'EUR' }];
+        return H.ensureHistoricalExec(trades, 'EUR').then(function (first) {
+          assert(first === false, 'failed fill reports no change');
+          assert(calls === 1, 'first pass should attempt once, got ' + calls);
+          return H.ensureHistoricalExec(trades, 'EUR');
+        }).then(function (second) {
+          restore();
+          assert(second === false, 'second pass reports no change');
+          assert(calls === 1, 'failed key must not refetch this session, got ' + calls + ' calls');
+        }, function (e) { restore(); throw e; });
+      });
+
+      testAsync('frozen trades skip the history API entirely', function () {
+        var origFetch = window.fetch;
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        try { H.clearHistCache(); } catch (e) { /* ignore */ }
+        var calls = 0;
+        window.fetch = function () { calls++; return Promise.reject(new Error('must not fetch')); };
+        function restore() { window.fetch = origFetch; restoreState(); }
+        var trades = [{ id: 'fz-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-15', fee: 0, feeCurrency: 'EUR', execLock: { price: 49000, vs: 'EUR', source: 'history' } }];
+        return H.ensureHistoricalExec(trades, 'EUR').then(function (changed) {
+          restore();
+          assert(changed === false, 'nothing to fill');
+          assert(calls === 0, 'frozen trades need no network, got ' + calls + ' calls');
+        }, function (e) { restore(); throw e; });
+      });
     })();
 
     // === Ui tests (Task 6: DOM checklist) ===
@@ -1704,7 +1738,7 @@
                 { id: 'px-acct', name: 'Px BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
               ],
               trades: [
-                { id: 'px-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', note: '', accountId: 'px-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
+                { id: 'px-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', note: '', accountId: 'px-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, execLock: { price: 90000, vs: 'EUR', source: 'history' }, createdAt: '2026-01-01T00:00:00.000Z' }
               ],
               priceOverrides: { BTC: 1.5 }
             });
@@ -1735,6 +1769,159 @@
             } catch (e) { /* ignore */ }
             try { L2.reloadFxCache(); } catch (e) { /* ignore */ }
             try { L2.reloadHistCache(); } catch (e) { /* ignore */ }
+          }
+        });
+
+        test('frozen execLock renders with zero network (offline-proof)', function () {
+          var L2 = window.Inoculens;
+          var origFetch = window.fetch;
+          var histCalls = 0;
+          window.fetch = function () {
+            var u = String(arguments[0] || '');
+            if (u.indexOf('/history') !== -1 || u.indexOf('stooq.com') !== -1) histCalls++;
+            return Promise.reject(new Error('offline'));
+          };
+          var backupFx = null;
+          try { backupFx = localStorage.getItem('inoculens.fxcache.v1'); } catch (e) { backupFx = null; }
+          try {
+            L2.saveState({
+              settings: { mainCurrency: 'EUR', costMethod: 'average' },
+              accounts: [
+                { id: 'fz-acct', name: 'Fz BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              trades: [
+                { id: 'fz-a', type: 'buy', symbol: 'BTC', qty: 0.00058193, total: 50, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'fz-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, execLock: { price: 86000, vs: 'EUR', source: 'history' }, createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              priceOverrides: {}
+            });
+            try { L2.clearHistCache(); } catch (e) { /* ignore */ }
+            if (typeof init === 'function') init();
+            navTo('fz-acct');
+            route();
+            render();
+            var det = document.getElementById('account-detail');
+            var execCell = det.querySelector('[data-label="Exec. price"]');
+            assert(execCell !== null, 'exec row should render from the frozen quote');
+            assert(Number(execCell.getAttribute('data-value')) === 86000, 'exec must be the frozen quote, got ' + execCell.getAttribute('data-value'));
+            assert(histCalls === 0, 'frozen quote must not hit the history API, got ' + histCalls + ' calls');
+            navHome();
+          } finally {
+            window.fetch = origFetch;
+            try {
+              if (backupFx === null) localStorage.removeItem('inoculens.fxcache.v1');
+              else localStorage.setItem('inoculens.fxcache.v1', backupFx);
+            } catch (e) { /* ignore */ }
+            try { L2.reloadFxCache(); } catch (e) { /* ignore */ }
+          }
+        });
+
+        test('frozen execLock converts to the display fiat at the historical rate', function () {
+          var L2 = window.Inoculens;
+          var backupFx = null;
+          try { backupFx = localStorage.getItem('inoculens.fxcache.v1'); } catch (e) { backupFx = null; }
+          try {
+            L2.saveState({
+              settings: { mainCurrency: 'EUR', costMethod: 'average' },
+              accounts: [
+                { id: 'fx-acct', name: 'Fx BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              trades: [
+                { id: 'fx-a', type: 'buy', symbol: 'BTC', qty: 1, total: 100000, currency: 'USD', date: '2026-01-01', fee: 0, feeCurrency: 'USD', note: '', accountId: 'fx-acct', fxLock: { pair: 'USD/EUR', rate: 0.9, source: 'ECB-2026-01-01', interpolated: false }, execLock: { price: 100000, vs: 'USD', source: 'history' }, createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              priceOverrides: {}
+            });
+            try { L2.clearHistCache(); } catch (e) { /* ignore */ }
+            L2.cacheRate('2026-01-01', 'USD', 'EUR', 0.9, 'ECB-2026-01-01');
+            if (typeof init === 'function') init();
+            navTo('fx-acct');
+            route();
+            render();
+            var det = document.getElementById('account-detail');
+            var execCell = det.querySelector('[data-label="Exec. price"]');
+            assert(execCell !== null, 'exec row should render');
+            assert(Math.abs(Number(execCell.getAttribute('data-value')) - 90000) < 1e-9, 'exec must convert USD->EUR at the historical rate, got ' + execCell.getAttribute('data-value'));
+            navHome();
+          } finally {
+            try {
+              if (backupFx === null) localStorage.removeItem('inoculens.fxcache.v1');
+              else localStorage.setItem('inoculens.fxcache.v1', backupFx);
+            } catch (e) { /* ignore */ }
+            try { L2.reloadFxCache(); } catch (e) { /* ignore */ }
+          }
+        });
+
+        testAsync('submit freezes the exec quote on the saved trade', function () {
+          var L2 = window.Inoculens;
+          var origFetch = window.fetch;
+          window.fetch = function (url) {
+            var u = String(url);
+            if (u.indexOf('/coins/bitcoin/history') !== -1) {
+              return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ market_data: { current_price: { eur: 81000, usd: 88000 } } }); } });
+            }
+            if (u.indexOf('simple/price') !== -1) {
+              return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ bitcoin: { eur: 82000 } }); } });
+            }
+            return Promise.reject(new Error('unexpected ' + u));
+          };
+          function restore() { window.fetch = origFetch; }
+          function flush() { return new Promise(function (res) { setTimeout(res, 0); }); }
+          L2.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [
+              { id: 'sv-acct', name: 'Sv BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            trades: [],
+            priceOverrides: {}
+          });
+          if (typeof init === 'function') init();
+          navHome();
+          openPrefillTrade(null);
+          document.getElementById('t-side').value = 'buy';
+          document.getElementById('t-qty').value = '0.001';
+          document.getElementById('t-total').value = '81';
+          document.getElementById('t-currency').value = 'EUR';
+          document.getElementById('t-currency').dispatchEvent(new Event('change', { bubbles: true }));
+          document.getElementById('t-date').value = '2026-03-01';
+          document.getElementById('t-fee').value = '';
+          document.getElementById('t-note').value = '';
+          document.getElementById('t-manual-rate').value = '';
+          document.getElementById('t-manual-price').value = '';
+          onTradeSubmit({ preventDefault: function () {} });
+          return flush().then(flush).then(flush).then(flush).then(function () {
+            var st = L2.loadState();
+            restore();
+            assert(st.trades.length === 1, 'trade should save, got ' + st.trades.length);
+            var ex = st.trades[0].execLock;
+            assert(ex && ex.price === 81000 && ex.vs === 'EUR', 'execLock must freeze the history quote, got ' + JSON.stringify(ex));
+            var det = document.getElementById('account-detail');
+            var execCell = det && det.querySelector('[data-label="Exec. price"]');
+            assert(execCell !== null && Number(execCell.getAttribute('data-value')) === 81000, 'row must show the frozen quote');
+          }, function (e) { restore(); throw e; });
+        });
+
+        test('execLock survives export/import round-trip', function () {
+          var L2 = window.Inoculens;
+          var backup = null;
+          try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+          try {
+            var seed = {
+              settings: { mainCurrency: 'EUR', costMethod: 'average' },
+              accounts: [{ id: 'rt-acct', name: 'Rt', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }],
+              trades: [{ id: 'rt-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', accountId: 'rt-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' }, execLock: { price: 49000, vs: 'EUR', source: 'history' } }],
+              priceOverrides: {}
+            };
+            var json = L2.exportState(seed);
+            try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
+            var back = L2.importState(json);
+            assert(back.trades.length === 1, 'trade should import');
+            assert(back.trades[0].execLock && back.trades[0].execLock.price === 49000 && back.trades[0].execLock.vs === 'EUR',
+              'execLock must survive round-trip, got ' + JSON.stringify(back.trades[0].execLock));
+          } finally {
+            try {
+              if (backup === null) localStorage.removeItem('inoculens.v2');
+              else localStorage.setItem('inoculens.v2', backup);
+            } catch (e) { /* ignore */ }
+            try { render(); } catch (e) { /* ignore */ }
           }
         });
       } finally {

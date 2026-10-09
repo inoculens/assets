@@ -769,6 +769,13 @@ function displayPairs(trades, main) {
     var fc = (typeof t.feeCurrency === 'string' && String(t.feeCurrency).trim() !== '')
       ? String(t.feeCurrency).trim().toUpperCase() : '';
     if (isFinite(feeN) && feeN > 0 && fc && fc !== c) need(d, fc);
+    // Frozen exec quote in another fiat needs its own historical rate to
+    // render in the current main (deduped by `seen` when it matches a leg).
+    if (t.type === 'buy' || t.type === 'sell') {
+      var fr = null;
+      try { fr = frozenExecOf(t); } catch (e) { fr = null; }
+      if (fr && fr.vs && fr.vs !== m) need(d, fr.vs);
+    }
   });
   return out;
 }
@@ -2162,12 +2169,14 @@ function refreshAllPrices(symbols, vs, kinds) {
 
 // --- Historical execution prices (per-trade market reference) ---
 // Exec. price resolution order per trade: (1) manual override from
-// loadState().priceOverrides (wins, no network), (2) cached historical price
-// for (symbol, trade date, main), (3) network history — CoinGecko /history
+// loadState().priceOverrides (wins, no network), (2) the trade's frozen
+// execLock (stamped once at save time, converted to the display main at the
+// historical ECB rate — never refetched), (3) cached historical price for
+// (symbol, trade date, main), (4) network history — CoinGecko /history
 // (DD-MM-YYYY) for mapped crypto, Stooq daily closes for stock accounts with
 // up to 5-day walk-back for weekends/holidays — converted into the display
 // main at the HISTORICAL ECB rate of the fixing date (never today's rate),
-// (4) null when unknown (row shows "—", never 0). Never throws to the UI.
+// (5) null when unknown (row shows "—", never 0). Never throws to the UI.
 // Real price stays purely calculated (all-in converted total / qty); Exec is
 // the reference-only market quote it is compared against.
 
@@ -2207,11 +2216,65 @@ function saveHistCache() {
   } catch (e) { /* private mode / quota: memory cache still works */ }
 }
 
+// Keys that failed this session (network/429/dead source): skipped by later
+// ensureHistoricalExec passes so one outage doesn't hammer the price APIs on
+// every render (which also starves the live-price quota). Cleared with the
+// cache; a fiat switch still retries (different key).
+var histFailKeys = {};
+
 function clearHistCache() {
   histPriceCache = {};
+  histFailKeys = {};
   try {
     if (typeof localStorage !== 'undefined') localStorage.removeItem(HISTCACHE_KEY);
   } catch (e) { /* ignore */ }
+}
+
+// Frozen reference quote stamped on the trade at save time:
+// {price, vs, source}. Extra trade key, ignored by validation/ledger/export
+// shape checks (isValidImportTrade only asserts known fields).
+function frozenExecOf(t) {
+  if (!t || typeof t !== 'object') return null;
+  var e = t.execLock;
+  if (!e || typeof e !== 'object') return null;
+  var p = Number(e.price);
+  var vs = (typeof e.vs === 'string') ? e.vs.trim().toUpperCase() : '';
+  if (!isFinite(p) || p <= 0 || !/^[A-Z]{2,10}$/.test(vs)) return null;
+  return { price: p, vs: vs, source: String(e.source || '') };
+}
+
+// Fetch-once patch for trades saved without a frozen quote (history fetch
+// failed at save, or a pre-freeze legacy trade being edited). Never blocks
+// saving and never throws: on failure the legacy async display path keeps
+// serving the row (override → hist cache → network → "—").
+function freezeExecLock(tradeId, symbol, date, mainU, kind) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  var day = (typeof date === 'string') ? date.slice(0, 10) : '';
+  var m = String(mainU || '').trim().toUpperCase();
+  var kd = (typeof kind === 'string') ? kind.trim().toLowerCase() : '';
+  if (!tradeId || !sym || !isValidDateStr(day)) return;
+  if (kd === 'custom' || kd === 'cash') return;
+  if (kd !== 'stock' && !SYMBOL_MAP[sym]) return;
+  fetchHistoricalPrice(sym, day, m, kd).then(function (r) {
+    var price = (r && typeof r === 'object') ? r.price : r;
+    if (!(isFinite(Number(price)) && Number(price) > 0)) return;
+    var st = null;
+    try { st = loadState(); } catch (e) { return; }
+    var found = false;
+    (st.trades || []).forEach(function (t) {
+      if (t && t.id === tradeId && !frozenExecOf(t)) {
+        t.execLock = {
+          price: Number(price),
+          vs: m,
+          source: (r && typeof r === 'object' && r.day) ? ('Stooq-' + r.day) : 'history'
+        };
+        found = true;
+      }
+    });
+    if (!found) return;
+    try { saveStateGuarded(st); } catch (e) { return; }
+    try { render(); } catch (e) { /* paint stays, next render picks it up */ }
+  }, function () { /* legacy async display path covers the row */ });
 }
 
 function getHistCached(symbol, date, vs, kind) {
@@ -2383,7 +2446,9 @@ function ensureHistoricalExec(trades, main, kinds) {
     if (seen[key]) return;
     seen[key] = true;
     try { if (priceOverrideFor(sym) !== null) return; } catch (e) { /* fall through */ }
+    if (frozenExecOf(t)) return; // frozen quote on the trade: no network needed
     if (getHistCached(sym, day, m, kk)) return;
+    if (histFailKeys[key]) return; // failed already this session: don't hammer
     jobs.push(fetchHistoricalPrice(sym, day, m, kd).then(function (r) {
       var price = (r && typeof r === 'object') ? r.price : r;
       var interp = (r && typeof r === 'object') ? !!r.interpolated : false;
@@ -2392,8 +2457,9 @@ function ensureHistoricalExec(trades, main, kinds) {
         setHistCached(sym, day, m, kk, Number(price), src, interp);
         return true;
       }
+      histFailKeys[key] = true;
       return false;
-    }, function () { return false; }));
+    }, function () { histFailKeys[key] = true; return false; }));
   });
   if (!jobs.length) return Promise.resolve(false);
   return Promise.all(jobs).then(function (flags) {
@@ -2422,6 +2488,8 @@ if (typeof window !== 'undefined') {
   window.Inoculens.parseStooqDaily = parseStooqDaily;
   window.Inoculens.toCoingeckoDate = toCoingeckoDate;
   window.Inoculens.roundHalfUp2 = roundHalfUp2;
+  window.Inoculens.frozenExecOf = frozenExecOf;
+  window.Inoculens.freezeExecLock = freezeExecLock;
 }
 
 // === Ui ===
@@ -3866,18 +3934,46 @@ function tradeBlock(t, main, accountNameById, kind) {
     // at the historical FX rate (or manual rate), divided by qty received —
     // e.g. 50 EUR / 0.00058193 BTC = 85920.99. Shown rounded half-up to 2
     // decimals; the books run on this exact value (== Average entry). Exec is
-    // the reference-only historical market quote on the trade date (manual
-    // override wins); it never touches P&L.
+    // the reference-only market quote: manual override wins, else the quote
+    // frozen on the trade at save time (converted to the display fiat at the
+    // historical rate), else the legacy async history lookup. It never
+    // touches P&L; "—" only when nothing is known (never 0, never a guess).
     var pq = Number(t.qty);
     if (isFinite(pq) && pq > 0 && n.netMain > 0) {
       var symU = String(t.symbol || '').toUpperCase();
       var realP = n.netMain / pq;
-      var execInfo = null;
-      try { execInfo = getHistoricalExec(t.symbol, t.date, main, kind); } catch (e) { execInfo = null; }
-      var execP = (execInfo && isFinite(Number(execInfo.price)) && Number(execInfo.price) > 0)
-        ? Number(execInfo.price) : null;
-      if (execP !== null) {
-        box.appendChild(statRow('Exec. price', fmtMoney(execP, main) + ' / ' + symU, execP, false));
+      var execShown = null;
+      var execCcy = main;
+      var ovExec = null;
+      try { ovExec = priceOverrideFor(t.symbol); } catch (e) { ovExec = null; }
+      if (ovExec !== null) {
+        execShown = ovExec;
+      } else {
+        var frExec = null;
+        try { frExec = frozenExecOf(t); } catch (e) { frExec = null; }
+        if (frExec) {
+          if (frExec.vs === main) {
+            execShown = frExec.price;
+          } else {
+            var hrExec = null;
+            try { hrExec = getCachedRate(t.date, frExec.vs, main); } catch (e) { hrExec = null; }
+            if (hrExec && isFinite(Number(hrExec.rate)) && Number(hrExec.rate) > 0) {
+              execShown = frExec.price * Number(hrExec.rate);
+            } else {
+              execShown = frExec.price; // conversion pending: show frozen as-stored
+              execCcy = frExec.vs;
+            }
+          }
+        } else {
+          var execInfo = null;
+          try { execInfo = getHistoricalExec(t.symbol, t.date, main, kind); } catch (e) { execInfo = null; }
+          if (execInfo && isFinite(Number(execInfo.price)) && Number(execInfo.price) > 0) {
+            execShown = Number(execInfo.price);
+          }
+        }
+      }
+      if (execShown !== null) {
+        box.appendChild(statRow('Exec. price', fmtMoney(execShown, execCcy) + ' / ' + symU, execShown, false));
       } else {
         box.appendChild(statRow('Exec. price', '—', null, false));
       }
@@ -5352,11 +5448,18 @@ function onTradeSubmit(ev) {
         sellLeg.feeFxLock = { pair: feeLock.pair, rate: feeLock.rate, source: feeLock.source, interpolated: !!feeLock.interpolated };
       }
       var buyLeg = { id: uid(), type: 'buy', symbol: toSym, qty: toQty, total: swapTotal, currency: swapCcy, date: date, fee: 0, feeCurrency: swapCcy, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: toAccSwap.id, swapId: swapId, createdAt: new Date().toISOString() };
+      if (manualPrice !== null) {
+        // Manual quote is for the received asset; the sold leg freezes via history.
+        buyLeg.execLock = { price: manualPrice, vs: String(main).toUpperCase(), source: 'manual' };
+      }
       var e1 = validateTrade(sellLeg, heldFrom);
       if (e1) { tradeFormError(e1); lockSubmit(false, 'Add record'); return; }
       st.trades.push(sellLeg);
       st.trades.push(buyLeg);
       if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Add record'); return; }
+      // Freeze reference exec quotes in the background (saving never waits).
+      try { freezeExecLock(sellLeg.id, fromSym, date, String(main).toUpperCase(), (acc && acc.kind) || undefined); } catch (e) { /* ignore */ }
+      try { freezeExecLock(buyLeg.id, toSym, date, String(main).toUpperCase(), (toAccSwap && toAccSwap.kind) || undefined); } catch (e) { /* ignore */ }
       uiSetVal('t-qty', ''); uiSetVal('t-toqty', ''); uiSetVal('t-total', ''); uiSetVal('t-note', ''); uiSetVal('t-manual-rate', ''); uiSetVal('t-manual-price', '');
       var dd = document.getElementById('t-date'); if (dd) dd.value = todayStr();
       tradeFormError(null);
@@ -5551,6 +5654,26 @@ function onTradeSubmit(ev) {
         createdAt: prev.createdAt || new Date().toISOString()
       };
       withFeeLock(trade);
+      // Reference exec quote: manual wins; else keep the frozen quote when the
+      // identifying fields are untouched; otherwise refreeze after save.
+      // Non-buy/sell rows never show Exec, so they carry no execLock.
+      var needRefreeze = false;
+      if (side === 'buy' || side === 'sell') {
+        if (manualPrice !== null) {
+          trade.execLock = { price: manualPrice, vs: String(main).toUpperCase(), source: 'manual' };
+        } else {
+          var prevFrozen = null;
+          try { prevFrozen = frozenExecOf(prev); } catch (e) { prevFrozen = null; }
+          if (prevFrozen && prev.date === date && String(prev.symbol).toUpperCase() === symbol) {
+            trade.execLock = { price: prevFrozen.price, vs: prevFrozen.vs, source: prevFrozen.source };
+          } else {
+            try { delete trade.execLock; } catch (e) { /* ignore */ }
+            needRefreeze = true;
+          }
+        }
+      } else {
+        try { delete trade.execLock; } catch (e) { /* ignore */ }
+      }
       if (side === 'transfer') { if (toAccId) trade.toAccountId = toAccId; trade.networkFee = networkFee; }
       else if (side === 'expense' && qty === null) { delete trade.qty; }
       if (prev.swapId) trade.swapId = prev.swapId;
@@ -5567,6 +5690,9 @@ function onTradeSubmit(ev) {
       } catch (e2) { /* ignore */ }
       st.trades[idx] = trade;
       if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Save changes'); return; }
+      if (needRefreeze) {
+        try { freezeExecLock(trade.id, symbol, date, mainU, (acc && acc.kind) || undefined); } catch (e) { /* ignore */ }
+      }
       editingTradeId = null;
       tradeFormError(null);
       lockSubmit(false, 'Add record');
@@ -5595,6 +5721,13 @@ function onTradeSubmit(ev) {
     withFeeLock(trade);
     if (side === 'transfer') { if (toAccId) trade.toAccountId = toAccId; trade.networkFee = networkFee; }
     if (side === 'expense' && qty === null) { delete trade.qty; }
+    if (side === 'buy' || side === 'sell') {
+      if (manualPrice !== null) {
+        trade.execLock = { price: manualPrice, vs: String(main).toUpperCase(), source: 'manual' };
+      }
+    } else {
+      try { delete trade.execLock; } catch (e) { /* ignore */ }
+    }
     var heldForCheck = 1e18;
     try {
       if (side === 'sell' || side === 'transfer' || (side === 'expense' && qty !== null)) {
@@ -5607,6 +5740,11 @@ function onTradeSubmit(ev) {
     if (err) { tradeFormError(err); lockSubmit(false, 'Add record'); return; }
     st.trades.push(trade);
     if (!saveStateGuarded(st)) { tradeFormError('Storage unavailable — trade was not saved.'); lockSubmit(false, 'Add record'); return; }
+    if ((side === 'buy' || side === 'sell') && manualPrice === null) {
+      // No manual quote: freeze the reference exec price in the background.
+      // Saving never waits on it; failure just leaves the legacy async path.
+      try { freezeExecLock(trade.id, symbol, date, mainU, (acc && acc.kind) || undefined); } catch (e) { /* ignore */ }
+    }
     uiSetVal('t-qty', '');
     uiSetVal('t-toqty', '');
     uiSetVal('t-total', '');
