@@ -2150,6 +2150,25 @@ function fmtPct(n) {
 function showBanner(msg, kind, details) {
   var b = document.getElementById('banner');
   if (!b) return;
+  var hasDetails = !!(details && ((details.lines && details.lines.length) || details.message));
+  if (hasDetails) {
+    lastErrorDetails = {
+      title: details.title || 'Details',
+      message: details.message || String(msg),
+      lines: (details.lines || []).slice(0, 200)
+    };
+  } else {
+    lastErrorDetails = null;
+  }
+  // Settings sits above the page: while it is open the message lives ONLY
+  // in the dialog mirror (it moves back to the page banner on close).
+  if (!suppressMirror && settingsDialogOpen()) {
+    lastMirror = { msg: String(msg), kind: kind, details: details || null };
+    try {
+      mirrorBannerToSettings(String(msg), kind === 'info' ? 'info' : 'error', hasDetails);
+    } catch (e) { /* never let the mirror break the banner */ }
+    return;
+  }
   var t = document.getElementById('banner-text');
   if (t) t.textContent = String(msg);
   else b.textContent = String(msg);
@@ -2161,12 +2180,7 @@ function showBanner(msg, kind, details) {
   // Optional drill-down: every error with something more to say gets a
   // "More details" button opening the fixed-size error popup. The banner
   // itself stays one calm general line no matter how many tickers fail.
-  if (details && ((details.lines && details.lines.length) || details.message)) {
-    lastErrorDetails = {
-      title: details.title || 'Details',
-      message: details.message || String(msg),
-      lines: (details.lines || []).slice(0, 200)
-    };
+  if (hasDetails) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.id = 'banner-details';
@@ -2175,17 +2189,8 @@ function showBanner(msg, kind, details) {
     btn.setAttribute('aria-label', 'Show error details');
     btn.addEventListener('click', function () { openErrorDialog(); });
     b.appendChild(btn);
-  } else {
-    lastErrorDetails = null;
   }
   b.hidden = false;
-  // Modal dialogs (settings included) paint above the page banner, so an
-  // error fired while Settings is open would hide behind it. Mirror the
-  // line inside the settings dialog; failures there stay visible + tappable.
-  try {
-    mirrorBannerToSettings(String(msg), kind === 'info' ? 'info' : 'error',
-      !!(details && ((details.lines && details.lines.length) || details.message)));
-  } catch (e) { /* never let the mirror break the banner */ }
 }
 
 function clearBanner() {
@@ -2199,11 +2204,17 @@ function clearBanner() {
   var old = document.getElementById('banner-details');
   if (old && old.parentNode) old.parentNode.removeChild(old);
   lastErrorDetails = null;
+  lastMirror = null;
   b.hidden = true;
   try { hideSettingsAlert(); } catch (e) { /* ignore */ }
 }
 
 var lastErrorDetails = null; // {title, message, lines[]} for the error-details popup
+
+// While Settings is open the message lives ONLY in the dialog mirror;
+// suppressMirror + lastMirror carry it back to the page banner on close.
+var suppressMirror = false;
+var lastMirror = null; // {msg, kind, details} or null
 
 // Settings-dialog mirror of the page banner: modal dialogs paint above the
 // page, so without this an error fired from the Sync tab hides behind the
@@ -2234,6 +2245,16 @@ function settingsAlertEl() {
     // Child of the dialog itself (above the body), NOT of the grid body:
     // the body is a single-row grid and a second child would break it.
     dlg.insertBefore(el, host);
+  }
+  // Once per dialog: when Settings closes, a mirrored message moves back to
+  // the page banner so it is not silently lost. Native Esc/backdrop closes
+  // fire 'close' too, so this catches every path (not just closeDialog).
+  if (!dlg.getAttribute('data-alert-wired')) {
+    dlg.setAttribute('data-alert-wired', '1');
+    dlg.addEventListener('close', function () {
+      try { flushSettingsAlertToBanner(); } catch (e) { /* ignore */ }
+      try { updateModalLock(); } catch (e2) { /* ignore */ }
+    });
   }
   return el;
 }
@@ -2269,16 +2290,56 @@ function hideSettingsAlert() {
 }
 
 function refreshSettingsAlert() {
-  // Re-mirror the current page banner when Settings opens, so a
-  // pre-existing error is visible without re-triggering it.
+  // Settings opened while a page banner shows: move the message into the
+  // dialog (it moves back on close), so it lives in exactly one place.
+  try {
+    var s = pageBannerState();
+    if (!s) return;
+    hidePageBannerOnly();
+    lastMirror = { msg: s.msg, kind: s.kind, details: lastErrorDetails };
+    mirrorBannerToSettings(s.msg, s.kind === 'info' ? 'info' : 'error', s.hasDetails);
+  } catch (e) { /* ignore */ }
+}
+
+function pageBannerState() {
   try {
     var b = document.getElementById('banner');
-    if (!b || b.hidden) return;
+    if (!b || b.hidden) return null;
     var t = document.getElementById('banner-text');
     var kind = 'error';
     try { kind = (b.dataset && b.dataset.kind === 'info') ? 'info' : 'error'; } catch (e) { /* ignore */ }
-    mirrorBannerToSettings(t ? t.textContent : b.textContent, kind, !!document.getElementById('banner-details'));
-  } catch (e) { /* ignore */ }
+    return { msg: t ? t.textContent : b.textContent, kind: kind, hasDetails: !!document.getElementById('banner-details') };
+  } catch (e) {
+    return null;
+  }
+}
+
+function hidePageBannerOnly() {
+  // Hides the page banner but keeps lastErrorDetails, for the move into/out
+  // of the settings mirror. Prefer clearBanner() when the message is done.
+  var b = document.getElementById('banner');
+  if (!b) return;
+  var t = document.getElementById('banner-text');
+  if (t) t.textContent = '';
+  else b.textContent = '';
+  b.classList.remove('error', 'info');
+  try { delete b.dataset.kind; } catch (e) { /* ignore */ }
+  var old = document.getElementById('banner-details');
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+  b.hidden = true;
+}
+
+function flushSettingsAlertToBanner() {
+  var m = lastMirror;
+  lastMirror = null;
+  try { hideSettingsAlert(); } catch (e) { /* ignore */ }
+  if (!m) return;
+  suppressMirror = true;
+  try {
+    showBanner(m.msg, m.kind, m.details);
+  } finally {
+    suppressMirror = false;
+  }
 }
 
 function openErrorDialog() {
@@ -2307,6 +2368,14 @@ function openErrorDialog() {
 // Price notices are informational and transient: only clear the banner
 // when it shows a price notice, so FX/storage errors are never wiped.
 function clearPriceBanner() {
+  // A mirrored info notice lives in the dialog while the page banner hides
+  // (see showBanner): clear that copy too — but never an error mirror.
+  try {
+    if (lastMirror && lastMirror.kind === 'info') {
+      lastMirror = null;
+      hideSettingsAlert();
+    }
+  } catch (e) { /* ignore */ }
   var b = document.getElementById('banner');
   if (!b || b.hidden) return;
   var kind = null;
@@ -5067,6 +5136,33 @@ function onTradeSubmit(ev) {
 
 var dialogOpener = null;
 
+// While any modal dialog is open the page underneath is frozen: no
+// background scroll (body lock) and no background interaction (native
+// showModal already makes the backdrop inert + traps focus). Stacked
+// dialogs (e.g. Settings + confirm) count, so closing one never unlocks
+// while another is still open. Ancient browsers without showModal fall
+// back to the [open] attribute: scroll still locks, clicks do not.
+var MODAL_IDS = ['trade-dialog', 'account-dialog', 'settings-dialog', 'confirm-dialog', 'note-dialog', 'error-dialog', 'color-dialog'];
+
+function updateModalLock() {
+  try {
+    if (typeof document === 'undefined') return;
+    var open = 0;
+    var i, d;
+    for (i = 0; i < MODAL_IDS.length; i++) {
+      d = document.getElementById(MODAL_IDS[i]);
+      if (d && (d.open || (d.hasAttribute && d.hasAttribute('open')))) open++;
+    }
+    var body = document.body;
+    if (!body || !body.classList) return;
+    if (open > 0) {
+      try { body.classList.add('modal-open'); } catch (e) { /* ignore */ }
+    } else {
+      try { body.classList.remove('modal-open'); } catch (e) { /* ignore */ }
+    }
+  } catch (e) { /* ignore */ }
+}
+
 function openDialog(id) {
   var dlg = document.getElementById(id);
   if (!dlg) return;
@@ -5076,6 +5172,7 @@ function openDialog(id) {
   } else {
     dlg.setAttribute('open', '');
   }
+  try { updateModalLock(); } catch (e) { /* ignore */ }
   if (id === 'settings-dialog') {
     try { refreshSettingsAlert(); } catch (e) { /* ignore */ }
   }
@@ -5090,6 +5187,7 @@ function closeDialog(id) {
   if (!dlg) return;
   if (typeof dlg.close === 'function' && dlg.open) dlg.close();
   else dlg.removeAttribute('open');
+  try { updateModalLock(); } catch (e) { /* ignore */ }
 }
 
 function returnFocus() {
@@ -5143,6 +5241,9 @@ function wireDialog(id) {
     if (c) closeDialog(dlg);
   });
   dlg.addEventListener('close', returnFocus);
+  // Native Esc/backdrop closes bypass closeDialog(): recompute the
+  // background freeze here so it can never stick (or lift early).
+  dlg.addEventListener('close', updateModalLock);
 }
 
 var menuOutsideWired = false;
@@ -7668,6 +7769,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncRequireHttpsUrl = syncRequireHttpsUrl;
   window.Inoculens.syncS3ErrorBody = syncS3ErrorBody;
   window.Inoculens.syncFetch = syncFetch;
+  window.Inoculens.updateModalLock = updateModalLock;
   window.Inoculens.syncPostForm = syncPostForm;
   window.Inoculens.syncEnsureAccessToken = syncEnsureAccessToken;
   window.Inoculens.syncOAuthRefresh = syncOAuthRefresh;
@@ -7689,6 +7791,11 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncPushFlow = syncPushFlow;
   window.Inoculens.syncPullFlow = syncPullFlow;
   window.Inoculens.syncDisconnect = syncDisconnect;
+  window.Inoculens.showBanner = showBanner;
+  window.Inoculens.clearBanner = clearBanner;
+  window.Inoculens.openDialog = openDialog;
+  window.Inoculens.closeDialog = closeDialog;
+  window.Inoculens.flushSettingsAlertToBanner = flushSettingsAlertToBanner;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
     document.addEventListener('DOMContentLoaded', syncHandleOAuthRedirect);
   }

@@ -1786,19 +1786,42 @@
 
       test('settings errors mirror inside the dialog', function () {
         if (typeof init === 'function') init();
+        ['trade-dialog', 'account-dialog', 'confirm-dialog', 'note-dialog', 'error-dialog', 'color-dialog'].forEach(function (id) {
+          try { closeDialog(id); } catch (e) { /* ignore */ }
+        });
+        clearBanner();
         document.getElementById('tb-settings').click();
         var dlg = document.getElementById('settings-dialog');
         assert(dlg && (dlg.open || dlg.hasAttribute('open')), 'settings should be open');
+        assert(document.body.classList.contains('modal-open'), 'background must freeze while a modal is open');
         showBanner('Mirror me', 'error', null);
         var alert = document.getElementById('settings-alert');
         assert(alert && alert.hidden === false, 'alert should show inside settings');
         assert(document.getElementById('settings-alert-text').textContent === 'Mirror me', 'alert text mismatch');
+        assert(document.getElementById('banner').hidden === true, 'page banner must stay hidden while mirrored');
         showBanner('Mirror info', 'info', { title: 'T', lines: ['one'] });
         assert(alert.hidden === false, 'alert should stay visible');
         assert(document.getElementById('settings-alert-details') !== null, 'alert should carry More details');
         clearBanner();
         assert(alert.hidden === true, 'alert should hide with the banner');
         closeDialog('settings-dialog');
+        assert(!document.body.classList.contains('modal-open'), 'background must unfreeze after close');
+      });
+
+      test('mirrored error returns to the page on dialog close', function () {
+        if (typeof init === 'function') init();
+        ['trade-dialog', 'account-dialog', 'confirm-dialog', 'note-dialog', 'error-dialog', 'color-dialog'].forEach(function (id) {
+          try { closeDialog(id); } catch (e) { /* ignore */ }
+        });
+        clearBanner();
+        document.getElementById('tb-settings').click();
+        showBanner('Flush me', 'error', null);
+        assert(document.getElementById('banner').hidden === true, 'page banner hidden while mirrored');
+        closeDialog('settings-dialog');
+        var b = document.getElementById('banner');
+        assert(b.hidden === false, 'error must return to the page after close');
+        assert(document.getElementById('banner-text').textContent === 'Flush me', 'returned text mismatch');
+        clearBanner();
       });
     })();
 

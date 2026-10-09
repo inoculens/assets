@@ -1186,6 +1186,8 @@ details.opt + details.opt { margin-top: 0.65rem; }
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+/* ————— Modal freeze: no background scroll or interaction ————— */
+body.modal-open { overflow: hidden; }
 /* ————— FAB ————— */
 #fab-trade {
   display: none;
