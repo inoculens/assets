@@ -1,0 +1,3 @@
+# Local screenshots / reference images — never commit
+/Screenshot*.png
+/Image *.png
