@@ -5488,13 +5488,18 @@ function buildSettings() {
     '<label for="sy-passwd">App password</label>' +
     '<input id="sy-passwd" type="password" autocomplete="current-password">' +
     '<label class="sync-check" for="sy-remember"><input id="sy-remember" type="checkbox"> Remember password in this browser</label>' +
-    '<label for="sy-filename">Filename</label>' +
-    '<input id="sy-filename" autocomplete="off" spellcheck="false">' +
+    '<label for="sy-filename">File name</label>' +
+    '<input id="sy-filename" autocomplete="off" spellcheck="false" placeholder="plutus.inoculens.com">' +
+    '<p class="muted set-blurb">The ending .enc.json is fixed — type just the name. Missing folders are created automatically.</p>' +
     '</div>' +
     '<div id="sy-g-oauth" hidden>' +
     '<p class="muted set-blurb" id="sy-oneclick-note"></p>' +
-    '<label for="sy-filename2">Filename</label>' +
-    '<input id="sy-filename2" autocomplete="off" spellcheck="false">' +
+    '<label for="sy-filename2">File name</label>' +
+    '<input id="sy-filename2" autocomplete="off" spellcheck="false" placeholder="plutus.inoculens.com">' +
+    '<p class="muted set-blurb">The ending .enc.json is fixed — type just the name.</p>' +
+    '<label for="sy-folder2">Folder (optional)</label>' +
+    '<input id="sy-folder2" autocomplete="off" spellcheck="false" placeholder="e.g. Plutus/Work">' +
+    '<p class="muted set-blurb">Keep profiles apart with folders — a name already taken in the folder is refused, never overwritten. Leave empty for the top level; subfolders are created if missing.</p>' +
     '<details class="adv" id="sy-adv">' +
     '<summary>Bring your own OAuth app (advanced)</summary>' +
     '<label for="sy-client">OAuth client ID (your own app)</label>' +
@@ -5519,8 +5524,12 @@ function buildSettings() {
     '<label for="sy-skey">Secret key</label>' +
     '<input id="sy-skey" type="password" autocomplete="off">' +
     '<label class="sync-check" for="sy-remember2"><input id="sy-remember2" type="checkbox"> Remember secret key in this browser</label>' +
-    '<label for="sy-object">Object key</label>' +
-    '<input id="sy-object" autocomplete="off" spellcheck="false">' +
+    '<label for="sy-object">File name</label>' +
+    '<input id="sy-object" autocomplete="off" spellcheck="false" placeholder="plutus.inoculens.com">' +
+    '<p class="muted set-blurb">The ending .enc.json is fixed — type just the name.</p>' +
+    '<label for="sy-folder3">Folder prefix (optional)</label>' +
+    '<input id="sy-folder3" autocomplete="off" spellcheck="false" placeholder="e.g. backups/work">' +
+    '<p class="muted set-blurb">Keep profiles apart with prefixes — a name already taken is refused, never overwritten. Leave empty for the bucket top level.</p>' +
     '</div>' +
     '<label for="sy-pass">Sync passphrase</label>' +
     '<input id="sy-pass" type="password" autocomplete="new-password" placeholder="Required — only you know it">' +
@@ -6105,7 +6114,8 @@ var SYNC_APP_LEGACY = 'inoculens-plutus-sync';
 var SYNC_VERSION = 1;
 var SYNC_STORAGE_KEY = 'inoculens.sync.v1';
 var SYNC_OAUTH_KEY = 'inoculens.oauth.v1';
-var SYNC_DEFAULT_FILENAME = 'plutus-sync.enc.json';
+var SYNC_DEFAULT_BASENAME = 'plutus.inoculens.com';
+var SYNC_DEFAULT_FILENAME = 'plutus.inoculens.com.enc.json';
 var SYNC_PBKDF2_ITER = 600000;
 var SYNC_PROVIDERS = [
   { id: 'webdav', label: 'WebDAV / Nextcloud', kind: 'basic' },
@@ -6326,9 +6336,46 @@ function syncJoinUrl(base, name) {
 }
 
 function syncSanitizeFilename(name) {
-  var s = String(name == null ? '' : name).trim().replace(/[/\\'"]/g, '').slice(0, 128);
-  if (!s) s = SYNC_DEFAULT_FILENAME;
-  return s;
+  // User-editable basename, fixed extension: strip any pasted extension,
+  // unsafe characters and dot-segments, then lock '.enc.json' back on.
+  // Idempotent: already-correct names pass through unchanged.
+  var s = String(name == null ? '' : name).trim();
+  s = s.replace(/^[/\\.\s]+/, '');
+  s = s.replace(/(\.enc\.json|\.json|\.enc)$/i, '');
+  s = s.replace(/[/\\'"]/g, '');
+  s = s.replace(/[. ]+$/, '').slice(0, 100);
+  if (!s) s = SYNC_DEFAULT_BASENAME;
+  return s + '.enc.json';
+}
+
+function syncDisplayBasename(name) {
+  return String(name == null ? '' : name).replace(/\.enc\.json$/i, '');
+}
+
+// Folder path inside the drive (Drive folder tree, Dropbox subfolder, S3
+// key prefix). '' = drive root. Normalizes slashes, drops '.' and '..'
+// segments so paths can never escape upward.
+function syncNormalizeFolder(raw) {
+  var f = String(raw == null ? '' : raw).replace(/\\/g, '/').trim();
+  f = f.replace(/^\/+|\/+$/g, '');
+  var parts = f.split('/');
+  var out = [];
+  var i;
+  for (i = 0; i < parts.length; i++) {
+    var p = parts[i].replace(/^\.+$/, '');
+    if (p === '' || p === '.' || p === '..') continue;
+    out.push(p.slice(0, 128));
+  }
+  return out.join('/').slice(0, 256);
+}
+
+// Full identity of a save destination: the duplicate gate refuses to
+// overwrite a file at a destination this device has never synced.
+function syncLocationKey(cfg) {
+  var folder = syncNormalizeFolder(cfg.folder);
+  if (cfg.provider === 'webdav') return 'webdav|' + syncJoinUrl(cfg.url, cfg.filename);
+  if (cfg.provider === 'megas3') return 'megas3|' + syncS3Url(cfg);
+  return cfg.provider + '|' + folder + '/' + cfg.filename;
 }
 
 function syncDefaultConfig() {
@@ -6349,6 +6396,8 @@ function syncDefaultConfig() {
     secretKey: '',
     rememberSecret: false,
     objectKey: SYNC_DEFAULT_FILENAME,
+    folder: '',
+    lastLocation: null,
     autoSync: false,
     lastSyncedHash: null,
     lastSyncAt: null,
@@ -6387,6 +6436,16 @@ function syncSanitizeConfig(raw) {
   if (d.rememberSecret && typeof c.secretKey === 'string') d.secretKey = c.secretKey.slice(0, 512);
   else d.secretKey = '';
   if (typeof c.objectKey === 'string' && c.objectKey.trim() !== '') d.objectKey = c.objectKey.trim().replace(/^\/+/, '').slice(0, 256) || SYNC_DEFAULT_FILENAME;
+  // Migrate legacy full-path object keys (folder/file) into the split fields.
+  var folderFromKey = '';
+  if (d.provider === 'megas3' && d.objectKey.indexOf('/') !== -1) {
+    var segs = d.objectKey.split('/');
+    d.objectKey = segs.pop() || SYNC_DEFAULT_FILENAME;
+    folderFromKey = syncNormalizeFolder(segs.join('/'));
+  }
+  d.objectKey = syncSanitizeFilename(d.objectKey);
+  d.folder = syncNormalizeFolder(c.folder) || folderFromKey;
+  if (typeof c.lastLocation === 'string' && c.lastLocation !== '') d.lastLocation = c.lastLocation.slice(0, 512);
   d.autoSync = (c.autoSync === true);
   if (typeof c.lastSyncedHash === 'string' && c.lastSyncedHash !== '') d.lastSyncedHash = c.lastSyncedHash.slice(0, 64);
   if (typeof c.lastSyncAt === 'string' && isFinite(Date.parse(c.lastSyncAt))) d.lastSyncAt = c.lastSyncAt;
@@ -6775,29 +6834,84 @@ function syncHandleOAuthRedirect() {
 
 // --- Provider transports (ciphertext in, ciphertext out) ---
 
-function syncWebdavUpload(cfg, text) {
+function syncWebdavAuth(cfg) {
   var pw = syncPassword(cfg);
-  if (!cfg.url) return Promise.reject(new Error('sync failed: enter the WebDAV server URL.'));
-  if (!pw) return Promise.reject(new Error('sync failed: enter the WebDAV password.'));
+  if (!cfg.url) throw new Error('sync failed: enter the WebDAV server URL.');
+  if (!pw) throw new Error('sync failed: enter the WebDAV password.');
+  syncRequireHttpsUrl(cfg.url, 'WebDAV server');
+  return 'Basic ' + syncB64encode(syncUtf8Encode(cfg.username + ':' + pw));
+}
+
+// Creates the destination collection and a few missing parents (MKCOL,
+// capped depth, existing collections answer 405). Used before a first
+// upload and as a one-time retry when a PUT hits a missing folder.
+function syncWebdavMkdirP(cfg) {
+  var auth;
   try {
-    syncRequireHttpsUrl(cfg.url, 'WebDAV server');
+    auth = syncWebdavAuth(cfg);
   } catch (e) {
     return Promise.reject(e);
   }
-  var auth = 'Basic ' + syncB64encode(syncUtf8Encode(cfg.username + ':' + pw));
-  return syncFetch(syncJoinUrl(cfg.url, cfg.filename), {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'Authorization': auth },
-    body: text
-  }, 'the WebDAV server').then(function (res) {
-    if (res.ok) return true;
-    if (res.status === 401 || res.status === 403) {
-      throw new Error('sync failed: WebDAV login refused. Check the username and app password.');
-    }
-    if (res.status === 404 || res.status === 409) {
-      throw new Error('sync failed: WebDAV folder not found. Check the server URL.');
-    }
-    throw new Error('sync failed: WebDAV upload refused (HTTP ' + res.status + ').');
+  var base = String(cfg.url).replace(/\s+$/g, '').replace(/\/+$/, '');
+  var folder = syncJoinUrl(cfg.url, cfg.filename);
+  var slash = folder.lastIndexOf('/');
+  folder = (slash > 8) ? folder.slice(0, slash) : base;
+  var chain = [];
+  var cur = folder;
+  var guard = 0;
+  while (cur && cur.length > base.length && guard < 6) {
+    chain.unshift(cur);
+    var cut = cur.lastIndexOf('/');
+    if (cut <= 8) break;
+    cur = cur.slice(0, cut);
+    guard++;
+  }
+  var p = Promise.resolve(true);
+  chain.forEach(function (u) {
+    p = p.then(function () {
+      return syncFetch(u, { method: 'MKCOL', headers: { 'Authorization': auth } }, 'the WebDAV server').then(function (res) {
+        if (res.ok || res.status === 405 || res.status === 412 || res.status === 200 || res.status === 207) return true;
+        if (res.status === 401 || res.status === 403) {
+          throw new Error('sync failed: WebDAV refused (HTTP ' + res.status + ') — check the app password and folder permissions.');
+        }
+        throw new Error('sync failed: WebDAV folder cannot be created (HTTP ' + res.status + '). Check the server URL.');
+      });
+    });
+  });
+  return p;
+}
+
+function syncWebdavUpload(cfg, text) {
+  var auth;
+  try {
+    auth = syncWebdavAuth(cfg);
+  } catch (e) {
+    return Promise.reject(e);
+  }
+  var target = syncJoinUrl(cfg.url, cfg.filename);
+  function putOnce() {
+    return syncFetch(target, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': auth },
+      body: text
+    }, 'the WebDAV server').then(function (res) {
+      if (res.ok) return { done: true };
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('sync failed: WebDAV login refused. Check the username and app password.');
+      }
+      if (res.status === 404) {
+        throw new Error('sync failed: WebDAV folder not found. Check the server URL.');
+      }
+      if (res.status === 409) return { retryFolder: true };
+      throw new Error('sync failed: WebDAV upload refused (HTTP ' + res.status + ').');
+    });
+  }
+  return putOnce().then(function (r) {
+    if (r.done) return true;
+    return syncWebdavMkdirP(cfg).then(putOnce).then(function (r2) {
+      if (r2.done) return true;
+      throw new Error('sync failed: WebDAV upload refused (HTTP 409). Check the server URL.');
+    });
   });
 }
 
@@ -6824,17 +6938,59 @@ function syncWebdavDownload(cfg) {
   });
 }
 
-function syncDriveFind(access, name) {
-  var q = "name = '" + String(name).replace(/'/g, '') + "' and trashed = false";
+function syncDriveList(access, q) {
   var url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) +
     '&fields=' + encodeURIComponent('files(id,name,modifiedTime)') + '&spaces=drive';
   return syncFetch(url, { headers: { 'Authorization': 'Bearer ' + access } }, 'Google Drive').then(function (res) {
     return res.json().then(function (data) {
       if (!res.ok) throw new Error('sync failed: Drive lookup refused (HTTP ' + res.status + ').');
-      var files = (data && data.files) || [];
-      return (files.length && files[0].id) ? files[0].id : null;
+      return (data && data.files) || [];
     }, function () {
       throw new Error('sync failed: bad Drive response.');
+    });
+  });
+}
+
+function syncDriveFind(access, name, folderId) {
+  var parent = String(folderId || 'root').replace(/'/g, '');
+  var q = "name = '" + String(name).replace(/'/g, '') + "' and '" + parent + "' in parents and trashed = false";
+  return syncDriveList(access, q).then(function (files) {
+    return (files.length && files[0].id) ? files[0].id : null;
+  });
+}
+
+// Walks/creates a 'a/b/c' folder tree under Drive root. With create=false it
+// only resolves (missing segment -> null) so downloads never create folders.
+function syncDriveFolderId(access, folder, create) {
+  var segs = String(folder || '').split('/').filter(function (s) { return s !== ''; });
+  var chain = Promise.resolve('root');
+  segs.forEach(function (seg) {
+    chain = chain.then(function (pid) { return syncDriveFolderStep(access, seg, pid, create); });
+  });
+  return chain;
+}
+
+function syncDriveFolderStep(access, name, parentId, create) {
+  if (parentId === null) return Promise.resolve(null);
+  var clean = String(name).replace(/'/g, '');
+  var q = "mimeType = 'application/vnd.google-apps.folder' and name = '" + clean +
+    "' and '" + String(parentId).replace(/'/g, '') + "' in parents and trashed = false";
+  return syncDriveList(access, q).then(function (files) {
+    if (files.length && files[0].id) return files[0].id;
+    if (!create) return null;
+    return syncFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: clean, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] })
+    }, 'Google Drive').then(function (res) {
+      return res.json().then(function (data) {
+        if (!res.ok || !data || !data.id) {
+          throw new Error('sync failed: Drive could not create the folder (HTTP ' + res.status + ').');
+        }
+        return data.id;
+      }, function () {
+        throw new Error('sync failed: bad Drive response.');
+      });
     });
   });
 }
@@ -6850,49 +7006,58 @@ function syncDrivePutMedia(access, id, text) {
   });
 }
 
-function syncDriveUpload(access, name, text) {
-  return syncDriveFind(access, name).then(function (id) {
-    if (id) return syncDrivePutMedia(access, id, text);
-    return syncFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name, mimeType: 'application/json' })
-    }, 'Google Drive').then(function (res) {
-      return res.json().then(function (data) {
-        if (!res.ok || !data || !data.id) {
-          throw new Error('sync failed: Drive could not create the file (HTTP ' + res.status + ').');
-        }
-        return syncDrivePutMedia(access, data.id, text);
-      }, function () {
-        throw new Error('sync failed: bad Drive response.');
+function syncDriveUpload(access, cfg, text) {
+  var folder = syncNormalizeFolder(cfg.folder);
+  return syncDriveFolderId(access, folder, true).then(function (fid) {
+    return syncDriveFind(access, cfg.filename, fid).then(function (id) {
+      if (id) return syncDrivePutMedia(access, id, text);
+      return syncFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: cfg.filename, mimeType: 'application/json', parents: [fid] })
+      }, 'Google Drive').then(function (res) {
+        return res.json().then(function (data) {
+          if (!res.ok || !data || !data.id) {
+            throw new Error('sync failed: Drive could not create the file (HTTP ' + res.status + ').');
+          }
+          return syncDrivePutMedia(access, data.id, text);
+        }, function () {
+          throw new Error('sync failed: bad Drive response.');
+        });
       });
     });
   });
 }
 
-function syncDriveDownload(access, name) {
-  return syncDriveFind(access, name).then(function (id) {
-    if (!id) throw new Error('sync failed: no backup found on the server yet.');
-    return syncFetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) + '?alt=media', {
-      headers: { 'Authorization': 'Bearer ' + access }
-    }, 'Google Drive').then(function (res) {
-      if (res.ok) return res.text();
-      throw new Error('sync failed: Drive download refused (HTTP ' + res.status + ').');
+function syncDriveDownload(access, cfg) {
+  var folder = syncNormalizeFolder(cfg.folder);
+  return syncDriveFolderId(access, folder, false).then(function (fid) {
+    if (!fid) throw new Error('sync failed: no backup found on the server yet.');
+    return syncDriveFind(access, cfg.filename, fid).then(function (id) {
+      if (!id) throw new Error('sync failed: no backup found on the server yet.');
+      return syncFetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) + '?alt=media', {
+        headers: { 'Authorization': 'Bearer ' + access }
+      }, 'Google Drive').then(function (res) {
+        if (res.ok) return res.text();
+        throw new Error('sync failed: Drive download refused (HTTP ' + res.status + ').');
+      });
     });
   });
 }
 
-function syncDropboxPath(name) {
-  return '/' + String(name).replace(/^\/+/, '');
+// Full Dropbox path including the optional subfolder (uploads auto-create it).
+function syncDropboxFullPath(cfg) {
+  var folder = syncNormalizeFolder(cfg.folder);
+  return '/' + (folder ? folder + '/' : '') + cfg.filename;
 }
 
-function syncDropboxUpload(access, name, text) {
+function syncDropboxUpload(access, cfg, text) {
   return syncFetch('https://content.dropboxapi.com/2/files/upload', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + access,
       'Content-Type': 'application/octet-stream',
-      'Dropbox-API-Arg': JSON.stringify({ path: syncDropboxPath(name), mode: 'overwrite', autorename: false, mute: true })
+      'Dropbox-API-Arg': JSON.stringify({ path: syncDropboxFullPath(cfg), mode: 'overwrite', autorename: false, mute: true })
     },
     body: text
   }, 'Dropbox').then(function (res) {
@@ -6901,12 +7066,13 @@ function syncDropboxUpload(access, name, text) {
   });
 }
 
-function syncDropboxDownload(access, name) {
+function syncDropboxDownload(access, cfg) {
+  var arg = JSON.stringify({ path: syncDropboxFullPath(cfg) });
   return syncFetch('https://content.dropboxapi.com/2/files/download', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + access,
-      'Dropbox-API-Arg': JSON.stringify({ path: syncDropboxPath(name) })
+      'Dropbox-API-Arg': arg
     }
   }, 'Dropbox').then(function (res) {
     if (res.ok) return res.text();
@@ -6926,6 +7092,28 @@ function syncDropboxDownload(access, name) {
   });
 }
 
+function syncDropboxExists(access, cfg) {
+  return syncFetch('https://api.dropboxapi.com/2/files/get_metadata', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + access,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ path: syncDropboxFullPath(cfg) })
+  }, 'Dropbox').then(function (res) {
+    if (res.ok) return true;
+    if (res.status === 409) {
+      return res.text().then(function (body) {
+        if (body && body.indexOf('not_found') !== -1) return false;
+        throw new Error('sync failed: Dropbox refused the request (HTTP 409).');
+      }, function () {
+        throw new Error('sync failed: Dropbox lookup refused (HTTP 409).');
+      });
+    }
+    throw new Error('sync failed: Dropbox lookup refused (HTTP ' + res.status + ').');
+  });
+}
+
 // --- MEGA S4 (S3-compatible SigV4; standard HMAC-SHA256, no custom crypto) ---
 
 function syncSplitUrl(url) {
@@ -6941,8 +7129,10 @@ function syncSplitUrl(url) {
 
 function syncS3Url(cfg) {
   var ep = String(cfg.endpoint || '').replace(/\/+$/, '');
+  var folder = syncNormalizeFolder(cfg.folder);
   var key = String(cfg.objectKey || '').split('/').map(function (seg) { return encodeURIComponent(seg); }).join('/');
-  return ep + '/' + encodeURIComponent(cfg.bucket) + '/' + key;
+  var full = (folder ? folder.split('/').map(function (seg) { return encodeURIComponent(seg); }).join('/') + '/' : '') + key;
+  return ep + '/' + encodeURIComponent(cfg.bucket) + '/' + full;
 }
 
 function syncS3CanonicalRequest(method, url, payloadHash, amzDate) {
@@ -7077,8 +7267,8 @@ function syncRemoteUpload(cfg, text) {
   if (cfg.provider === 'webdav') return syncWebdavUpload(cfg, text);
   if (cfg.provider === 'megas3') return syncS3Put(cfg, text);
   return syncEnsureAccessToken(cfg).then(function (access) {
-    if (cfg.provider === 'gdrive') return syncDriveUpload(access, cfg.filename, text);
-    if (cfg.provider === 'dropbox') return syncDropboxUpload(access, cfg.filename, text);
+    if (cfg.provider === 'gdrive') return syncDriveUpload(access, cfg, text);
+    if (cfg.provider === 'dropbox') return syncDropboxUpload(access, cfg, text);
     return Promise.reject(new Error('sync failed: unknown provider.'));
   });
 }
@@ -7087,8 +7277,52 @@ function syncRemoteDownload(cfg) {
   if (cfg.provider === 'webdav') return syncWebdavDownload(cfg);
   if (cfg.provider === 'megas3') return syncS3Get(cfg);
   return syncEnsureAccessToken(cfg).then(function (access) {
-    if (cfg.provider === 'gdrive') return syncDriveDownload(access, cfg.filename);
-    if (cfg.provider === 'dropbox') return syncDropboxDownload(access, cfg.filename);
+    if (cfg.provider === 'gdrive') return syncDriveDownload(access, cfg);
+    if (cfg.provider === 'dropbox') return syncDropboxDownload(access, cfg);
+    return Promise.reject(new Error('sync failed: unknown provider.'));
+  });
+}
+
+// True when a file already lives at this destination. Auth and transport
+// failures reject (never misread as "free") so the duplicate gate below
+// can only pass on proof of absence.
+function syncRemoteExists(cfg) {
+  if (cfg.provider === 'webdav') {
+    return syncWebdavDownload(cfg).then(function () { return true; }, function (err) {
+      if (err && err.message && err.message.indexOf('no backup found') !== -1) return false;
+      throw err;
+    });
+  }
+  if (cfg.provider === 'megas3') {
+    return syncS3Get(cfg).then(function () { return true; }, function (err) {
+      if (err && err.message && err.message.indexOf('no backup found') !== -1) return false;
+      throw err;
+    });
+  }
+  return syncEnsureAccessToken(cfg).then(function (access) {
+    if (cfg.provider === 'gdrive') {
+      return syncDriveFolderId(access, syncNormalizeFolder(cfg.folder), false).then(function (fid) {
+        if (!fid) return false;
+        return syncDriveFind(access, cfg.filename, fid).then(function (id) { return !!id; });
+      });
+    }
+    if (cfg.provider === 'dropbox') return syncDropboxExists(access, cfg);
+    return Promise.reject(new Error('sync failed: unknown provider.'));
+  });
+}
+
+// Idempotent folder preparation before an upload. WebDAV creates missing
+// collections (MKCOL walking up at most a few levels); Drive walks and
+// creates its folder tree; Dropbox and S3 need nothing (parents appear
+// with the object itself).
+function syncRemoteEnsureFolder(cfg) {
+  if (cfg.provider === 'webdav') return syncWebdavMkdirP(cfg);
+  if (cfg.provider === 'megas3') return Promise.resolve(true);
+  return syncEnsureAccessToken(cfg).then(function (access) {
+    if (cfg.provider === 'gdrive') {
+      return syncDriveFolderId(access, syncNormalizeFolder(cfg.folder), true).then(function () { return true; });
+    }
+    if (cfg.provider === 'dropbox') return true;
     return Promise.reject(new Error('sync failed: unknown provider.'));
   });
 }
@@ -7300,6 +7534,20 @@ function syncPushFlow(opts) {
   }
   syncEncryptEnvelope(plain, pass).then(function (env) {
     syncSetStatus('Uploading to ' + syncProviderLabel(cfg.provider) + '…');
+    var locKey = syncLocationKey(cfg);
+    // First save to a destination this device has never synced: refuse to
+    // clobber a stranger's file (e.g. another profile's backup sharing the
+    // same drive). Same destination as last time uploads freely.
+    if (!cfg.lastLocation || cfg.lastLocation !== locKey) {
+      return syncRemoteExists(cfg).then(function (taken) {
+        if (taken) {
+          throw new Error('sync failed: "' + cfg.filename + '" already exists in this folder. Choose a different name or folder so profiles never overwrite each other.');
+        }
+        return syncRemoteEnsureFolder(cfg).then(function () {
+          return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
+        });
+      });
+    }
     // Conflict check: if the drive holds a NEWER backup, ask before overwriting.
     return syncRemoteDownload(cfg).then(function (remoteText) {
       return syncDecryptEnvelope(remoteText, pass).then(function (remotePlain) {
@@ -7334,9 +7582,11 @@ function syncPushFlow(opts) {
         throw new Error('sync failed: the drive file uses a different passphrase. Enter that passphrase, or clear the drive file first.');
       });
     }, function (dlErr) {
-      // No remote backup yet (or unreachable): only push when it is simply missing.
+      // Known destination but nothing there (deleted remotely?): recreate it.
       if (dlErr && dlErr.message && dlErr.message.indexOf('no backup found') !== -1) {
-        return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
+        return syncRemoteEnsureFolder(cfg).then(function () {
+          return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
+        });
       }
       throw dlErr;
     });
@@ -7347,6 +7597,7 @@ function syncPushFlow(opts) {
     cfg.lastSyncAt = now;
     cfg.lastRemoteAt = localAt;
     cfg.lastSyncedHash = curHash;
+    cfg.lastLocation = syncLocationKey(cfg);
     syncSaveConfig(cfg);
     syncRefreshSyncPanel();
     try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
@@ -7430,6 +7681,7 @@ function syncPullFlow() {
         if (d && typeof d.exportedAt === 'string') cfg.lastRemoteAt = d.exportedAt;
       } catch (e) { /* ignore */ }
       cfg.lastSyncedHash = syncHashOfExport(plain);
+      cfg.lastLocation = syncLocationKey(cfg); // adopt: future pushes update this file
       syncSaveConfig(cfg);
       syncRefreshSyncPanel();
       try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
@@ -7578,7 +7830,8 @@ function syncReadForm() {
     cfg.region = val('sy-region', cfg.region);
     cfg.bucket = val('sy-bucket', cfg.bucket);
     cfg.accessKey = val('sy-key', cfg.accessKey);
-    cfg.objectKey = String(val('sy-object', cfg.objectKey) || '').trim().replace(/^\/+/, '').slice(0, 256) || SYNC_DEFAULT_FILENAME;
+    cfg.objectKey = syncSanitizeFilename(val('sy-object', cfg.objectKey));
+    cfg.folder = val('sy-folder3', cfg.folder);
     var skField = val('sy-skey', '');
     var rememberSk = checked('sy-remember2');
     cfg.rememberSecret = rememberSk;
@@ -7593,6 +7846,7 @@ function syncReadForm() {
     cfg.clientSecret = val('sy-secret', cfg.clientSecret);
     var fn = val('sy-filename2', cfg.filename);
     cfg.filename = syncSanitizeFilename(fn);
+    cfg.folder = val('sy-folder2', cfg.folder);
   }
   var out = syncSanitizeConfig(cfg);
   out.autoSync = !!checked('sy-auto');
@@ -7670,7 +7924,7 @@ function syncRefreshSyncPanel() {
     syncSetVal('sy-url', cfg.url);
     syncSetVal('sy-user', cfg.username);
     if (cfg.password) syncSetVal('sy-passwd', cfg.password);
-    syncSetVal('sy-filename', cfg.filename);
+    syncSetVal('sy-filename', syncDisplayBasename(cfg.filename));
     var rem = document.getElementById('sy-remember');
     if (rem) rem.checked = cfg.rememberPassword;
   } else if (cfg.provider === 'megas3') {
@@ -7679,13 +7933,15 @@ function syncRefreshSyncPanel() {
     syncSetVal('sy-bucket', cfg.bucket);
     syncSetVal('sy-key', cfg.accessKey);
     if (cfg.secretKey) syncSetVal('sy-skey', cfg.secretKey);
-    syncSetVal('sy-object', cfg.objectKey);
+    syncSetVal('sy-object', syncDisplayBasename(cfg.objectKey));
+    syncSetVal('sy-folder3', cfg.folder);
     var rem2 = document.getElementById('sy-remember2');
     if (rem2) rem2.checked = !!cfg.rememberSecret;
   } else {
     syncSetVal('sy-client', cfg.clientId);
     if (cfg.clientSecret) syncSetVal('sy-secret', cfg.clientSecret);
-    syncSetVal('sy-filename2', cfg.filename);
+    syncSetVal('sy-filename2', syncDisplayBasename(cfg.filename));
+    syncSetVal('sy-folder2', cfg.folder);
   }
   var connected = false;
   if (cfg.provider === 'webdav') connected = !!(cfg.url && (cfg.password || syncMemSecrets.password));
@@ -8080,6 +8336,13 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncIsProvider = syncIsProvider;
   window.Inoculens.syncJoinUrl = syncJoinUrl;
   window.Inoculens.syncSanitizeFilename = syncSanitizeFilename;
+  window.Inoculens.syncDisplayBasename = syncDisplayBasename;
+  window.Inoculens.syncNormalizeFolder = syncNormalizeFolder;
+  window.Inoculens.syncLocationKey = syncLocationKey;
+  window.Inoculens.syncRemoteExists = syncRemoteExists;
+  window.Inoculens.syncRemoteEnsureFolder = syncRemoteEnsureFolder;
+  window.Inoculens.syncDropboxFullPath = syncDropboxFullPath;
+  window.Inoculens.syncWebdavMkdirP = syncWebdavMkdirP;
   window.Inoculens.syncDefaultConfig = syncDefaultConfig;
   window.Inoculens.syncSanitizeConfig = syncSanitizeConfig;
   window.Inoculens.syncCryptoAvailable = syncCryptoAvailable;
