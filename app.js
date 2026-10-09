@@ -162,6 +162,9 @@ function saveState(s) {
   } catch (e) {
     throw new Error('storage-unavailable');
   }
+  // Any persisted change may make the drive copy stale: let auto-sync
+  // (opt-in, Sync tab) schedule an encrypted push. Never breaks saving.
+  try { syncScheduleAuto(); } catch (e) { /* ignore */ }
 }
 
 var TRADE_TYPES = ['buy', 'sell', 'transfer', 'income', 'expense'];
@@ -5401,6 +5404,11 @@ function buildTopbar() {
     gear.setAttribute('data-wired', '1');
     gear.addEventListener('click', function () { showSettingsTab('overrides'); openDialog('settings-dialog'); });
   }
+  var syncBtn = document.getElementById('tb-sync');
+  if (syncBtn && !syncBtn.getAttribute('data-wired')) {
+    syncBtn.setAttribute('data-wired', '1');
+    syncBtn.addEventListener('click', function () { showSettingsTab('sync'); openDialog('settings-dialog'); });
+  }
   var fab = document.getElementById('fab-trade');
   if (fab && !fab.getAttribute('data-wired')) {
     fab.setAttribute('data-wired', '1');
@@ -5518,6 +5526,7 @@ function buildSettings() {
     '<input id="sy-pass" type="password" autocomplete="new-password" placeholder="Required — only you know it">' +
     '<p class="muted set-blurb" id="sy-fp">Key fingerprint: —</p>' +
     '<p class="muted set-blurb" id="sy-status">Not connected.</p>' +
+    '<label class="sync-check" for="sy-auto"><input id="sy-auto" type="checkbox"> Sync automatically on every change</label>' +
     '<div class="sync-btns">' +
     '<button id="sy-connect" type="button">Connect</button>' +
     '<button id="sy-disconnect" type="button">Disconnect</button>' +
@@ -5627,6 +5636,7 @@ function syncTopbar(st) {
       list.appendChild(li);
     });
   }
+  try { syncRefreshHeaderIcon(st); } catch (e) { /* never let sync break render */ }
 }
 
 function backupStamp() {
@@ -6339,6 +6349,8 @@ function syncDefaultConfig() {
     secretKey: '',
     rememberSecret: false,
     objectKey: SYNC_DEFAULT_FILENAME,
+    autoSync: false,
+    lastSyncedHash: null,
     lastSyncAt: null,
     lastRemoteAt: null
   };
@@ -6375,6 +6387,8 @@ function syncSanitizeConfig(raw) {
   if (d.rememberSecret && typeof c.secretKey === 'string') d.secretKey = c.secretKey.slice(0, 512);
   else d.secretKey = '';
   if (typeof c.objectKey === 'string' && c.objectKey.trim() !== '') d.objectKey = c.objectKey.trim().replace(/^\/+/, '').slice(0, 256) || SYNC_DEFAULT_FILENAME;
+  d.autoSync = (c.autoSync === true);
+  if (typeof c.lastSyncedHash === 'string' && c.lastSyncedHash !== '') d.lastSyncedHash = c.lastSyncedHash.slice(0, 64);
   if (typeof c.lastSyncAt === 'string' && isFinite(Date.parse(c.lastSyncAt))) d.lastSyncAt = c.lastSyncAt;
   if (typeof c.lastRemoteAt === 'string' && isFinite(Date.parse(c.lastRemoteAt))) d.lastRemoteAt = c.lastRemoteAt;
   return d;
@@ -7095,6 +7109,7 @@ function syncSetBusy(on, note) {
     if (el) el.disabled = syncBusy;
   }
   if (on && note) syncSetStatus(note);
+  try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
 }
 
 function syncLocalExportedAt(json) {
@@ -7105,12 +7120,153 @@ function syncLocalExportedAt(json) {
   return '';
 }
 
-function syncPushFlow() {
+// Dirty tracking without crypto: a fast non-crypto hash (djb2 pair) over the
+// stable backup projection (exportedAt excluded, or every push would look
+// dirty). Used only to decide "same as last upload", never for security.
+function syncStateHash(str) {
+  var h1 = 5381;
+  var h2 = 52711;
+  var s = String(str);
+  var i, c;
+  for (i = 0; i < s.length; i++) {
+    c = s.charCodeAt(i);
+    h1 = ((h1 * 33) ^ c) >>> 0;
+    h2 = ((h2 * 33) ^ c) >>> 0;
+  }
+  return (h1 >>> 0).toString(16) + '-' + (h2 >>> 0).toString(16);
+}
+
+function syncHashOfExport(json) {
+  try {
+    var d = JSON.parse(String(json));
+    return syncStateHash(JSON.stringify({
+      settings: (d && d.settings) || {},
+      accounts: (d && d.accounts) || [],
+      trades: (d && d.trades) || [],
+      priceOverrides: (d && d.priceOverrides) || {}
+    }));
+  } catch (e) {
+    return '';
+  }
+}
+
+function syncCurrentHash(st) {
+  var s = st;
+  try {
+    if (!s) s = loadState();
+    return syncHashOfExport(exportState(s));
+  } catch (e) {
+    return '';
+  }
+}
+
+// "Configured" = enough filled in to attempt a sync (secrets may live only
+// in the form for this session). The icon stays hidden until then.
+function syncIsConfigured(cfg) {
+  if (!cfg) return false;
+  if (cfg.provider === 'webdav') return !!(cfg.url);
+  if (cfg.provider === 'megas3') return !!(cfg.endpoint && cfg.bucket && cfg.accessKey);
+  if (cfg.provider === 'gdrive' || cfg.provider === 'dropbox') {
+    return !!(cfg.tokens && cfg.tokens.access);
+  }
+  return false;
+}
+
+function syncSetSyncIcon(state, label) {
+  var btn = (typeof document !== 'undefined') ? document.getElementById('tb-sync') : null;
+  if (!btn) return;
+  try { btn.setAttribute('data-sync', state); } catch (e) { /* ignore */ }
+  try { btn.setAttribute('aria-label', label); } catch (e) { /* ignore */ }
+  try { btn.title = label; } catch (e) { /* ignore */ }
+}
+
+function syncRefreshHeaderIcon(st) {
+  var btn = (typeof document !== 'undefined') ? document.getElementById('tb-sync') : null;
+  if (!btn) return;
+  if (syncBusy) {
+    btn.hidden = false;
+    syncSetSyncIcon('busy', 'Sync: uploading…');
+    return;
+  }
+  var cfg = syncLoadConfig();
+  if (!syncIsConfigured(cfg)) {
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  var cur = '';
+  try { cur = syncCurrentHash(st); } catch (e) { cur = ''; }
+  if (cur && cfg.lastSyncedHash && cur === cfg.lastSyncedHash) {
+    syncSetSyncIcon('ok', 'Sync: up to date. Open sync settings.');
+  } else {
+    syncSetSyncIcon('stale', 'Sync: changes pending. Open sync settings to sync now.');
+  }
+}
+
+// Auto-sync (opt-in checkbox in the Sync tab): every persisted change
+// schedules one debounced encrypted push using the passphrase currently in
+// the form. Silent by design — failures only touch the status line, and a
+// newer drive copy never triggers a surprise overwrite prompt.
+var SYNC_AUTO_DELAY_MS = 8000;
+var syncAutoTimer = null;
+
+function syncAutoDelay(ms) {
+  if (ms !== undefined && isFinite(Number(ms)) && Number(ms) >= 0) SYNC_AUTO_DELAY_MS = Number(ms);
+  return SYNC_AUTO_DELAY_MS;
+}
+
+function syncScheduleAuto() {
+  try {
+    if (typeof setTimeout === 'undefined') return;
+    if (typeof confirmSettle !== 'undefined' && confirmSettle) return; // a confirm dialog owns the user right now
+    var cfg = syncLoadConfig();
+    if (!cfg.autoSync) return;
+    if (syncBusy) return;
+    if (syncAutoTimer) {
+      try { clearTimeout(syncAutoTimer); } catch (e) { /* ignore */ }
+      syncAutoTimer = null;
+    }
+    syncAutoTimer = setTimeout(function () {
+      syncAutoTimer = null;
+      try { syncAutoPush(); } catch (e) { /* ignore */ }
+    }, SYNC_AUTO_DELAY_MS);
+  } catch (e) { /* ignore */ }
+}
+
+function syncAutoPush() {
   if (syncBusy) return;
+  var cfg;
+  try {
+    cfg = syncLoadConfig();
+  } catch (e) {
+    return;
+  }
+  if (!cfg.autoSync) return;
+  var pass = '';
+  try {
+    var el = (typeof document !== 'undefined') ? document.getElementById('sy-pass') : null;
+    pass = el ? el.value : '';
+  } catch (e) { pass = ''; }
+  if (!pass) {
+    try { syncSetStatus('Auto-sync paused — enter the passphrase in the Sync tab.'); } catch (e2) { /* ignore */ }
+    try { syncRefreshHeaderIcon(); } catch (e3) { /* ignore */ }
+    return;
+  }
+  try {
+    syncPushFlow({ auto: true });
+  } catch (e) { /* ignore */ }
+}
+
+function syncPushFlow(opts) {
+  if (syncBusy) return;
+  var auto = !!(opts && opts.auto);
   var rd = syncReadForm();
   var cfg = rd.cfg;
   var pass = rd.passphrase;
   if (!pass) {
+    // Auto-sync without a passphrase stays silent (hourglass icon shows it);
+    // manual attempts get the banner.
+    if (auto) return;
     showBanner('Enter a sync passphrase first — it encrypts everything you upload.', 'error', {
       title: 'Sync needs a passphrase',
       lines: ['Type a passphrase in the Sync tab. It is never stored or sent anywhere.']
@@ -7119,6 +7275,10 @@ function syncPushFlow() {
   }
   var st = loadState();
   if ((!st.accounts || !st.accounts.length) && (!st.trades || !st.trades.length)) {
+    if (auto) {
+      try { syncSetStatus('Nothing to sync yet.'); } catch (e) { /* ignore */ }
+      return;
+    }
     showBanner('Nothing to sync yet — add an account first.', 'error', {
       title: 'Sync',
       lines: ['Uploading an empty wallet could overwrite a good drive copy. Add data first.']
@@ -7129,6 +7289,15 @@ function syncPushFlow() {
   syncSetBusy(true, 'Encrypting…');
   var plain = exportState(st);
   var localAt = syncLocalExportedAt(plain);
+  var curHash = syncHashOfExport(plain);
+  // Already uploaded this exact content: skip all network, manual or auto.
+  if (curHash && cfg.lastSyncedHash && curHash === cfg.lastSyncedHash) {
+    syncSetBusy(false);
+    syncRefreshSyncPanel();
+    try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
+    syncSetStatus('Already up to date.');
+    return;
+  }
   syncEncryptEnvelope(plain, pass).then(function (env) {
     syncSetStatus('Uploading to ' + syncProviderLabel(cfg.provider) + '…');
     // Conflict check: if the drive holds a NEWER backup, ask before overwriting.
@@ -7137,6 +7306,14 @@ function syncPushFlow() {
         var cmp = syncCompareTimestamps(localAt, syncLocalExportedAt(remotePlain));
         if (cmp === 'remote-newer') {
           syncSetBusy(false);
+          if (auto) {
+            // Auto-sync never ambushes with a prompt: leave the drive copy
+            // alone and let the user resolve it in the Sync tab.
+            syncRefreshSyncPanel();
+            try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
+            syncSetStatus('Drive holds a newer copy — open Sync to resolve.');
+            return 'conflict-remote';
+          }
           return confirmAction(
             'Drive copy is newer',
             'The drive backup is newer than this device. Upload anyway and overwrite it, or restore the drive copy here instead?',
@@ -7165,17 +7342,26 @@ function syncPushFlow() {
     });
   }).then(function (outcome) {
     syncSetBusy(false);
-    if (outcome === 'cancelled') return;
+    if (outcome === 'cancelled' || outcome === 'conflict-remote') return;
     var now = new Date().toISOString();
     cfg.lastSyncAt = now;
     cfg.lastRemoteAt = localAt;
+    cfg.lastSyncedHash = curHash;
     syncSaveConfig(cfg);
     syncRefreshSyncPanel();
+    try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
     clearBanner();
     syncSetStatus('Synced ' + now.slice(0, 19).replace('T', ' ') + ' UTC.');
   }, function (err) {
     syncSetBusy(false);
     syncRefreshSyncPanel();
+    try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
+    // Auto-sync fails quietly into the status line (it retries on the next
+    // change); only manual attempts raise the banner.
+    if (auto) {
+      syncSetStatus('Auto-sync will retry on the next change.');
+      return;
+    }
     showBanner('Sync failed — your data was left untouched.', 'error', {
       title: 'Sync error',
       lines: [String((err && err.message) || err)]
@@ -7243,8 +7429,10 @@ function syncPullFlow() {
         var d = JSON.parse(plain);
         if (d && typeof d.exportedAt === 'string') cfg.lastRemoteAt = d.exportedAt;
       } catch (e) { /* ignore */ }
+      cfg.lastSyncedHash = syncHashOfExport(plain);
       syncSaveConfig(cfg);
       syncRefreshSyncPanel();
+      try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
       clearBanner();
       syncSetStatus('Restored from ' + syncProviderLabel(cfg.provider) + '.');
       refreshPrices();
@@ -7407,6 +7595,7 @@ function syncReadForm() {
     cfg.filename = syncSanitizeFilename(fn);
   }
   var out = syncSanitizeConfig(cfg);
+  out.autoSync = !!checked('sy-auto');
   return { cfg: out, passphrase: val('sy-pass', '') };
 }
 
@@ -7503,6 +7692,8 @@ function syncRefreshSyncPanel() {
   else if (cfg.provider === 'megas3') {
     connected = !!(cfg.endpoint && cfg.bucket && cfg.accessKey && (cfg.secretKey || syncMemSecrets.secretKey));
   } else connected = !!(cfg.tokens && cfg.tokens.access);
+  var autoBox = document.getElementById('sy-auto');
+  if (autoBox) autoBox.checked = !!cfg.autoSync;
   var last = cfg.lastSyncAt ? (' Last sync ' + String(cfg.lastSyncAt).slice(0, 19).replace('T', ' ') + ' UTC.') : '';
   if (!syncBusy) syncSetStatus((connected ? ('Connected to ' + syncProviderLabel(cfg.provider) + '.') : 'Not connected.') + last);
   var fp = document.getElementById('sy-fp');
@@ -7905,6 +8096,13 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncRequireHttpsUrl = syncRequireHttpsUrl;
   window.Inoculens.syncS3ErrorBody = syncS3ErrorBody;
   window.Inoculens.syncFetch = syncFetch;
+  window.Inoculens.syncStateHash = syncStateHash;
+  window.Inoculens.syncHashOfExport = syncHashOfExport;
+  window.Inoculens.syncCurrentHash = syncCurrentHash;
+  window.Inoculens.syncIsConfigured = syncIsConfigured;
+  window.Inoculens.syncRefreshHeaderIcon = syncRefreshHeaderIcon;
+  window.Inoculens.syncAutoPush = syncAutoPush;
+  window.Inoculens.syncAutoDelay = syncAutoDelay;
   window.Inoculens.syncSharedId = syncSharedId;
   window.Inoculens.syncEffectiveClientId = syncEffectiveClientId;
   window.Inoculens.syncTestConnection = syncTestConnection;

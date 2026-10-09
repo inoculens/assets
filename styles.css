@@ -1186,6 +1186,14 @@ details.opt + details.opt { margin-top: 0.65rem; }
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+/* ————— Header sync cloud (hidden until sync is configured) ————— */
+#tb-sync .badge { display: none; }
+#tb-sync[data-sync="ok"] .badge-ok { display: inline; color: var(--gain); }
+#tb-sync[data-sync="busy"] .badge-busy { display: inline; }
+#tb-sync[data-sync="stale"] .badge-stale { display: inline; color: var(--gold); }
+#tb-sync .badge-bg { fill: var(--surface-2); }
+#tb-sync .spin { animation: sync-spin 1.1s linear infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes sync-spin { to { transform: rotate(360deg); } }
 /* ————— Modal freeze: no background scroll or interaction ————— */
 body.modal-open { overflow: hidden; }
 /* ————— FAB ————— */
