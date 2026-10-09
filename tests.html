@@ -1808,19 +1808,30 @@
         assert(!document.body.classList.contains('modal-open'), 'background must unfreeze after close');
       });
 
-      test('mirrored error returns to the page on dialog close', function () {
+      test('modal-born errors die with the dialog; page errors return', function () {
         if (typeof init === 'function') init();
         ['trade-dialog', 'account-dialog', 'confirm-dialog', 'note-dialog', 'error-dialog', 'color-dialog'].forEach(function (id) {
           try { closeDialog(id); } catch (e) { /* ignore */ }
         });
         clearBanner();
+        // Case 1: born while open → dropped on close, never leaks to the page.
         document.getElementById('tb-settings').click();
-        showBanner('Flush me', 'error', null);
-        assert(document.getElementById('banner').hidden === true, 'page banner hidden while mirrored');
+        showBanner('Gone', 'error', null);
+        assert(document.getElementById('banner').hidden === true, 'page banner must stay hidden while mirrored');
+        closeDialog('settings-dialog');
+        assert(document.getElementById('banner').hidden === true, 'modal-born error must die with the dialog');
+        // Case 2: pre-existing page error moves in and back out.
+        showBanner('Stays', 'error', null);
+        assert(document.getElementById('banner').hidden === false, 'page banner should show first');
+        document.getElementById('tb-settings').click();
+        var alert = document.getElementById('settings-alert');
+        assert(document.getElementById('banner').hidden === true, 'page banner must hide once moved in');
+        assert(alert && alert.hidden === false, 'moved error should mirror');
+        assert(document.getElementById('settings-alert-text').textContent === 'Stays', 'moved text mismatch');
         closeDialog('settings-dialog');
         var b = document.getElementById('banner');
-        assert(b.hidden === false, 'error must return to the page after close');
-        assert(document.getElementById('banner-text').textContent === 'Flush me', 'returned text mismatch');
+        assert(b.hidden === false, 'page error must return after close');
+        assert(document.getElementById('banner-text').textContent === 'Stays', 'returned text mismatch');
         clearBanner();
       });
     })();

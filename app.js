@@ -2161,9 +2161,10 @@ function showBanner(msg, kind, details) {
     lastErrorDetails = null;
   }
   // Settings sits above the page: while it is open the message lives ONLY
-  // in the dialog mirror (it moves back to the page banner on close).
+  // in the dialog mirror. Errors born here die with the dialog; a message
+  // moved in from a pre-existing page banner moves back on close.
   if (!suppressMirror && settingsDialogOpen()) {
-    lastMirror = { msg: String(msg), kind: kind, details: details || null };
+    lastMirror = { msg: String(msg), kind: kind, details: details || null, fromPage: false };
     try {
       mirrorBannerToSettings(String(msg), kind === 'info' ? 'info' : 'error', hasDetails);
     } catch (e) { /* never let the mirror break the banner */ }
@@ -2296,7 +2297,7 @@ function refreshSettingsAlert() {
     var s = pageBannerState();
     if (!s) return;
     hidePageBannerOnly();
-    lastMirror = { msg: s.msg, kind: s.kind, details: lastErrorDetails };
+    lastMirror = { msg: s.msg, kind: s.kind, details: lastErrorDetails, fromPage: true };
     mirrorBannerToSettings(s.msg, s.kind === 'info' ? 'info' : 'error', s.hasDetails);
   } catch (e) { /* ignore */ }
 }
@@ -2333,7 +2334,7 @@ function flushSettingsAlertToBanner() {
   var m = lastMirror;
   lastMirror = null;
   try { hideSettingsAlert(); } catch (e) { /* ignore */ }
-  if (!m) return;
+  if (!m || !m.fromPage) return;
   suppressMirror = true;
   try {
     showBanner(m.msg, m.kind, m.details);
