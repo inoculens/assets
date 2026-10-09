@@ -2179,6 +2179,13 @@ function showBanner(msg, kind, details) {
     lastErrorDetails = null;
   }
   b.hidden = false;
+  // Modal dialogs (settings included) paint above the page banner, so an
+  // error fired while Settings is open would hide behind it. Mirror the
+  // line inside the settings dialog; failures there stay visible + tappable.
+  try {
+    mirrorBannerToSettings(String(msg), kind === 'info' ? 'info' : 'error',
+      !!(details && ((details.lines && details.lines.length) || details.message)));
+  } catch (e) { /* never let the mirror break the banner */ }
 }
 
 function clearBanner() {
@@ -2193,9 +2200,84 @@ function clearBanner() {
   if (old && old.parentNode) old.parentNode.removeChild(old);
   lastErrorDetails = null;
   b.hidden = true;
+  try { hideSettingsAlert(); } catch (e) { /* ignore */ }
 }
 
 var lastErrorDetails = null; // {title, message, lines[]} for the error-details popup
+
+// Settings-dialog mirror of the page banner: modal dialogs paint above the
+// page, so without this an error fired from the Sync tab hides behind the
+// dialog until it is closed. The mirror shows the same line (+ its own
+// More details button, which stacks above) and hides with clearBanner.
+function settingsDialogOpen() {
+  try {
+    var d = (typeof document !== 'undefined') ? document.getElementById('settings-dialog') : null;
+    return !!(d && (d.open || (d.hasAttribute && d.hasAttribute('open'))));
+  } catch (e) {
+    return false;
+  }
+}
+
+function settingsAlertEl() {
+  var host = document.getElementById('settings-dialog-body');
+  if (!host) return null;
+  var el = document.getElementById('settings-alert');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'settings-alert';
+    el.className = 'dlg-note';
+    el.hidden = true;
+    var sp = document.createElement('span');
+    sp.id = 'settings-alert-text';
+    el.appendChild(sp);
+    if (host.firstChild) host.insertBefore(el, host.firstChild);
+    else host.appendChild(el);
+  }
+  return el;
+}
+
+function mirrorBannerToSettings(msg, kind, hasDetails) {
+  if (typeof document === 'undefined') return;
+  if (!settingsDialogOpen()) return;
+  var el = settingsAlertEl();
+  if (!el) return;
+  el.classList.remove('error', 'info');
+  el.classList.add(kind === 'info' ? 'info' : 'error');
+  var sp = document.getElementById('settings-alert-text');
+  if (sp) sp.textContent = String(msg);
+  else el.textContent = String(msg);
+  var old = document.getElementById('settings-alert-details');
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+  if (hasDetails) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'settings-alert-details';
+    btn.textContent = 'More details';
+    btn.setAttribute('aria-label', 'Show error details');
+    btn.addEventListener('click', function () { openErrorDialog(); });
+    el.appendChild(btn);
+  }
+  el.hidden = false;
+}
+
+function hideSettingsAlert() {
+  if (typeof document === 'undefined') return;
+  var el = document.getElementById('settings-alert');
+  if (el) el.hidden = true;
+}
+
+function refreshSettingsAlert() {
+  // Re-mirror the current page banner when Settings opens, so a
+  // pre-existing error is visible without re-triggering it.
+  try {
+    var b = document.getElementById('banner');
+    if (!b || b.hidden) return;
+    var t = document.getElementById('banner-text');
+    var kind = 'error';
+    try { kind = (b.dataset && b.dataset.kind === 'info') ? 'info' : 'error'; } catch (e) { /* ignore */ }
+    mirrorBannerToSettings(t ? t.textContent : b.textContent, kind, !!document.getElementById('banner-details'));
+  } catch (e) { /* ignore */ }
+}
 
 function openErrorDialog() {
   var d = lastErrorDetails || { title: 'Details', message: '', lines: [] };
@@ -4991,6 +5073,9 @@ function openDialog(id) {
     if (!dlg.open) dlg.showModal();
   } else {
     dlg.setAttribute('open', '');
+  }
+  if (id === 'settings-dialog') {
+    try { refreshSettingsAlert(); } catch (e) { /* ignore */ }
   }
   var first = dlg.querySelector('input, select, button:not([data-close])');
   if (first && typeof first.focus === 'function') {

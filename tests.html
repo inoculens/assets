@@ -1783,6 +1783,23 @@
           } catch (e) { /* ignore */ }
         }
       });
+
+      test('settings errors mirror inside the dialog', function () {
+        if (typeof init === 'function') init();
+        document.getElementById('tb-settings').click();
+        var dlg = document.getElementById('settings-dialog');
+        assert(dlg && (dlg.open || dlg.hasAttribute('open')), 'settings should be open');
+        showBanner('Mirror me', 'error', null);
+        var alert = document.getElementById('settings-alert');
+        assert(alert && alert.hidden === false, 'alert should show inside settings');
+        assert(document.getElementById('settings-alert-text').textContent === 'Mirror me', 'alert text mismatch');
+        showBanner('Mirror info', 'info', { title: 'T', lines: ['one'] });
+        assert(alert.hidden === false, 'alert should stay visible');
+        assert(document.getElementById('settings-alert-details') !== null, 'alert should carry More details');
+        clearBanner();
+        assert(alert.hidden === true, 'alert should hide with the banner');
+        closeDialog('settings-dialog');
+      });
     })();
 
     renderResults();
