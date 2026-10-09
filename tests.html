@@ -2122,6 +2122,37 @@
           var err = document.getElementById('t-error');
           assert(err && err.hidden === false, 'oversell must surface a form error');
         });
+
+        test('edit prefills manual price + rate from their stored state', function () {
+          L.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [
+              { id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }
+            ],
+            trades: [
+              { id: 'm1', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'a1', fxLock: { pair: 'USD/EUR', rate: 0.92, source: 'manual', interpolated: false }, execLock: { price: 67000, vs: 'EUR', source: 'manual' }, createdAt: '2026-10-06T00:00:00.000Z' },
+              { id: 'm2', type: 'buy', symbol: 'BTC', qty: 1, total: 51000, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'a1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-06T00:00:00.000Z' }
+            ],
+            priceOverrides: { BTC: 68000 }
+          });
+          init();
+          // Frozen manual quote + manual FX rate come back into the fields.
+          openEditTrade('m1');
+          assert(document.getElementById('t-manual-price').value === '67000', 'manual price should prefill from the frozen quote, got ' + document.getElementById('t-manual-price').value);
+          assert(document.getElementById('t-manual-rate').value === '0.92', 'manual rate should prefill from the manual fxLock, got ' + document.getElementById('t-manual-rate').value);
+          // No frozen quote: the live global override still shows.
+          openEditTrade('m2');
+          assert(document.getElementById('t-manual-price').value === '68000', 'manual price should prefill from the global override, got ' + document.getElementById('t-manual-price').value);
+          assert(document.getElementById('t-manual-rate').value === '', 'no manual fxLock means a blank rate, got ' + document.getElementById('t-manual-rate').value);
+        });
+
+        test('edit leaves manual fields blank when nothing is stored', function () {
+          seedTradeDialog();
+          init();
+          openEditTrade('t1');
+          assert(document.getElementById('t-manual-price').value === '', 'price should stay blank, got ' + document.getElementById('t-manual-price').value);
+          assert(document.getElementById('t-manual-rate').value === '', 'rate should stay blank, got ' + document.getElementById('t-manual-rate').value);
+        });
       } finally {
         restoreState();
       }

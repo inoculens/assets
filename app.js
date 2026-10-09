@@ -5452,6 +5452,28 @@ function openEditTrade(tradeId) {
   } catch (e) { /* ignore */ }
   uiSetVal('t-note', tr.note || '');
   uiSetVal('t-networkfee', tr.networkFee !== undefined && tr.networkFee !== null ? String(tr.networkFee) : '');
+  // Manual fields reflect their persistent state, like every other input:
+  // the FX rate lives on in the trade's manual fxLock, the price in the
+  // trade's manual execLock (else the global override for the symbol).
+  // Blank only when nothing is stored anywhere.
+  var manualFxRate = '';
+  try {
+    if (tr.fxLock && tr.fxLock.source === 'manual' && isFinite(Number(tr.fxLock.rate)) && Number(tr.fxLock.rate) > 0) {
+      manualFxRate = String(tr.fxLock.rate);
+    }
+  } catch (e) { manualFxRate = ''; }
+  uiSetVal('t-manual-rate', manualFxRate);
+  var manualPx = '';
+  try {
+    var frMan = frozenExecOf(tr);
+    if (frMan && String(frMan.source).toLowerCase() === 'manual') {
+      manualPx = String(frMan.price);
+    } else {
+      var ovMan = priceOverrideEntry(tr.symbol);
+      if (ovMan !== null) manualPx = String(ovMan.price);
+    }
+  } catch (e) { manualPx = ''; }
+  uiSetVal('t-manual-price', manualPx);
   try {
     var toSel = document.getElementById('t-toaccount');
     if (toSel && tr.toAccountId) {
