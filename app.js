@@ -7524,8 +7524,25 @@ function syncClearOAuthAttempt() {
   } catch (e) { /* ignore */ }
 }
 
+function syncPassphraseOrBanner() {
+  var pass = '';
+  try {
+    var el = (typeof document !== 'undefined') ? document.getElementById('sy-pass') : null;
+    pass = el ? el.value : '';
+  } catch (e) { pass = ''; }
+  if (!pass) {
+    showBanner('Enter a sync passphrase first — sync only works encrypted.', 'error', {
+      title: 'Sync needs a passphrase',
+      lines: ['Type a passphrase in the Sync tab. It encrypts everything you upload and is never stored or sent anywhere.']
+    });
+    return null;
+  }
+  return pass;
+}
+
 function syncStartOAuth() {
   if (syncBusy) return;
+  if (!syncPassphraseOrBanner()) return;
   var rd = syncReadForm();
   var cfg = rd.cfg;
   // WebDAV / MEGA have no OAuth dance: Connect simply tests the login.
@@ -7765,6 +7782,7 @@ function syncGoogleOneClick(cfg) {
 // Both "backup found" and "no backup yet" mean the login is good.
 function syncTestConnection() {
   if (syncBusy) return;
+  if (!syncPassphraseOrBanner()) return;
   var rd = syncReadForm();
   var cfg = rd.cfg;
   syncPersistFormSecrets(cfg);
