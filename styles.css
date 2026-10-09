@@ -1069,6 +1069,9 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: 7px; }
   overflow-wrap: anywhere;
 }
 .trade-block .rate-line .stat-val { max-width: 100%; cursor: pointer; }
+/* One true facts line on desktop: the strip never wraps, so every fact —
+   however long — shares the single row and trims instead of spilling below. */
+.trade-facts { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0 1.25rem; min-width: 0; flex: 1 1 100%; max-width: 100%; overflow: hidden; }
 .trade-foot { display: flex; justify-content: flex-end; padding: 0.5rem 0 0.35rem; }
 .trade-del { margin-left: 0.25rem; padding: 0.45rem 0.7rem; min-height: 2.5rem; font-size: 1.05rem; line-height: 1; }
 
@@ -1482,6 +1485,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   .acct-figs { flex-direction: row; gap: 0.75rem; align-items: baseline; }
   /* Phones: facts wrap into label-above-value columns instead of one grid. */
   .trade-block { display: flex; flex-wrap: wrap; column-gap: 1.25rem; }
+  .trade-facts { flex-wrap: wrap; overflow: visible; }
   .trade-head { flex: 1 1 100%; }
   .trade-block .stat-row { display: flex; flex-direction: column; gap: 0.15rem; flex: 1 1 8rem; min-width: 0; border-bottom: none; padding: 0.5rem 0; }
   main { padding-bottom: 7rem; }

@@ -4157,6 +4157,13 @@ function tradeBlock(t, main, accountNameById, kind) {
   if (t.type === 'buy' || t.type === 'sell') {
     box.appendChild(statRow('Amount', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
   }
+  // One true facts line: gather every fact row into a non-wrapping strip so
+  // nothing ever spills to a second row — long values trim with … instead
+  // (Rate/Note are capped; the popup still opens the full text on click).
+  var facts = document.createElement('div');
+  facts.className = 'trade-facts';
+  Array.prototype.forEach.call(box.querySelectorAll(':scope > .stat-row'), function (r) { facts.appendChild(r); });
+  box.appendChild(facts);
   return box;
 }
 

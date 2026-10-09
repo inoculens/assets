@@ -2070,6 +2070,34 @@
           navHome();
         });
 
+        test('trade facts share a single line, nothing spills below', function () {
+          var L2 = window.Inoculens;
+          var longNote = 'note-' + new Array(121).join('x');
+          L2.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [
+              { id: 'one-acct', name: 'One BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            trades: [
+              { id: 'one-a', type: 'buy', symbol: 'BTC', qty: 0.00058193, total: 50, currency: 'EUR', date: '2026-01-01', fee: 0.59, feeCurrency: 'EUR', note: longNote, accountId: 'one-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            priceOverrides: {}
+          });
+          if (typeof init === 'function') init();
+          navTo('one-acct');
+          route();
+          render();
+          var rows = document.querySelectorAll('#account-detail .trade-block .trade-facts > .stat-row');
+          assert(rows.length >= 7, 'expected all fact rows in one strip, got ' + rows.length);
+          var top = rows[0].offsetTop;
+          Array.prototype.forEach.call(rows, function (r) {
+            assert(r.offsetTop === top, 'fact wrapped to a second line: ' + r.getAttribute('data-label'));
+          });
+          var noteVal = document.querySelector('#account-detail [data-label="Note"] .stat-val');
+          assert(noteVal && noteVal.scrollWidth > noteVal.clientWidth + 1, 'long note must trim inside the single line');
+          navHome();
+        });
+
         testAsync('submit freezes the exec quote on the saved trade', function () {
           var L2 = window.Inoculens;
           var origFetch = window.fetch;
