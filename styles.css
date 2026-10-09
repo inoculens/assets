@@ -1041,8 +1041,17 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: 7px; }
 .trade-block .stat-label { flex: none; }
 .trade-block .stat-val { flex: none; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trade-block .stat-row[data-label="Note"] {
-  flex: 1 1 12rem;
-  max-width: 24rem;
+  flex: 0 1 12rem;
+  max-width: 12rem;
+  min-width: 0;
+  overflow: hidden;
+}
+/* Rate is formulaic and long: bound it like Note so sibling facts keep
+   their share of the single row. The value trims with … and the existing
+   truncated-only popup opens the full text on click. */
+.trade-block .stat-row.rate-line {
+  flex: 0 1 9rem;
+  max-width: 9rem;
   min-width: 0;
   overflow: hidden;
 }
@@ -1059,7 +1068,7 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: 7px; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.trade-block .rate-line .stat-val { max-width: none; cursor: pointer; }
+.trade-block .rate-line .stat-val { max-width: 100%; cursor: pointer; }
 .trade-foot { display: flex; justify-content: flex-end; padding: 0.5rem 0 0.35rem; }
 .trade-del { margin-left: 0.25rem; padding: 0.45rem 0.7rem; min-height: 2.5rem; font-size: 1.05rem; line-height: 1; }
 

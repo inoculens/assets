@@ -2034,6 +2034,42 @@
           navHome();
         });
 
+        test('long rate and note trim with … and open the full text on click', function () {
+          var L2 = window.Inoculens;
+          var longNote = 'note-' + new Array(121).join('x');
+          L2.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [
+              { id: 'tr-acct', name: 'Tr BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            trades: [
+              { id: 'tr-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: longNote, accountId: 'tr-acct', fxLock: { pair: 'EUR/EUR', rate: 0.92, source: 'ECB-2026-10-01', interpolated: true }, createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            priceOverrides: {}
+          });
+          if (typeof init === 'function') init();
+          navTo('tr-acct');
+          route();
+          render();
+          var det = document.getElementById('account-detail');
+          var rateVal = det.querySelector('.rate-line .stat-val');
+          var noteVal = det.querySelector('[data-label="Note"] .stat-val');
+          assert(rateVal !== null && noteVal !== null, 'rate + note rows should render');
+          assert(rateVal.scrollWidth > rateVal.clientWidth + 1, 'rate must trim with …, fully visible: ' + rateVal.textContent);
+          assert(noteVal.scrollWidth > noteVal.clientWidth + 1, 'note must trim with …, fully visible');
+          rateVal.click();
+          var dlg = document.getElementById('note-dialog');
+          assert(dlg && dlg.open === true, 'rate click must open the full-text popup');
+          assert(document.getElementById('note-dialog-text').textContent.indexOf('ECB-2026-10-01') !== -1, 'popup must show the full rate');
+          var x = dlg.querySelector('[data-close]');
+          if (x) x.click();
+          noteVal.click();
+          assert(dlg.open === true, 'note click must open the full-text popup');
+          assert(document.getElementById('note-dialog-text').textContent === longNote, 'popup must show the full note');
+          if (x) x.click();
+          navHome();
+        });
+
         testAsync('submit freezes the exec quote on the saved trade', function () {
           var L2 = window.Inoculens;
           var origFetch = window.fetch;
