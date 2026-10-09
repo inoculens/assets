@@ -6435,6 +6435,26 @@ function syncLocationKey(cfg) {
   return cfg.provider + '|' + folder + '/' + cfg.filename;
 }
 
+// Whose credentials the destination belongs to: switching app identity
+// (another OAuth app, another username/key) must re-verify, because e.g.
+// Drive's app-scoped files are invisible across different client IDs.
+function syncTrustIdentity(cfg) {
+  if (cfg.provider === 'gdrive' || cfg.provider === 'dropbox') {
+    return 'oauth:' + syncEffectiveClientId(cfg);
+  }
+  if (cfg.provider === 'webdav') return 'basic:' + String(cfg.username || '');
+  if (cfg.provider === 'megas3') return 's3:' + String(cfg.accessKey || '');
+  return '';
+}
+
+function syncIsTrustedLocation(cfg, locKey) {
+  if (!cfg.lastLocation || cfg.lastLocation !== locKey) return false;
+  if (cfg.locV !== SYNC_LOC_V) return false;
+  var ident = syncTrustIdentity(cfg);
+  if (!ident) return false;
+  return (cfg.lastIdentity || '') === ident;
+}
+
 function syncDefaultConfig() {
   return {
     provider: 'webdav',
@@ -6458,6 +6478,7 @@ function syncDefaultConfig() {
     folder: '',
     lastLocation: null,
     locV: null,
+    lastIdentity: null,
     autoSync: false,
     lastSyncedHash: null,
     lastSyncAt: null,
@@ -6513,6 +6534,8 @@ function syncSanitizeConfig(raw) {
   if (typeof c.lastLocation === 'string' && c.lastLocation !== '') d.lastLocation = c.lastLocation.slice(0, 512);
   d.locV = (c.locV === SYNC_LOC_V) ? SYNC_LOC_V : null;
   if (d.locV === null) d.lastLocation = null;
+  if (typeof c.lastIdentity === 'string' && c.lastIdentity !== '') d.lastIdentity = c.lastIdentity.slice(0, 512);
+  if (d.locV === null) d.lastIdentity = null;
   d.autoSync = (c.autoSync === true);
   if (typeof c.lastSyncedHash === 'string' && c.lastSyncedHash !== '') d.lastSyncedHash = c.lastSyncedHash.slice(0, 64);
   if (typeof c.lastSyncAt === 'string' && isFinite(Date.parse(c.lastSyncAt))) d.lastSyncAt = c.lastSyncAt;
@@ -7586,6 +7609,7 @@ function syncAdoptRemote(cfg, remotePlain) {
   } catch (e) { /* ignore */ }
   cfg.lastSyncedHash = syncHashOfExport(remotePlain);
   cfg.lastLocation = syncLocationKey(cfg);
+  cfg.lastIdentity = syncTrustIdentity(cfg);
   cfg.locV = SYNC_LOC_V;
     syncSaveConfig(cfg);
   syncRefreshSyncPanel();
@@ -7639,10 +7663,11 @@ function syncPushFlow(opts) {  if (syncBusy) return;
   syncEncryptEnvelope(plain, pass).then(function (env) {
     syncSetStatus('Uploading to ' + syncProviderLabel(cfg.provider) + '…');
     var locKey = syncLocationKey(cfg);
-    // First save to a destination this device has never synced: never
-    // clobber a stranger's file (e.g. another profile's backup sharing the
-    // same drive). Same destination as last time uploads freely.
-    if (!cfg.lastLocation || cfg.lastLocation !== locKey) {
+    // First save to a destination this device has never synced (or under
+    // changed credentials): never clobber a stranger's file (e.g. another
+    // profile's backup sharing the same drive). Trusted destinations
+    // upload freely.
+    if (!syncIsTrustedLocation(cfg, locKey)) {
       return syncRemoteExists(cfg).then(function (taken) {
         if (!taken) {
           return syncRemoteEnsureFolder(cfg).then(function () {
@@ -7655,6 +7680,7 @@ function syncPushFlow(opts) {  if (syncBusy) return;
               // Same content (e.g. reconnect with nothing changed): adopt
               // silently — no prompt, no pointless re-upload.
               cfg.lastLocation = locKey;
+              cfg.lastIdentity = syncTrustIdentity(cfg);
               cfg.locV = SYNC_LOC_V;
               cfg.lastRemoteAt = syncLocalExportedAt(remotePlain);
               cfg.lastSyncedHash = curHash;
@@ -7740,12 +7766,19 @@ function syncPushFlow(opts) {  if (syncBusy) return;
     });
   }).then(function (outcome) {
     syncSetBusy(false);
-    if (outcome === 'cancelled' || outcome === 'conflict-remote' || outcome === 'adopted' || outcome === 'pulled') return;
+    if (outcome === 'cancelled' || outcome === 'conflict-remote' || outcome === 'adopted' || outcome === 'pulled') {
+      // Dismissals and already-handled outcomes: re-lock the buttons to the
+      // connection state but keep the specific status line that was set.
+      syncRefreshSyncPanel({ keepStatus: true });
+      try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
+      return;
+    }
     var now = new Date().toISOString();
     cfg.lastSyncAt = now;
     cfg.lastRemoteAt = localAt;
     cfg.lastSyncedHash = curHash;
     cfg.lastLocation = syncLocationKey(cfg);
+    cfg.lastIdentity = syncTrustIdentity(cfg);
     cfg.locV = SYNC_LOC_V;
         syncSaveConfig(cfg);
     syncRefreshSyncPanel();
@@ -7821,9 +7854,15 @@ function syncPullFlow() {
           } catch (e2) { /* banner already shown by the guard on storage failure */ }
         }
         syncSetStatus('Restore cancelled.');
+        syncRefreshSyncPanel({ keepStatus: true });
+        try { syncRefreshHeaderIcon(); } catch (e3) { /* ignore */ }
         return 'cancelled';
       }
-      if (!saveStateGuarded(next)) return 'failed';
+      if (!saveStateGuarded(next)) {
+        syncRefreshSyncPanel({ keepStatus: true });
+        try { syncRefreshHeaderIcon(); } catch (e4) { /* ignore */ }
+        return 'failed';
+      }
       cfg.lastSyncAt = new Date().toISOString();
       try {
         var d = JSON.parse(plain);
@@ -7832,6 +7871,7 @@ function syncPullFlow() {
       cfg.lastSyncedHash = syncHashOfExport(plain);
       cfg.lastLocation = syncLocationKey(cfg); // adopt: future pushes update this file
       cfg.locV = SYNC_LOC_V;
+      cfg.lastIdentity = syncTrustIdentity(cfg);
             syncSaveConfig(cfg);
       syncRefreshSyncPanel();
       try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
@@ -8045,7 +8085,7 @@ function syncSetVal(id, v) {
   if (el) el.value = v;
 }
 
-function syncRefreshSyncPanel() {
+function syncRefreshSyncPanel(opts) {
   if (typeof document === 'undefined') return;
   if (!document.getElementById('sy-provider')) return;
   var cfg = syncLoadConfig();
@@ -8113,7 +8153,10 @@ function syncRefreshSyncPanel() {
   var rememberPassBox = document.getElementById('sy-remember-pass');
   if (rememberPassBox) rememberPassBox.checked = !!cfg.rememberPassphrase;
   var last = cfg.lastSyncAt ? (' Last sync ' + String(cfg.lastSyncAt).slice(0, 19).replace('T', ' ') + ' UTC.') : '';
-  if (!syncBusy) syncSetStatus((connected ? ('Connected to ' + syncProviderLabel(cfg.provider) + '.') : 'Not connected.') + last);
+  // keepStatus: early exits (cancel/dismiss/conflict) already set a specific
+  // status line — refresh buttons + indicator but leave their message alone.
+  var keepStatus = !!(opts && opts.keepStatus);
+  if (!syncBusy && !keepStatus) syncSetStatus((connected ? ('Connected to ' + syncProviderLabel(cfg.provider) + '.') : 'Not connected.') + last);
   // Connection state is unmistakable on every visit: Connect locks once
   // established, Disconnect unlocks, and the status line turns green.
   // (While busy, syncSetBusy owns the disabled flags — don't fight it.)
@@ -8214,9 +8257,7 @@ function syncStartOAuth() {
       cfg.tokens = tok;
       syncSaveConfig(cfg);
       syncSetBusy(false);
-      syncRefreshSyncPanel();
-      clearBanner();
-      syncSetStatus('Connected to Google Drive — press "Sync now (upload)" to send your first encrypted backup.');
+      syncConnectThenSync();
     }, function (err) {
       syncSetBusy(false);
       syncRefreshSyncPanel();
@@ -8286,9 +8327,7 @@ function syncStartOAuth() {
         cfg.tokens = tok;
         syncSaveConfig(cfg);
         syncSetBusy(false);
-        syncRefreshSyncPanel();
-        clearBanner();
-        syncSetStatus('Connected to ' + syncProviderLabel(cfg.provider) + ' — press "Sync now (upload)" to send your first encrypted backup.');
+        syncConnectThenSync();
       }, function (err) {
         syncSetBusy(false);
         showBanner('Sign-in failed — your data was left untouched.', 'error', {
@@ -8335,6 +8374,7 @@ function syncDisconnect() {
   cfg.rememberPassphrase = false;
   cfg.lastLocation = null;
   cfg.locV = null;
+  cfg.lastIdentity = null;
   cfg.lastSyncedHash = null;
   cfg.lastRemoteAt = null;
   cfg.lastSyncAt = null;
@@ -8434,6 +8474,32 @@ function syncGoogleOneClick(cfg) {
 
 // WebDAV / MEGA have no OAuth: Connect simply proves the login works.
 // Both "backup found" and "no backup yet" mean the login is good.
+// Connect only proves the login; the first real sync happens right here so
+// users never stare at an empty drive wondering why nothing uploaded.
+function syncConnectThenSync() {
+  var st = null;
+  try {
+    st = loadState();
+  } catch (e) {
+    st = null;
+  }
+  if (!st || ((!st.accounts || !st.accounts.length) && (!st.trades || !st.trades.length))) {
+    syncRefreshSyncPanel();
+    try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
+    clearBanner();
+    syncSetStatus('Connected — this wallet is empty. Restore from drive or add data, then sync.');
+    return;
+  }
+  try {
+    syncPushFlow();
+  } catch (e) {
+    showBanner('Sync failed — your data was left untouched.', 'error', {
+      title: 'Sync error',
+      lines: [String((e && e.message) || e)]
+    });
+  }
+}
+
 function syncTestConnection() {
   if (syncBusy) return;
   if (!syncPassphraseOrBanner()) return;
@@ -8444,17 +8510,13 @@ function syncTestConnection() {
   return syncRemoteDownload(cfg).then(function () {
     syncSetBusy(false);
     syncSaveConfig(cfg);
-    syncRefreshSyncPanel();
-    clearBanner();
-    syncSetStatus('Connected to ' + syncProviderLabel(cfg.provider) + ' — backup found.');
+    syncConnectThenSync();
   }, function (err) {
     syncSetBusy(false);
     var m = String((err && err.message) || err);
     if (m.indexOf('no backup found') !== -1) {
       syncSaveConfig(cfg);
-      syncRefreshSyncPanel();
-      clearBanner();
-      syncSetStatus('Connected to ' + syncProviderLabel(cfg.provider) + ' — no backup on the drive yet.');
+      syncConnectThenSync();
       return;
     }
     syncRefreshSyncPanel();
@@ -8543,6 +8605,9 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncDisplayBasename = syncDisplayBasename;
   window.Inoculens.syncNormalizeFolder = syncNormalizeFolder;
   window.Inoculens.syncLocationKey = syncLocationKey;
+  window.Inoculens.syncTrustIdentity = syncTrustIdentity;
+  window.Inoculens.syncIsTrustedLocation = syncIsTrustedLocation;
+  window.Inoculens.syncConnectThenSync = syncConnectThenSync;
   window.Inoculens.syncRemoteExists = syncRemoteExists;
   window.Inoculens.syncRemoteEnsureFolder = syncRemoteEnsureFolder;
   window.Inoculens.syncDropboxFullPath = syncDropboxFullPath;
