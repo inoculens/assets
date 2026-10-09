@@ -2098,6 +2098,33 @@
           navHome();
         });
 
+        test('short rate takes content width, no dead gap', function () {
+          var L2 = window.Inoculens;
+          L2.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [
+              { id: 'gap-acct', name: 'Gap BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            trades: [
+              { id: 'gap-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'gap-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            priceOverrides: {}
+          });
+          if (typeof init === 'function') init();
+          navTo('gap-acct');
+          route();
+          render();
+          var rateRow = document.querySelector('#account-detail .trade-block .trade-facts > .stat-row.rate-line');
+          assert(rateRow !== null, 'rate row should render');
+          assert(rateRow.offsetWidth < 100, 'short rate must size to content, not reserve the full cap, got ' + rateRow.offsetWidth + 'px');
+          var rows = document.querySelectorAll('#account-detail .trade-block .trade-facts > .stat-row');
+          var top = rows[0].offsetTop;
+          Array.prototype.forEach.call(rows, function (r) {
+            assert(r.offsetTop === top, 'fact wrapped to a second line: ' + r.getAttribute('data-label'));
+          });
+          navHome();
+        });
+
         testAsync('submit freezes the exec quote on the saved trade', function () {
           var L2 = window.Inoculens;
           var origFetch = window.fetch;
