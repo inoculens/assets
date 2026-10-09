@@ -713,21 +713,13 @@
         assert(r.feeMain === 1, 'feeMain expected 1, got ' + r.feeMain);
       });
 
-      test('normalizeTrade feeCurrency mismatch assumes same rate + flags', function () {
-        // Fee already in the display main (inferred from fxLock pair USD/EUR ->
-        // main EUR) converts at 1 with no flag, even for legacy trades that
-        // carry no feeFxLock.
-        var rMain = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
-        assert(rMain.feeMain === 10, 'fee already in main must convert at 1, got ' + rMain.feeMain);
-        assert(!rMain.feeFxAssumedSameRate, 'no flag when fee is main');
-        // True mismatch (fee in a third currency) still falls back to the
-        // trade lock rate and flags feeFxAssumedSameRate.
-        var r = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'GBP', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
-        assert(r.feeMain === 5, 'fee should fall back to trade lock rate, got ' + r.feeMain);
-        assert(r.feeFxAssumedSameRate === true, 'missing feeFxAssumedSameRate flag');
-        var r2 = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'GBP', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' }, feeFxLock: { pair: 'GBP/EUR', rate: 1.1, source: 'ECB-2026-10-01' } });
-        assert(r2.feeMain === 11, 'feeFxLock rate not used, got ' + r2.feeMain);
-        assert(!r2.feeFxAssumedSameRate, 'flag must be absent when feeFxLock present');
+      test('normalizeTrade converts fee at the trade rate, no flags', function () {
+        // One fiat per trade: the fee always rides the trade lock, whatever
+        // legacy keys the stored trade still carries (no feeFxLock, no flags).
+        var legacy = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'GBP', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' }, feeFxLock: { pair: 'GBP/EUR', rate: 1.1, source: 'ECB-2026-10-01' } });
+        assert(legacy.feeMain === 5, 'legacy divergent fee converts at the trade rate, got ' + legacy.feeMain);
+        assert(legacy.netMain === 50, 'legacy cost is the full total, got ' + legacy.netMain);
+        assert(!('feeFxAssumedSameRate' in legacy), 'no flag may remain, got ' + JSON.stringify(legacy));
       });
 
       test('average-cost spec fixture (avg 60k / realized 20k / qty 1)', function () {
@@ -834,9 +826,7 @@
         assert(n.totalMain === 100 && n.feeMain === 1, 'raw conversion intact');
         assert(n.netMain === 100 && n.feeLossMain === 0, 'same-ccy cost is the full total, no drag: ' + JSON.stringify(n));
         var d = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'GBP', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
-        assert(d.netMain === 55 && d.feeLossMain === 0, 'cross-currency fee stays additive: ' + JSON.stringify(d));
-        var dm = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
-        assert(dm.totalMain === 50 && dm.feeMain === 10 && dm.netMain === 60 && dm.feeLossMain === 0, 'fee already in main converts at 1: ' + JSON.stringify(dm));
+        assert(d.totalMain === 50 && d.feeMain === 5 && d.netMain === 50 && d.feeLossMain === 0, 'one fiat per trade: legacy divergent fee rides the trade rate, cost is the full total: ' + JSON.stringify(d));
         var c = normalizeTrade({ total: 5, fee: 10, currency: 'EUR', feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } });
         assert(c.netMain === 5 && c.feeLossMain === 0, 'cost never reduced by fee: ' + JSON.stringify(c));
       });
@@ -910,7 +900,7 @@
         assert(vt({}) === null, 'sane fee passes');
         assert(String(vt({ fee: 120 })).indexOf('fee cannot exceed total') !== -1, 'same-ccy fee over total must reject');
         assert(vt({ fee: 100 }) === null, 'fee equal to total allowed');
-        assert(vt({ fee: 120, feeCurrency: 'USD' }) === null, 'cross-ccy fee not compared');
+        assert(String(vt({ fee: 120, feeCurrency: 'USD' })).indexOf('fee cannot exceed total') !== -1, 'one fiat per trade: fee over total rejects in any stated fee fiat');
         assert(validateTrade({ type: 'expense', symbol: 'BTC', qty: 1, total: '', fee: 5, currency: 'EUR', feeCurrency: 'EUR', date: '2026-01-01' }) === null, 'standalone fee without total allowed');
       });
     })();
@@ -1399,16 +1389,15 @@
 
     // === Polish tests (Task 7: dead CUSTOM option, local today) ===
     (function polishTests() {
-      test('fee currency select offers no dead CUSTOM option', function () {
+      test('trade form has no fee currency select (one fiat per trade)', function () {
         if (typeof init === 'function') init();
-        var feeOpts = Array.prototype.map.call(
-          document.querySelectorAll('#t-feeccy option'), function (o) { return o.value; });
-        assert(feeOpts.length > 0, 'fee select has no options');
-        assert(feeOpts.indexOf('CUSTOM') === -1, 't-feeccy must not offer CUSTOM, got ' + feeOpts.join(','));
+        assert(document.getElementById('t-feeccy') === null, 't-feeccy must be gone');
+        assert(document.querySelector('label[for="t-feeccy"]') === null, 'fee currency label must be gone');
         var tradeOpts = Array.prototype.map.call(
           document.querySelectorAll('#t-currency option'), function (o) { return o.value; });
         assert(tradeOpts.indexOf('CUSTOM') !== -1, 't-currency should keep Other…');
         assert(document.querySelector('label[for="t-custom-ccy"]') !== null, 'custom currency input needs a label');
+        assert(document.querySelector('label[for="t-fee"]') !== null, 'fee amount field must stay');
       });
 
       test('todayStr uses local calendar date', function () {
@@ -1457,26 +1446,7 @@
         assert(mainOpts.indexOf('RON') !== -1, 'main currency should offer RON, got ' + mainOpts.join(','));
       });
 
-      test('fee select mirrors custom trade code + defaults to it', function () {
-        if (typeof init === 'function') init();
-        var ccy = document.getElementById('t-currency');
-        var custom = document.getElementById('t-custom-ccy');
-        var feeccy = document.getElementById('t-feeccy');
-        assert(ccy && custom && feeccy, 'trade form missing');
-        ccy.value = 'CUSTOM';
-        ccy.dispatchEvent(new Event('change', { bubbles: true }));
-        custom.value = 'JPY';
-        custom.dispatchEvent(new Event('input', { bubbles: true }));
-        var feeOpts = Array.prototype.map.call(feeccy.querySelectorAll('option'), function (o) { return o.value; });
-        assert(feeOpts.indexOf('JPY') !== -1, 'fee select should mirror custom JPY, got ' + feeOpts.join(','));
-        assert(feeccy.value === 'JPY', 'fee should default to custom code, got ' + feeccy.value);
-        // Back to preset clears the dynamic option.
-        ccy.value = 'EUR';
-        ccy.dispatchEvent(new Event('change', { bubbles: true }));
-        assert(feeccy.value === 'EUR', 'fee should follow preset currency, got ' + feeccy.value);
-      });
-
-      test('feeCurrency CUSTOM literal falls back to trade currency', function () {
+      test('saved feeCurrency always equals the trade currency', function () {
         if (typeof init === 'function') init();
         L.saveState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [{ id: 'fee-acct', name: 'Fee BTC', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }], trades: [], priceOverrides: {} });
         render();
@@ -1485,25 +1455,19 @@
         document.getElementById('t-side').value = 'buy';
         document.getElementById('t-qty').value = '1';
         document.getElementById('t-total').value = '10';
-        document.getElementById('t-currency').value = 'EUR';
+        document.getElementById('t-currency').value = 'CUSTOM';
         document.getElementById('t-currency').dispatchEvent(new Event('change', { bubbles: true }));
+        document.getElementById('t-custom-ccy').value = 'JPY';
         document.getElementById('t-date').value = '2026-01-01';
         document.getElementById('t-fee').value = '1';
-        var feeccy = document.getElementById('t-feeccy');
-        var stale = document.createElement('option');
-        stale.value = 'CUSTOM';
-        stale.textContent = 'CUSTOM';
-        feeccy.appendChild(stale);
-        feeccy.value = 'CUSTOM';
         document.getElementById('t-note').value = '';
-        document.getElementById('t-manual-rate').value = '';
+        document.getElementById('t-manual-rate').value = '1';
         document.getElementById('t-manual-price').value = '';
         onTradeSubmit({ preventDefault: function () {} });
         var st = L.loadState();
-        assert(st.trades.length === 1, 'trade should save via 1:1 sync path, got ' + st.trades.length);
-        assert(st.trades[0].feeCurrency === 'EUR', 'CUSTOM fee literal should fall back to EUR, got ' + st.trades[0].feeCurrency);
+        assert(st.trades.length === 1, 'trade should save via the manual-rate path, got ' + st.trades.length);
+        assert(st.trades[0].currency === 'JPY' && st.trades[0].feeCurrency === 'JPY', 'fee must follow custom trade currency, got ' + JSON.stringify({ currency: st.trades[0].currency, feeCurrency: st.trades[0].feeCurrency }));
         assert(st.trades[0].accountId === 'fee-acct' && st.trades[0].symbol === 'BTC', 'trade must bind accountId + locked symbol, got ' + JSON.stringify({ accountId: st.trades[0].accountId, symbol: st.trades[0].symbol }));
-        try { if (stale && stale.parentNode) stale.parentNode.removeChild(stale); } catch (e) { /* ignore */ }
         restoreState();
       });
 
