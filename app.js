@@ -5253,6 +5253,7 @@ function buildSettings() {
     '<div class="set-tabs" role="tablist" aria-label="Settings sections">' +
     '<button type="button" role="tab" data-settab="overrides" aria-selected="true">Price overrides</button>' +
     '<button type="button" role="tab" data-settab="backup" aria-selected="false">Backup &amp; restore</button>' +
+    '<button type="button" role="tab" data-settab="sync" aria-selected="false">Sync</button>' +
     '<button type="button" role="tab" data-settab="danger" aria-selected="false">Danger zone</button>' +
     '</div>' +
     '<div class="set-panels">' +
@@ -5271,6 +5272,71 @@ function buildSettings() {
     '<button id="s-csv-lots" type="button">Export tax lots CSV (FIFO)</button>' +
     '<span id="s-upload-label">Restore from file</span>' +
     '<input id="s-upload" type="file" accept="application/json,.json">' +
+    '</section>' +
+    '<section data-setpanel="sync" role="tabpanel" aria-label="Encrypted sync" hidden>' +
+    '<p class="muted set-blurb">Sync an <strong>encrypted</strong> copy of your data to a drive you choose. The drive only ever sees ciphertext — bring the passphrase to any device to restore.</p>' +
+    '<label for="sy-provider">Provider</label>' +
+    '<select id="sy-provider">' +
+    '<option value="webdav">WebDAV / Nextcloud</option>' +
+    '<option value="gdrive">Google Drive</option>' +
+    '<option value="dropbox">Dropbox</option>' +
+    '<option value="onedrive">OneDrive</option>' +
+    '<option value="megas3">MEGA (S4 object storage)</option>' +
+    '</select>' +
+    '<p class="muted set-blurb" id="sy-hint"></p>' +
+    '<div id="sy-g-webdav">' +
+    '<label for="sy-url">Server URL</label>' +
+    '<input id="sy-url" autocomplete="off" spellcheck="false" placeholder="https://cloud.example.com/remote.php/dav/files/USER/Plutus">' +
+    '<label for="sy-user">Username</label>' +
+    '<input id="sy-user" autocomplete="username" spellcheck="false">' +
+    '<label for="sy-passwd">App password</label>' +
+    '<input id="sy-passwd" type="password" autocomplete="current-password">' +
+    '<label class="sync-check" for="sy-remember"><input id="sy-remember" type="checkbox"> Remember password in this browser</label>' +
+    '<label for="sy-filename">Filename</label>' +
+    '<input id="sy-filename" autocomplete="off" spellcheck="false">' +
+    '</div>' +
+    '<div id="sy-g-oauth" hidden>' +
+    '<label for="sy-client">OAuth client ID (your own app)</label>' +
+    '<input id="sy-client" autocomplete="off" spellcheck="false">' +
+    '<div id="sy-g-secret">' +
+    '<label for="sy-secret">OAuth client secret (Google only)</label>' +
+    '<input id="sy-secret" type="password" autocomplete="off">' +
+    '</div>' +
+    '<label for="sy-filename2">Filename</label>' +
+    '<input id="sy-filename2" autocomplete="off" spellcheck="false">' +
+    '<p class="muted set-blurb">Redirect URI to register in your OAuth app:</p>' +
+    '<p class="mono-break" id="sy-redirect"></p>' +
+    '</div>' +
+    '<div id="sy-g-megas3" hidden>' +
+    '<label for="sy-endpoint">Endpoint</label>' +
+    '<input id="sy-endpoint" autocomplete="off" spellcheck="false" placeholder="https://s3.eu-amsterdam.megas4.com">' +
+    '<label for="sy-region">Region</label>' +
+    '<input id="sy-region" autocomplete="off" spellcheck="false">' +
+    '<label for="sy-bucket">Bucket</label>' +
+    '<input id="sy-bucket" autocomplete="off" spellcheck="false">' +
+    '<label for="sy-key">Access key</label>' +
+    '<input id="sy-key" autocomplete="off" spellcheck="false">' +
+    '<label for="sy-skey">Secret key</label>' +
+    '<input id="sy-skey" type="password" autocomplete="off">' +
+    '<label class="sync-check" for="sy-remember2"><input id="sy-remember2" type="checkbox"> Remember secret key in this browser</label>' +
+    '<label for="sy-object">Object key</label>' +
+    '<input id="sy-object" autocomplete="off" spellcheck="false">' +
+    '</div>' +
+    '<label for="sy-pass">Sync passphrase</label>' +
+    '<input id="sy-pass" type="password" autocomplete="new-password" placeholder="Required — only you know it">' +
+    '<label for="sy-pass2">Confirm passphrase (for uploads)</label>' +
+    '<input id="sy-pass2" type="password" autocomplete="new-password">' +
+    '<p class="muted set-blurb" id="sy-fp">Key fingerprint: —</p>' +
+    '<p class="muted set-blurb" id="sy-status">Not connected.</p>' +
+    '<div class="sync-btns">' +
+    '<button id="sy-connect" type="button">Connect</button>' +
+    '<button id="sy-disconnect" type="button">Disconnect</button>' +
+    '<button id="sy-push" type="button">Sync now (upload)</button>' +
+    '<button id="sy-pull" type="button">Restore from drive</button>' +
+    '</div>' +
+    '<span id="s-enc-label">Encrypted file (no drive needed)</span>' +
+    '<button id="sy-enc-download" type="button">Download encrypted file</button>' +
+    '<input id="sy-enc-upload" type="file" accept="application/json,.json">' +
     '</section>' +
     '<section data-setpanel="danger" role="tabpanel" aria-label="Danger zone" hidden>' +
     '<button id="s-clear" type="button">Clear all data</button>' +
@@ -5342,6 +5408,7 @@ function buildSettings() {
     reader.readAsText(f);
   });
   document.getElementById('s-clear').addEventListener('click', clearAllData);
+  buildSyncSettings();
 }
 
 function syncTopbar(st) {
@@ -5811,5 +5878,1566 @@ if (typeof window !== 'undefined') {
         });
       } catch (err) { /* ignore */ }
     });
+  }
+}
+
+// === Sync ===
+// E2E encrypted sync to a drive of the user's choice. There is no Plutus
+// server: the plaintext is always the exact exportState() JSON, it is
+// encrypted in this browser with WebCrypto (PBKDF2-SHA256 -> AES-GCM-256),
+// and only the ciphertext envelope below ever leaves the device:
+//
+//   {"app":"inoculens-plutus-sync","v":1,"iter":N,"salt":b64,"iv":b64,
+//    "ciphertext":b64}
+//
+// The passphrase is never stored anywhere. To sync from another computer
+// the user only needs the drive login plus the passphrase. A wrong
+// passphrase fails closed (AES-GCM auth) and local data is never touched
+// until a downloaded backup fully validates via importState().
+// Providers: WebDAV/Nextcloud (Basic), Google Drive / Dropbox / OneDrive
+// (OAuth PKCE with the user's own app credentials), MEGA S4 (S3-compatible
+// SigV4 with the user's own access keys).
+
+var SYNC_APP = 'inoculens-plutus-sync';
+var SYNC_VERSION = 1;
+var SYNC_STORAGE_KEY = 'inoculens.sync.v1';
+var SYNC_OAUTH_KEY = 'inoculens.oauth.v1';
+var SYNC_DEFAULT_FILENAME = 'plutus-sync.enc.json';
+var SYNC_PBKDF2_ITER = 600000;
+var SYNC_PROVIDERS = [
+  { id: 'webdav', label: 'WebDAV / Nextcloud', kind: 'basic' },
+  { id: 'gdrive', label: 'Google Drive', kind: 'oauth' },
+  { id: 'dropbox', label: 'Dropbox', kind: 'oauth' },
+  { id: 'onedrive', label: 'OneDrive', kind: 'oauth' },
+  { id: 'megas3', label: 'MEGA (S4 object storage)', kind: 's3' }
+];
+var SYNC_HINTS = {
+  webdav: 'Nextcloud or any WebDAV host. Create a folder (e.g. Plutus), paste its URL, and sign in with an app password. Only ciphertext is uploaded.',
+  gdrive: 'Your own Google OAuth app: enable the Drive API, add a Web-application client, register the redirect URI below, then paste the client ID + secret. The app only sees files it created.',
+  dropbox: 'Your own Dropbox app (Scoped access, App folder). Register the redirect URI below, then paste the app key. Files stay in the private app folder.',
+  onedrive: 'Your own Microsoft app registration (Single-page application). Register the redirect URI below with the Files.ReadWrite.AppFolder scope, then paste the client ID. Files land in the private app folder.',
+  megas3: 'MEGA S4 object storage (needs a MEGA account with S4). Create a bucket and access keys under Object Storage, then fill endpoint, region, bucket and keys. Only ciphertext is stored.'
+};
+
+var syncBusy = false;
+var syncMemSecrets = { password: '', secretKey: '' };
+
+// --- Small pure codecs (no atob/TextEncoder dependency) ---
+
+var SYNC_B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function syncB64encode(bytes) {
+  var s = '';
+  var i, a, b, c;
+  for (i = 0; i < bytes.length; i += 3) {
+    a = bytes[i] & 255;
+    b = (i + 1 < bytes.length) ? (bytes[i + 1] & 255) : 0;
+    c = (i + 2 < bytes.length) ? (bytes[i + 2] & 255) : 0;
+    s += SYNC_B64.charAt(a >> 2);
+    s += SYNC_B64.charAt(((a & 3) << 4) | (b >> 4));
+    s += (i + 1 < bytes.length) ? SYNC_B64.charAt(((b & 15) << 2) | (c >> 6)) : '=';
+    s += (i + 2 < bytes.length) ? SYNC_B64.charAt(c & 63) : '=';
+  }
+  return s;
+}
+
+function syncB64decode(str) {
+  var clean = String(str).replace(/\s+/g, '');
+  if (clean.length === 0 || clean.length % 4 !== 0) throw new Error('sync failed: bad base64 length.');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) throw new Error('sync failed: bad base64 data.');
+  var padAt = clean.indexOf('=');
+  if (padAt !== -1 && padAt < clean.length - 2) throw new Error('sync failed: bad base64 padding.');
+  var out = [];
+  var i, e1, e2, e3, e4, triple;
+  var c3, c4;
+  for (i = 0; i < clean.length; i += 4) {
+    e1 = SYNC_B64.indexOf(clean.charAt(i));
+    e2 = SYNC_B64.indexOf(clean.charAt(i + 1));
+    c3 = clean.charAt(i + 2);
+    c4 = clean.charAt(i + 3);
+    e3 = (c3 === '=') ? -1 : SYNC_B64.indexOf(c3);
+    e4 = (c4 === '=') ? -1 : SYNC_B64.indexOf(c4);
+    if (e1 < 0 || e2 < 0 || (c3 !== '=' && e3 < 0) || (c4 !== '=' && e4 < 0)) {
+      throw new Error('sync failed: bad base64 data.');
+    }
+    triple = (e1 << 18) | (e2 << 12) | ((e3 < 0 ? 0 : e3) << 6) | (e4 < 0 ? 0 : e4);
+    out.push((triple >> 16) & 255);
+    if (e3 >= 0) out.push((triple >> 8) & 255);
+    if (e4 >= 0) out.push(triple & 255);
+  }
+  return new Uint8Array(out);
+}
+
+function syncB64UrlEncode(bytes) {
+  return syncB64encode(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function syncHex(bytes) {
+  var s = '';
+  var i;
+  for (i = 0; i < bytes.length; i++) {
+    s += (bytes[i] < 16 ? '0' : '') + (bytes[i] & 255).toString(16);
+  }
+  return s;
+}
+
+function syncUtf8Encode(str) {
+  var s = String(str);
+  var out = [];
+  var i, c, lo, cp;
+  for (i = 0; i < s.length; i++) {
+    c = s.charCodeAt(i);
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+      lo = s.charCodeAt(i + 1);
+      if (lo >= 0xDC00 && lo <= 0xDFFF) {
+        cp = 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00);
+        out.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+        i++;
+        continue;
+      }
+    }
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xC0 | (c >> 6), 0x80 | (c & 63));
+    else out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return new Uint8Array(out);
+}
+
+function syncUtf8Decode(bytes) {
+  var s = '';
+  var i = 0;
+  var b1, b2, b3, b4, cp;
+  while (i < bytes.length) {
+    b1 = bytes[i++] & 255;
+    if (b1 < 0x80) {
+      s += String.fromCharCode(b1);
+    } else if ((b1 & 0xE0) === 0xC0) {
+      b2 = (i < bytes.length) ? (bytes[i++] & 255) : 0;
+      s += String.fromCharCode(((b1 & 31) << 6) | (b2 & 63));
+    } else if ((b1 & 0xF0) === 0xE0) {
+      b2 = (i < bytes.length) ? (bytes[i++] & 255) : 0;
+      b3 = (i < bytes.length) ? (bytes[i++] & 255) : 0;
+      s += String.fromCharCode(((b1 & 15) << 12) | ((b2 & 63) << 6) | (b3 & 63));
+    } else {
+      b2 = (i < bytes.length) ? (bytes[i++] & 255) : 0;
+      b3 = (i < bytes.length) ? (bytes[i++] & 255) : 0;
+      b4 = (i < bytes.length) ? (bytes[i++] & 255) : 0;
+      cp = (((b1 & 7) << 18) | ((b2 & 63) << 12) | ((b3 & 63) << 6) | (b4 & 63)) - 0x10000;
+      s += String.fromCharCode(0xD800 + (cp >> 10), 0xDC00 + (cp & 1023));
+    }
+  }
+  return s;
+}
+
+// --- Envelope + pure helpers (covered by tests.html) ---
+
+function syncEnvelopeWrap(ctB64, saltB64, ivB64, iter) {
+  return JSON.stringify({ app: SYNC_APP, v: SYNC_VERSION, iter: iter, salt: saltB64, iv: ivB64, ciphertext: ctB64 });
+}
+
+function syncEnvelopeParse(text) {
+  var data;
+  try {
+    data = JSON.parse(String(text));
+  } catch (e) {
+    throw new Error('sync failed: file is not valid JSON.');
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('sync failed: bad envelope.');
+  if (data.app !== SYNC_APP) throw new Error('sync failed: not a Plutus sync file.');
+  if (data.v !== SYNC_VERSION) throw new Error('sync failed: unsupported sync version.');
+  var iter = Number(data.iter);
+  if (!isFinite(iter) || Math.floor(iter) !== iter || iter < 1000 || iter > 5000000) {
+    throw new Error('sync failed: bad envelope parameters.');
+  }
+  if (typeof data.salt !== 'string' || typeof data.iv !== 'string' || typeof data.ciphertext !== 'string') {
+    throw new Error('sync failed: bad envelope parameters.');
+  }
+  var salt, iv, ct;
+  try {
+    salt = syncB64decode(data.salt);
+    iv = syncB64decode(data.iv);
+    ct = syncB64decode(data.ciphertext);
+  } catch (e) {
+    throw new Error('sync failed: bad envelope encoding.');
+  }
+  if (salt.length !== 16) throw new Error('sync failed: bad envelope salt.');
+  if (iv.length !== 12) throw new Error('sync failed: bad envelope nonce.');
+  if (ct.length < 16) throw new Error('sync failed: ciphertext too short.');
+  return { iter: iter, salt: salt, iv: iv, ciphertext: ct };
+}
+
+// 'local-newer' | 'remote-newer' | 'equal' | 'unknown' (unparseable dates).
+function syncCompareTimestamps(localIso, remoteIso) {
+  var aOk = (typeof localIso === 'string') && isFinite(Date.parse(localIso));
+  var bOk = (typeof remoteIso === 'string') && isFinite(Date.parse(remoteIso));
+  if (!aOk || !bOk) return 'unknown';
+  var ta = Date.parse(localIso);
+  var tb = Date.parse(remoteIso);
+  if (ta > tb) return 'local-newer';
+  if (tb > ta) return 'remote-newer';
+  return 'equal';
+}
+
+function syncIsProvider(id) {
+  var i;
+  for (i = 0; i < SYNC_PROVIDERS.length; i++) {
+    if (SYNC_PROVIDERS[i].id === id) return true;
+  }
+  return false;
+}
+
+function syncProviderById(id) {
+  var i;
+  for (i = 0; i < SYNC_PROVIDERS.length; i++) {
+    if (SYNC_PROVIDERS[i].id === id) return SYNC_PROVIDERS[i];
+  }
+  return null;
+}
+
+function syncProviderLabel(id) {
+  var p = syncProviderById(id);
+  return p ? p.label : String(id);
+}
+
+function syncJoinUrl(base, name) {
+  var b = String(base || '').replace(/\s+$/g, '').replace(/\/+$/, '');
+  return b + '/' + encodeURIComponent(String(name));
+}
+
+function syncSanitizeFilename(name) {
+  var s = String(name == null ? '' : name).trim().replace(/[/\\'"]/g, '').slice(0, 128);
+  if (!s) s = SYNC_DEFAULT_FILENAME;
+  return s;
+}
+
+function syncDefaultConfig() {
+  return {
+    provider: 'webdav',
+    filename: SYNC_DEFAULT_FILENAME,
+    url: '',
+    username: '',
+    password: '',
+    rememberPassword: false,
+    clientId: '',
+    clientSecret: '',
+    tokens: null,
+    endpoint: 'https://s3.eu-amsterdam.megas4.com',
+    region: 'eu-amsterdam',
+    bucket: '',
+    accessKey: '',
+    secretKey: '',
+    rememberSecret: false,
+    objectKey: SYNC_DEFAULT_FILENAME,
+    lastSyncAt: null,
+    lastRemoteAt: null
+  };
+}
+
+function syncSanitizeConfig(raw) {
+  var d = syncDefaultConfig();
+  var c = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+  if (syncIsProvider(c.provider)) d.provider = c.provider;
+  if (typeof c.filename === 'string' && c.filename.trim() !== '') d.filename = syncSanitizeFilename(c.filename);
+  if (typeof c.url === 'string') d.url = c.url.trim().slice(0, 512);
+  if (typeof c.username === 'string') d.username = c.username.slice(0, 256);
+  if (typeof c.password === 'string') d.password = c.password.slice(0, 512);
+  d.rememberPassword = (c.rememberPassword === true);
+  if (!d.rememberPassword) d.password = '';
+  if (typeof c.clientId === 'string') d.clientId = c.clientId.trim().slice(0, 256);
+  if (typeof c.clientSecret === 'string') d.clientSecret = c.clientSecret.slice(0, 512);
+  if (c.tokens && typeof c.tokens === 'object' && typeof c.tokens.access === 'string' && c.tokens.access !== '') {
+    d.tokens = {
+      access: String(c.tokens.access).slice(0, 4096),
+      refresh: (typeof c.tokens.refresh === 'string') ? String(c.tokens.refresh).slice(0, 4096) : '',
+      expiry: (isFinite(Number(c.tokens.expiry))) ? Number(c.tokens.expiry) : 0
+    };
+  } else {
+    d.tokens = null;
+  }
+  if (typeof c.endpoint === 'string' && c.endpoint.trim() !== '') d.endpoint = c.endpoint.trim().replace(/\/+$/, '').slice(0, 256);
+  if (typeof c.region === 'string' && c.region.trim() !== '') d.region = c.region.trim().slice(0, 64);
+  if (typeof c.bucket === 'string') d.bucket = c.bucket.trim().slice(0, 128);
+  if (typeof c.accessKey === 'string') d.accessKey = c.accessKey.trim().slice(0, 256);
+  // MEGA secret key is only persisted when the user explicitly opts in
+  // (sy-remember2); otherwise it lives in memory for this session only.
+  d.rememberSecret = (c.rememberSecret === true);
+  if (d.rememberSecret && typeof c.secretKey === 'string') d.secretKey = c.secretKey.slice(0, 512);
+  else d.secretKey = '';
+  if (typeof c.objectKey === 'string' && c.objectKey.trim() !== '') d.objectKey = c.objectKey.trim().replace(/^\/+/, '').slice(0, 256) || SYNC_DEFAULT_FILENAME;
+  if (typeof c.lastSyncAt === 'string' && isFinite(Date.parse(c.lastSyncAt))) d.lastSyncAt = c.lastSyncAt;
+  if (typeof c.lastRemoteAt === 'string' && isFinite(Date.parse(c.lastRemoteAt))) d.lastRemoteAt = c.lastRemoteAt;
+  return d;
+}
+
+function syncLoadConfig() {
+  var raw = null;
+  try {
+    if (typeof localStorage === 'undefined') return syncDefaultConfig();
+    var s = localStorage.getItem(SYNC_STORAGE_KEY);
+    raw = s ? JSON.parse(s) : null;
+  } catch (e) {
+    raw = null;
+  }
+  return syncSanitizeConfig(raw);
+}
+
+function syncSaveConfig(cfg) {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify(syncSanitizeConfig(cfg)));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function syncClearTokens(cfg) {
+  cfg.tokens = null;
+  syncSaveConfig(cfg);
+}
+
+// Secrets the user chose NOT to remember live only in memory, never in storage.
+function syncPassword(cfg) {
+  if (cfg.password) return cfg.password;
+  return syncMemSecrets.password || '';
+}
+
+function syncSecret(cfg) {
+  if (cfg.secretKey) return cfg.secretKey;
+  return syncMemSecrets.secretKey || '';
+}
+
+// --- WebCrypto layer (async; guarded) ---
+
+function syncCryptoObj() {
+  try {
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) return window.crypto;
+    if (typeof self !== 'undefined' && self.crypto && self.crypto.subtle) return self.crypto;
+    if (typeof crypto !== 'undefined' && crypto.subtle) return crypto;
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
+function syncCryptoAvailable() {
+  var c = syncCryptoObj();
+  return !!(c && c.subtle && typeof c.subtle.importKey === 'function' && typeof c.getRandomValues === 'function');
+}
+
+function syncRandomBytes(n) {
+  var c = syncCryptoObj();
+  var out = new Uint8Array(n);
+  if (c && typeof c.getRandomValues === 'function') {
+    c.getRandomValues(out);
+    return out;
+  }
+  var i;
+  for (i = 0; i < n; i++) out[i] = Math.floor(Math.random() * 256);
+  return out;
+}
+
+function syncSha256(bytes) {
+  var c = syncCryptoObj();
+  if (!c) return Promise.reject(new Error('sync failed: WebCrypto unavailable.'));
+  return c.subtle.digest('SHA-256', bytes).then(function (d) { return new Uint8Array(d); });
+}
+
+function syncHmac(keyBytes, dataBytes) {
+  var c = syncCryptoObj();
+  if (!c) return Promise.reject(new Error('sync failed: WebCrypto unavailable.'));
+  return c.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']).then(function (k) {
+    return c.subtle.sign('HMAC', k, dataBytes);
+  }).then(function (sig) {
+    return new Uint8Array(sig);
+  });
+}
+
+function syncDeriveAesKey(passphrase, salt, iter) {
+  var c = syncCryptoObj();
+  if (!c) return Promise.reject(new Error('sync failed: this browser cannot do encrypted sync (WebCrypto unavailable).'));
+  var pwBytes = syncUtf8Encode(passphrase);
+  return c.subtle.importKey('raw', pwBytes, { name: 'PBKDF2' }, false, ['deriveBits']).then(function (base) {
+    return c.subtle.deriveBits({ name: 'PBKDF2', salt: salt, iterations: iter, hash: 'SHA-256' }, base, 256);
+  }).then(function (bits) {
+    return c.subtle.importKey('raw', bits, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  });
+}
+
+function syncEncryptEnvelope(plaintext, passphrase) {
+  if (!syncCryptoAvailable()) {
+    return Promise.reject(new Error('sync failed: this browser cannot do encrypted sync (WebCrypto unavailable). Use Download backup instead.'));
+  }
+  if (!passphrase) return Promise.reject(new Error('sync failed: enter a sync passphrase.'));
+  var salt = syncRandomBytes(16);
+  var iv = syncRandomBytes(12);
+  var data = syncUtf8Encode(plaintext);
+  return syncDeriveAesKey(passphrase, salt, SYNC_PBKDF2_ITER).then(function (key) {
+    var c = syncCryptoObj();
+    return c.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, data);
+  }).then(function (ct) {
+    return syncEnvelopeWrap(syncB64encode(new Uint8Array(ct)), syncB64encode(salt), syncB64encode(iv), SYNC_PBKDF2_ITER);
+  });
+}
+
+function syncDecryptEnvelope(envelopeText, passphrase) {
+  if (!syncCryptoAvailable()) {
+    return Promise.reject(new Error('sync failed: this browser cannot do encrypted sync (WebCrypto unavailable).'));
+  }
+  if (!passphrase) return Promise.reject(new Error('sync failed: enter the sync passphrase.'));
+  var env;
+  try {
+    env = syncEnvelopeParse(envelopeText);
+  } catch (e) {
+    return Promise.reject(e);
+  }
+  return syncDeriveAesKey(passphrase, env.salt, env.iter).then(function (key) {
+    var c = syncCryptoObj();
+    return c.subtle.decrypt({ name: 'AES-GCM', iv: env.iv }, key, env.ciphertext);
+  }).then(function (pt) {
+    return syncUtf8Decode(new Uint8Array(pt));
+  }, function () {
+    throw new Error('sync failed: wrong passphrase or corrupted file.');
+  });
+}
+
+// Short display fingerprint so two devices can check they typed the same
+// passphrase. Display-only; it never leaves the browser.
+function syncFingerprint(passphrase) {
+  if (!passphrase) return Promise.resolve('');
+  return syncSha256(syncUtf8Encode('plutus-sync:' + passphrase)).then(function (h) {
+    var hex = syncHex(h).slice(0, 12);
+    return hex.slice(0, 4) + '-' + hex.slice(4, 8) + '-' + hex.slice(8, 12);
+  }, function () {
+    return '';
+  });
+}
+
+// --- Network helpers ---
+
+function syncNetErr(label) {
+  return function () {
+    throw new Error('sync failed: cannot reach ' + label + '. Check your connection.');
+  };
+}
+
+function syncPostForm(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body
+  }).then(function (res) {
+    return res.json().then(function (data) {
+      if (!res.ok) {
+        var msg = (data && (data.error_description || data.error)) || ('HTTP ' + res.status);
+        throw new Error('sync failed: sign-in refused (' + String(msg).slice(0, 160) + ').');
+      }
+      return data || {};
+    }, function () {
+      if (!res.ok) throw new Error('sync failed: sign-in refused (HTTP ' + res.status + ').');
+      throw new Error('sync failed: bad sign-in response.');
+    });
+  }, syncNetErr('the sign-in server'));
+}
+
+// --- OAuth (PKCE, user's own app credentials; tokens stay in this browser) ---
+
+function syncRedirectUri() {
+  try {
+    if (typeof window === 'undefined' || !window.location) return '';
+    var loc = window.location;
+    if (!loc.protocol || loc.protocol.indexOf('http') !== 0 || !loc.host) return '';
+    return loc.protocol + '//' + loc.host + String(loc.pathname || '/');
+  } catch (e) {
+    return '';
+  }
+}
+
+function syncPkcePair() {
+  var verifier = syncB64UrlEncode(syncRandomBytes(64));
+  return syncSha256(syncUtf8Encode(verifier)).then(function (h) {
+    return { verifier: verifier, challenge: syncB64UrlEncode(h) };
+  });
+}
+
+function syncOAuthAuthUrl(providerId, clientId, redirectUri, challenge, state) {
+  var scope;
+  if (providerId === 'gdrive') {
+    scope = 'https://www.googleapis.com/auth/drive.file';
+    return 'https://accounts.google.com/o/oauth2/v2/auth' +
+      '?client_id=' + encodeURIComponent(clientId) +
+      '&redirect_uri=' + encodeURIComponent(redirectUri) +
+      '&response_type=code' +
+      '&scope=' + encodeURIComponent(scope) +
+      '&code_challenge=' + encodeURIComponent(challenge) +
+      '&code_challenge_method=S256' +
+      '&access_type=offline&prompt=consent&include_granted_scopes=true' +
+      '&state=' + encodeURIComponent(state);
+  }
+  if (providerId === 'dropbox') {
+    return 'https://www.dropbox.com/oauth2/authorize' +
+      '?client_id=' + encodeURIComponent(clientId) +
+      '&redirect_uri=' + encodeURIComponent(redirectUri) +
+      '&response_type=code' +
+      '&code_challenge=' + encodeURIComponent(challenge) +
+      '&code_challenge_method=S256' +
+      '&token_access_type=offline' +
+      '&state=' + encodeURIComponent(state);
+  }
+  scope = 'Files.ReadWrite.AppFolder offline_access';
+  return 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize' +
+    '?client_id=' + encodeURIComponent(clientId) +
+    '&redirect_uri=' + encodeURIComponent(redirectUri) +
+    '&response_type=code' +
+    '&scope=' + encodeURIComponent(scope) +
+    '&code_challenge=' + encodeURIComponent(challenge) +
+    '&code_challenge_method=S256' +
+    '&response_mode=query' +
+    '&state=' + encodeURIComponent(state);
+}
+
+function syncOAuthTokenExchange(providerId, cfg, code, verifier) {
+  var redirect = syncRedirectUri();
+  var body;
+  var url;
+  if (providerId === 'gdrive') {
+    url = 'https://oauth2.googleapis.com/token';
+    body = 'grant_type=authorization_code' +
+      '&code=' + encodeURIComponent(code) +
+      '&redirect_uri=' + encodeURIComponent(redirect) +
+      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&client_secret=' + encodeURIComponent(cfg.clientSecret || '') +
+      '&code_verifier=' + encodeURIComponent(verifier);
+  } else if (providerId === 'dropbox') {
+    url = 'https://api.dropboxapi.com/oauth2/token';
+    body = 'grant_type=authorization_code' +
+      '&code=' + encodeURIComponent(code) +
+      '&redirect_uri=' + encodeURIComponent(redirect) +
+      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&code_verifier=' + encodeURIComponent(verifier);
+  } else {
+    url = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+    body = 'grant_type=authorization_code' +
+      '&code=' + encodeURIComponent(code) +
+      '&redirect_uri=' + encodeURIComponent(redirect) +
+      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&code_verifier=' + encodeURIComponent(verifier);
+  }
+  return syncPostForm(url, body).then(function (tok) {
+    return syncNormalizeTokens(tok);
+  });
+}
+
+function syncOAuthRefresh(providerId, cfg) {
+  var t = cfg.tokens || {};
+  if (!t.refresh) return Promise.reject(new Error('sync failed: connect your drive first.'));
+  var body;
+  var url;
+  if (providerId === 'gdrive') {
+    url = 'https://oauth2.googleapis.com/token';
+    body = 'grant_type=refresh_token' +
+      '&refresh_token=' + encodeURIComponent(t.refresh) +
+      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&client_secret=' + encodeURIComponent(cfg.clientSecret || '');
+  } else if (providerId === 'dropbox') {
+    url = 'https://api.dropboxapi.com/oauth2/token';
+    body = 'grant_type=refresh_token' +
+      '&refresh_token=' + encodeURIComponent(t.refresh) +
+      '&client_id=' + encodeURIComponent(cfg.clientId);
+  } else {
+    url = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+    body = 'grant_type=refresh_token' +
+      '&refresh_token=' + encodeURIComponent(t.refresh) +
+      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&redirect_uri=' + encodeURIComponent(syncRedirectUri());
+  }
+  return syncPostForm(url, body).then(function (tok) {
+    var n = syncNormalizeTokens(tok);
+    if (!n.refresh) n.refresh = t.refresh;
+    return n;
+  });
+}
+
+function syncNormalizeTokens(tok) {
+  var out = { access: '', refresh: '', expiry: 0 };
+  if (tok && typeof tok.access_token === 'string') out.access = tok.access_token;
+  if (tok && typeof tok.refresh_token === 'string') out.refresh = tok.refresh_token;
+  var exp = tok ? Number(tok.expires_in) : 0;
+  out.expiry = (isFinite(exp) && exp > 0) ? (Date.now() + exp * 1000) : 0;
+  if (!out.access) throw new Error('sync failed: sign-in gave no access token.');
+  return out;
+}
+
+function syncEnsureAccessToken(cfg) {
+  var t = cfg.tokens;
+  if (!t || !t.access) return Promise.reject(new Error('sync failed: connect your drive first.'));
+  if (t.expiry && (t.expiry - Date.now()) > 60000) return Promise.resolve(t.access);
+  if (!t.refresh) {
+    if (t.expiry && t.expiry <= Date.now()) {
+      return Promise.reject(new Error('sync failed: session expired — connect again.'));
+    }
+    return Promise.resolve(t.access);
+  }
+  return syncOAuthRefresh(cfg.provider, cfg).then(function (n) {
+    cfg.tokens = n;
+    syncSaveConfig(cfg);
+    return n.access;
+  });
+}
+
+function syncParseQuery(q) {
+  var out = {};
+  var pairs = String(q || '').split('&');
+  var i, kv, k, v;
+  for (i = 0; i < pairs.length; i++) {
+    if (!pairs[i]) continue;
+    kv = pairs[i].split('=');
+    k = kv[0];
+    v = kv.slice(1).join('=');
+    try { k = decodeURIComponent(k); } catch (e) { /* keep raw */ }
+    try { v = decodeURIComponent(v); } catch (e) { /* keep raw */ }
+    out[k] = v;
+  }
+  return out;
+}
+
+// Runs in the OAuth popup after the provider redirects back to this page:
+// hands the code to the opener window and closes itself.
+function syncHandleOAuthRedirect() {
+  try {
+    if (typeof window === 'undefined' || !window.location || !window.opener) return;
+    var search = String(window.location.search || '');
+    if (search.indexOf('code=') === -1 && search.indexOf('error=') === -1) return;
+    var q = syncParseQuery(search.replace(/^\?/, ''));
+    if (!q.state || q.state.indexOf('plutus-') !== 0) return;
+    if (!q.code && !q.error) return;
+    try {
+      window.opener.postMessage({ type: 'plutus-oauth', code: q.code || null, error: q.error || null, state: q.state }, window.location.origin);
+    } catch (e) { /* ignore */ }
+    try {
+      if (document && document.body) {
+        document.body.innerHTML = '<p style="font-family:sans-serif;padding:2rem">Signed in — you can close this window.</p>';
+      }
+    } catch (e2) { /* ignore */ }
+    try { window.close(); } catch (e3) { /* ignore */ }
+  } catch (e) { /* ignore */ }
+}
+
+// --- Provider transports (ciphertext in, ciphertext out) ---
+
+function syncWebdavUpload(cfg, text) {
+  var pw = syncPassword(cfg);
+  if (!cfg.url) return Promise.reject(new Error('sync failed: enter the WebDAV server URL.'));
+  if (!pw) return Promise.reject(new Error('sync failed: enter the WebDAV password.'));
+  var auth = 'Basic ' + syncB64encode(syncUtf8Encode(cfg.username + ':' + pw));
+  return fetch(syncJoinUrl(cfg.url, cfg.filename), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'Authorization': auth },
+    body: text
+  }).then(function (res) {
+    if (res.ok) return true;
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('sync failed: WebDAV login refused. Check the username and app password.');
+    }
+    if (res.status === 404 || res.status === 409) {
+      throw new Error('sync failed: WebDAV folder not found. Check the server URL.');
+    }
+    throw new Error('sync failed: WebDAV upload refused (HTTP ' + res.status + ').');
+  }, syncNetErr('the WebDAV server'));
+}
+
+function syncWebdavDownload(cfg) {
+  var pw = syncPassword(cfg);
+  if (!cfg.url) return Promise.reject(new Error('sync failed: enter the WebDAV server URL.'));
+  if (!pw) return Promise.reject(new Error('sync failed: enter the WebDAV password.'));
+  var auth = 'Basic ' + syncB64encode(syncUtf8Encode(cfg.username + ':' + pw));
+  return fetch(syncJoinUrl(cfg.url, cfg.filename), {
+    method: 'GET',
+    headers: { 'Authorization': auth }
+  }).then(function (res) {
+    if (res.ok) return res.text();
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('sync failed: WebDAV login refused. Check the username and app password.');
+    }
+    if (res.status === 404) throw new Error('sync failed: no backup found on the server yet.');
+    throw new Error('sync failed: WebDAV download refused (HTTP ' + res.status + ').');
+  }, syncNetErr('the WebDAV server'));
+}
+
+function syncDriveFind(access, name) {
+  var q = "name = '" + String(name).replace(/'/g, '') + "' and trashed = false";
+  var url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) +
+    '&fields=' + encodeURIComponent('files(id,name,modifiedTime)') + '&spaces=drive';
+  return fetch(url, { headers: { 'Authorization': 'Bearer ' + access } }).then(function (res) {
+    return res.json().then(function (data) {
+      if (!res.ok) throw new Error('sync failed: Drive lookup refused (HTTP ' + res.status + ').');
+      var files = (data && data.files) || [];
+      return (files.length && files[0].id) ? files[0].id : null;
+    }, function () {
+      throw new Error('sync failed: bad Drive response.');
+    });
+  }, syncNetErr('Google Drive'));
+}
+
+function syncDrivePutMedia(access, id, text) {
+  return fetch('https://www.googleapis.com/upload/drive/v3/files/' + encodeURIComponent(id) + '?uploadType=media', {
+    method: 'PATCH',
+    headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
+    body: text
+  }).then(function (res) {
+    if (res.ok) return true;
+    throw new Error('sync failed: Drive upload refused (HTTP ' + res.status + ').');
+  }, syncNetErr('Google Drive'));
+}
+
+function syncDriveUpload(access, name, text) {
+  return syncDriveFind(access, name).then(function (id) {
+    if (id) return syncDrivePutMedia(access, id, text);
+    return fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, mimeType: 'application/json' })
+    }).then(function (res) {
+      return res.json().then(function (data) {
+        if (!res.ok || !data || !data.id) {
+          throw new Error('sync failed: Drive could not create the file (HTTP ' + res.status + ').');
+        }
+        return syncDrivePutMedia(access, data.id, text);
+      }, function () {
+        throw new Error('sync failed: bad Drive response.');
+      });
+    }, syncNetErr('Google Drive'));
+  });
+}
+
+function syncDriveDownload(access, name) {
+  return syncDriveFind(access, name).then(function (id) {
+    if (!id) throw new Error('sync failed: no backup found on the server yet.');
+    return fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) + '?alt=media', {
+      headers: { 'Authorization': 'Bearer ' + access }
+    }).then(function (res) {
+      if (res.ok) return res.text();
+      throw new Error('sync failed: Drive download refused (HTTP ' + res.status + ').');
+    }, syncNetErr('Google Drive'));
+  });
+}
+
+function syncDropboxPath(name) {
+  return '/' + String(name).replace(/^\/+/, '');
+}
+
+function syncDropboxUpload(access, name, text) {
+  return fetch('https://content.dropboxapi.com/2/files/upload', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + access,
+      'Content-Type': 'application/octet-stream',
+      'Dropbox-API-Arg': JSON.stringify({ path: syncDropboxPath(name), mode: 'overwrite', autorename: false, mute: true })
+    },
+    body: text
+  }).then(function (res) {
+    if (res.ok) return true;
+    throw new Error('sync failed: Dropbox upload refused (HTTP ' + res.status + ').');
+  }, syncNetErr('Dropbox'));
+}
+
+function syncDropboxDownload(access, name) {
+  return fetch('https://content.dropboxapi.com/2/files/download', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + access,
+      'Dropbox-API-Arg': JSON.stringify({ path: syncDropboxPath(name) })
+    }
+  }).then(function (res) {
+    if (res.ok) return res.text();
+    if (res.status === 409) throw new Error('sync failed: no backup found on the server yet.');
+    throw new Error('sync failed: Dropbox download refused (HTTP ' + res.status + ').');
+  }, syncNetErr('Dropbox'));
+}
+
+function syncOneDriveUrl(name) {
+  return 'https://graph.microsoft.com/v1.0/me/drive/special/approot:/' + encodeURIComponent(name) + ':/content';
+}
+
+function syncOneDriveUpload(access, name, text) {
+  return fetch(syncOneDriveUrl(name), {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
+    body: text
+  }).then(function (res) {
+    if (res.ok) return true;
+    throw new Error('sync failed: OneDrive upload refused (HTTP ' + res.status + ').');
+  }, syncNetErr('OneDrive'));
+}
+
+function syncOneDriveDownload(access, name) {
+  return fetch(syncOneDriveUrl(name), {
+    method: 'GET',
+    headers: { 'Authorization': 'Bearer ' + access }
+  }).then(function (res) {
+    if (res.ok) return res.text();
+    if (res.status === 404) throw new Error('sync failed: no backup found on the server yet.');
+    throw new Error('sync failed: OneDrive download refused (HTTP ' + res.status + ').');
+  }, syncNetErr('OneDrive'));
+}
+
+// --- MEGA S4 (S3-compatible SigV4; standard HMAC-SHA256, no custom crypto) ---
+
+function syncSplitUrl(url) {
+  var s = String(url || '');
+  var m = s.match(/^https?:\/\/([^\/]+)(\/.*)?$/);
+  var host = m ? m[1].toLowerCase() : '';
+  var path = (m && m[2]) ? m[2] : '/';
+  var q = path.indexOf('?');
+  if (q !== -1) path = path.slice(0, q);
+  if (!path) path = '/';
+  return { host: host, path: path };
+}
+
+function syncS3Url(cfg) {
+  var ep = String(cfg.endpoint || '').replace(/\/+$/, '');
+  var key = String(cfg.objectKey || '').split('/').map(function (seg) { return encodeURIComponent(seg); }).join('/');
+  return ep + '/' + encodeURIComponent(cfg.bucket) + '/' + key;
+}
+
+function syncS3CanonicalRequest(method, url, payloadHash, amzDate) {
+  var parts = syncSplitUrl(url);
+  var signed, heads;
+  if (method === 'PUT') {
+    signed = 'content-type;host;x-amz-content-sha256;x-amz-date';
+    heads = 'content-type:application/json\nhost:' + parts.host +
+      '\nx-amz-content-sha256:' + payloadHash + '\nx-amz-date:' + amzDate + '\n';
+  } else {
+    signed = 'host;x-amz-content-sha256;x-amz-date';
+    heads = 'host:' + parts.host +
+      '\nx-amz-content-sha256:' + payloadHash + '\nx-amz-date:' + amzDate + '\n';
+  }
+  return method + '\n' + parts.path + '\n\n' + heads + '\n' + signed + '\n' + payloadHash;
+}
+
+function syncAmzDate(d) {
+  function p(x, n) {
+    x = String(x);
+    while (x.length < n) x = '0' + x;
+    return x;
+  }
+  return p(d.getUTCFullYear(), 4) + p(d.getUTCMonth() + 1, 2) + p(d.getUTCDate(), 2) + 'T' +
+    p(d.getUTCHours(), 2) + p(d.getUTCMinutes(), 2) + p(d.getUTCSeconds(), 2) + 'Z';
+}
+
+function syncS3Sign(cfg, method, payloadText) {
+  if (!syncCryptoAvailable()) {
+    return Promise.reject(new Error('sync failed: this browser cannot do encrypted sync (WebCrypto unavailable).'));
+  }
+  var secret = syncSecret(cfg);
+  if (!cfg.endpoint || syncSplitUrl(cfg.endpoint).host === '') {
+    return Promise.reject(new Error('sync failed: enter the S3 endpoint URL.'));
+  }
+  if (!cfg.bucket) return Promise.reject(new Error('sync failed: enter the S3 bucket.'));
+  if (!cfg.accessKey) return Promise.reject(new Error('sync failed: enter the S3 access key.'));
+  if (!secret) return Promise.reject(new Error('sync failed: enter the S3 secret key.'));
+  if (!cfg.region) return Promise.reject(new Error('sync failed: enter the S3 region.'));
+  var url = syncS3Url(cfg);
+  var now = new Date();
+  var amzDate = syncAmzDate(now);
+  var dateStamp = amzDate.slice(0, 8);
+  var payloadBytes = syncUtf8Encode(payloadText || '');
+  return syncSha256(payloadBytes).then(function (phBytes) {
+    var payloadHash = syncHex(phBytes);
+    var canon = syncS3CanonicalRequest(method, url, payloadHash, amzDate);
+    return syncSha256(syncUtf8Encode(canon)).then(function (chBytes) {
+      var sts = 'AWS4-HMAC-SHA256\n' + amzDate + '\n' + dateStamp + '/' + cfg.region +
+        '/s3/aws4_request\n' + syncHex(chBytes);
+      return syncHmac(syncUtf8Encode('AWS4' + secret), syncUtf8Encode(dateStamp)).then(function (kDate) {
+        return syncHmac(kDate, syncUtf8Encode(cfg.region));
+      }).then(function (kRegion) {
+        return syncHmac(kRegion, syncUtf8Encode('s3'));
+      }).then(function (kService) {
+        return syncHmac(kService, syncUtf8Encode('aws4_request'));
+      }).then(function (kSigning) {
+        return syncHmac(kSigning, syncUtf8Encode(sts));
+      }).then(function (sigBytes) {
+        var signedHeaders = (method === 'PUT')
+          ? 'content-type;host;x-amz-content-sha256;x-amz-date'
+          : 'host;x-amz-content-sha256;x-amz-date';
+        var auth = 'AWS4-HMAC-SHA256 Credential=' + cfg.accessKey + '/' + dateStamp + '/' +
+          cfg.region + '/s3/aws4_request, SignedHeaders=' + signedHeaders +
+          ', Signature=' + syncHex(sigBytes);
+        var headers = {
+          'x-amz-date': amzDate,
+          'x-amz-content-sha256': payloadHash,
+          'Authorization': auth
+        };
+        if (method === 'PUT') headers['Content-Type'] = 'application/json';
+        return { url: url, headers: headers };
+      });
+    });
+  });
+}
+
+function syncS3Put(cfg, text) {
+  return syncS3Sign(cfg, 'PUT', text).then(function (s) {
+    return fetch(s.url, { method: 'PUT', headers: s.headers, body: text }).then(function (res) {
+      if (res.ok) return true;
+      if (res.status === 403) {
+        throw new Error('sync failed: S3 keys refused. Check the access key, secret and bucket policy.');
+      }
+      if (res.status === 404) {
+        throw new Error('sync failed: S3 bucket not found. Check the endpoint and bucket name.');
+      }
+      throw new Error('sync failed: S3 upload refused (HTTP ' + res.status + ').');
+    }, syncNetErr('the S3 endpoint'));
+  });
+}
+
+function syncS3Get(cfg) {
+  return syncS3Sign(cfg, 'GET', '').then(function (s) {
+    return fetch(s.url, { method: 'GET', headers: s.headers }).then(function (res) {
+      if (res.ok) return res.text();
+      if (res.status === 404 || res.status === 403) {
+        throw new Error('sync failed: no backup found on the server yet.');
+      }
+      throw new Error('sync failed: S3 download refused (HTTP ' + res.status + ').');
+    }, syncNetErr('the S3 endpoint'));
+  });
+}
+
+function syncRemoteUpload(cfg, text) {
+  if (cfg.provider === 'webdav') return syncWebdavUpload(cfg, text);
+  if (cfg.provider === 'megas3') return syncS3Put(cfg, text);
+  return syncEnsureAccessToken(cfg).then(function (access) {
+    if (cfg.provider === 'gdrive') return syncDriveUpload(access, cfg.filename, text);
+    if (cfg.provider === 'dropbox') return syncDropboxUpload(access, cfg.filename, text);
+    return syncOneDriveUpload(access, cfg.filename, text);
+  });
+}
+
+function syncRemoteDownload(cfg) {
+  if (cfg.provider === 'webdav') return syncWebdavDownload(cfg);
+  if (cfg.provider === 'megas3') return syncS3Get(cfg);
+  return syncEnsureAccessToken(cfg).then(function (access) {
+    if (cfg.provider === 'gdrive') return syncDriveDownload(access, cfg.filename);
+    if (cfg.provider === 'dropbox') return syncDropboxDownload(access, cfg.filename);
+    return syncOneDriveDownload(access, cfg.filename);
+  });
+}
+
+// --- Push / pull orchestration (local data only replaced after full validation) ---
+
+function syncSetStatus(text) {
+  var el = (typeof document !== 'undefined') ? document.getElementById('sy-status') : null;
+  if (el) el.textContent = String(text);
+}
+
+function syncSetBusy(on, note) {
+  syncBusy = !!on;
+  var ids = ['sy-connect', 'sy-disconnect', 'sy-push', 'sy-pull', 'sy-enc-download'];
+  var i, el;
+  for (i = 0; i < ids.length; i++) {
+    el = (typeof document !== 'undefined') ? document.getElementById(ids[i]) : null;
+    if (el) el.disabled = syncBusy;
+  }
+  if (on && note) syncSetStatus(note);
+}
+
+function syncLocalExportedAt(json) {
+  try {
+    var d = JSON.parse(json);
+    if (d && typeof d.exportedAt === 'string') return d.exportedAt;
+  } catch (e) { /* ignore */ }
+  return '';
+}
+
+function syncPushFlow() {
+  if (syncBusy) return;
+  var rd = syncReadForm();
+  var cfg = rd.cfg;
+  var pass = rd.passphrase;
+  if (!pass) {
+    showBanner('Enter a sync passphrase first — it encrypts everything you upload.', 'error', {
+      title: 'Sync needs a passphrase',
+      lines: ['Type a passphrase in the Sync tab. It is never stored or sent anywhere.']
+    });
+    return;
+  }
+  if (rd.passConfirm !== null && pass !== rd.passConfirm) {
+    showBanner('The two passphrases do not match.', 'error', {
+      title: 'Sync passphrase',
+      lines: ['Retype the same passphrase in both fields, then try again.']
+    });
+    return;
+  }
+  var st = loadState();
+  if ((!st.accounts || !st.accounts.length) && (!st.trades || !st.trades.length)) {
+    showBanner('Nothing to sync yet — add an account first.', 'error', {
+      title: 'Sync',
+      lines: ['Uploading an empty wallet could overwrite a good drive copy. Add data first.']
+    });
+    return;
+  }
+  syncPersistFormSecrets(cfg);
+  syncSetBusy(true, 'Encrypting…');
+  var plain = exportState(st);
+  var localAt = syncLocalExportedAt(plain);
+  syncEncryptEnvelope(plain, pass).then(function (env) {
+    syncSetStatus('Uploading to ' + syncProviderLabel(cfg.provider) + '…');
+    // Conflict check: if the drive holds a NEWER backup, ask before overwriting.
+    return syncRemoteDownload(cfg).then(function (remoteText) {
+      return syncDecryptEnvelope(remoteText, pass).then(function (remotePlain) {
+        var cmp = syncCompareTimestamps(localAt, syncLocalExportedAt(remotePlain));
+        if (cmp === 'remote-newer') {
+          syncSetBusy(false);
+          return confirmAction(
+            'Drive copy is newer',
+            'The drive backup is newer than this device. Upload anyway and overwrite it, or restore the drive copy here instead?',
+            'Upload anyway',
+            false
+          ).then(function (uploadAnyway) {
+            if (!uploadAnyway) {
+              syncSetStatus('Upload cancelled — drive copy kept.');
+              return 'cancelled';
+            }
+            syncSetBusy(true, 'Uploading to ' + syncProviderLabel(cfg.provider) + '…');
+            return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
+          });
+        }
+        return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
+      }, function (decErr) {
+        // Drive file exists but this passphrase cannot open it: stop, do not overwrite blindly.
+        throw new Error('sync failed: the drive file uses a different passphrase. Enter that passphrase, or clear the drive file first.');
+      });
+    }, function (dlErr) {
+      // No remote backup yet (or unreachable): only push when it is simply missing.
+      if (dlErr && dlErr.message && dlErr.message.indexOf('no backup found') !== -1) {
+        return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
+      }
+      throw dlErr;
+    });
+  }).then(function (outcome) {
+    syncSetBusy(false);
+    if (outcome === 'cancelled') return;
+    var now = new Date().toISOString();
+    cfg.lastSyncAt = now;
+    cfg.lastRemoteAt = localAt;
+    syncSaveConfig(cfg);
+    syncRefreshSyncPanel();
+    clearBanner();
+    syncSetStatus('Synced ' + now.slice(0, 19).replace('T', ' ') + ' UTC.');
+  }, function (err) {
+    syncSetBusy(false);
+    syncRefreshSyncPanel();
+    showBanner('Sync failed — your data was left untouched.', 'error', {
+      title: 'Sync error',
+      lines: [String((err && err.message) || err)]
+    });
+  });
+}
+
+function syncPullFlow() {
+  if (syncBusy) return;
+  var rd = syncReadForm();
+  var cfg = rd.cfg;
+  var pass = rd.passphrase;
+  if (!pass) {
+    showBanner('Enter the sync passphrase to restore.', 'error', {
+      title: 'Sync needs a passphrase',
+      lines: ['The drive copy is encrypted — the passphrase never leaves this browser.']
+    });
+    return;
+  }
+  syncPersistFormSecrets(cfg);
+  syncSetBusy(true, 'Downloading from ' + syncProviderLabel(cfg.provider) + '…');
+  syncRemoteDownload(cfg).then(function (remoteText) {
+    return syncDecryptEnvelope(remoteText, pass);
+  }).then(function (plain) {
+    var next;
+    try {
+      next = importState(plain);
+    } catch (e) {
+      throw new Error('sync failed: the drive backup is invalid (' + String((e && e.message) || e).slice(0, 160) + ').');
+    }
+    syncSetBusy(false);
+    return confirmAction(
+      'Replace this device?',
+      'Restore the drive backup here? This replaces all accounts, trades and settings on this device.',
+      'Restore backup',
+      true
+    ).then(function (ok) {
+      if (!ok) {
+        syncSetStatus('Restore cancelled.');
+        return 'cancelled';
+      }
+      if (!saveStateGuarded(next)) return 'failed';
+      cfg.lastSyncAt = new Date().toISOString();
+      try {
+        var d = JSON.parse(plain);
+        if (d && typeof d.exportedAt === 'string') cfg.lastRemoteAt = d.exportedAt;
+      } catch (e) { /* ignore */ }
+      syncSaveConfig(cfg);
+      syncRefreshSyncPanel();
+      clearBanner();
+      syncSetStatus('Restored from ' + syncProviderLabel(cfg.provider) + '.');
+      refreshPrices();
+      closeDialog('settings-dialog');
+      return 'pulled';
+    });
+  }, function (err) {
+    syncSetBusy(false);
+    syncRefreshSyncPanel();
+    showBanner('Restore failed — your data was left untouched.', 'error', {
+      title: 'Sync error',
+      lines: [String((err && err.message) || err)]
+    });
+  });
+}
+
+function syncDownloadEncrypted() {
+  if (syncBusy) return;
+  var pass = uiVal('sy-pass', '');
+  var pass2 = uiVal('sy-pass2', '');
+  if (!pass) {
+    showBanner('Enter a sync passphrase first — it encrypts the file.', 'error', {
+      title: 'Encrypted file',
+      lines: ['Type a passphrase in the Sync tab. It is never stored.']
+    });
+    return;
+  }
+  if (pass2 !== '' && pass !== pass2) {
+    showBanner('The two passphrases do not match.', 'error', {
+      title: 'Encrypted file',
+      lines: ['Retype the same passphrase in both fields, then try again.']
+    });
+    return;
+  }
+  syncSetBusy(true, 'Encrypting…');
+  syncEncryptEnvelope(exportState(loadState()), pass).then(function (env) {
+    syncSetBusy(false);
+    downloadTextFile('plutus-' + backupStamp() + '.enc.json', env, 'application/json');
+    clearBanner();
+    syncSetStatus('Encrypted file downloaded. Keep it or upload it anywhere.');
+  }, function (err) {
+    syncSetBusy(false);
+    showBanner('Encrypt failed.', 'error', {
+      title: 'Encrypted file',
+      lines: [String((err && err.message) || err)]
+    });
+  });
+}
+
+function syncRestoreEncryptedFile(file) {
+  var pass = uiVal('sy-pass', '');
+  if (!file) return;
+  if (!pass) {
+    showBanner('Enter the sync passphrase to open the file.', 'error', {
+      title: 'Encrypted file',
+      lines: ['The file is encrypted — the passphrase never leaves this browser.']
+    });
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function () {
+    syncDecryptEnvelope(String(reader.result), pass).then(function (plain) {
+      var next;
+      try {
+        next = importState(plain);
+      } catch (e) {
+        showBanner('Import failed — your data was left untouched.', 'error', {
+          title: 'Import error',
+          lines: [String((e && e.message) || e)]
+        });
+        return;
+      }
+      confirmAction(
+        'Replace this device?',
+        'Restore this file here? This replaces all accounts, trades and settings on this device.',
+        'Restore file',
+        true
+      ).then(function (ok) {
+        if (!ok) return;
+        if (!saveStateGuarded(next)) return;
+        clearBanner();
+        syncSetStatus('Restored from encrypted file.');
+        refreshPrices();
+        closeDialog('settings-dialog');
+      });
+    }, function (err) {
+      showBanner('Import failed — your data was left untouched.', 'error', {
+        title: 'Import error',
+        lines: [String((err && err.message) || err)]
+      });
+    });
+  };
+  reader.onerror = function () {
+    showBanner('Import failed — could not read the file.', 'error', {
+      title: 'Import error',
+      lines: ['Pick a Plutus encrypted backup (.enc.json) and retry.']
+    });
+  };
+  reader.readAsText(file);
+}
+
+// --- Settings UI ---
+
+function syncReadForm() {
+  var cfg = syncLoadConfig();
+  function val(id, fb) {
+    var el = (typeof document !== 'undefined') ? document.getElementById(id) : null;
+    return el ? el.value : fb;
+  }
+  function checked(id) {
+    var el = (typeof document !== 'undefined') ? document.getElementById(id) : null;
+    return !!(el && el.checked);
+  }
+  var prov = val('sy-provider', cfg.provider);
+  if (syncIsProvider(prov)) cfg.provider = prov;
+  if (cfg.provider === 'webdav') {
+    cfg.url = val('sy-url', cfg.url);
+    cfg.username = val('sy-user', cfg.username);
+    cfg.filename = syncSanitizeFilename(val('sy-filename', cfg.filename));
+    var pwField = val('sy-passwd', '');
+    cfg.rememberPassword = checked('sy-remember');
+    if (cfg.rememberPassword) {
+      if (pwField !== '') cfg.password = pwField;
+    } else {
+      cfg.password = '';
+      if (pwField !== '') syncMemSecrets.password = pwField;
+    }
+  } else if (cfg.provider === 'megas3') {
+    cfg.endpoint = val('sy-endpoint', cfg.endpoint);
+    cfg.region = val('sy-region', cfg.region);
+    cfg.bucket = val('sy-bucket', cfg.bucket);
+    cfg.accessKey = val('sy-key', cfg.accessKey);
+    cfg.objectKey = String(val('sy-object', cfg.objectKey) || '').trim().replace(/^\/+/, '').slice(0, 256) || SYNC_DEFAULT_FILENAME;
+    var skField = val('sy-skey', '');
+    var rememberSk = checked('sy-remember2');
+    cfg.rememberSecret = rememberSk;
+    if (rememberSk) {
+      if (skField !== '') cfg.secretKey = skField;
+    } else {
+      cfg.secretKey = '';
+      if (skField !== '') syncMemSecrets.secretKey = skField;
+    }
+  } else {
+    cfg.clientId = val('sy-client', cfg.clientId);
+    cfg.clientSecret = val('sy-secret', cfg.clientSecret);
+    var fn = val('sy-filename2', cfg.filename);
+    cfg.filename = syncSanitizeFilename(fn);
+  }
+  var out = syncSanitizeConfig(cfg);
+  return { cfg: out, passphrase: val('sy-pass', ''), passConfirm: val('sy-pass2', '') };
+}
+
+function syncPersistFormSecrets(cfg) {
+  var el, memPw, memSk;
+  if (typeof document === 'undefined') return;
+  if (cfg.provider === 'webdav') {
+    el = document.getElementById('sy-passwd');
+    memPw = el ? el.value : '';
+    if (cfg.rememberPassword) {
+      if (memPw !== '') cfg.password = memPw;
+      syncMemSecrets.password = '';
+    } else {
+      cfg.password = '';
+      if (memPw !== '') syncMemSecrets.password = memPw;
+    }
+  }
+  if (cfg.provider === 'megas3') {
+    el = document.getElementById('sy-skey');
+    memSk = el ? el.value : '';
+    if (cfg.rememberSecret) {
+      if (memSk !== '') cfg.secretKey = memSk;
+      syncMemSecrets.secretKey = '';
+    } else {
+      cfg.secretKey = '';
+      if (memSk !== '') syncMemSecrets.secretKey = memSk;
+    }
+  }
+  syncSaveConfig(cfg);
+}
+
+function syncSetVal(id, v) {
+  var el = (typeof document !== 'undefined') ? document.getElementById(id) : null;
+  if (el) el.value = v;
+}
+
+function syncRefreshSyncPanel() {
+  if (typeof document === 'undefined') return;
+  if (!document.getElementById('sy-provider')) return;
+  var cfg = syncLoadConfig();
+  syncSetVal('sy-provider', cfg.provider);
+  var groups = { webdav: 'sy-g-webdav', gdrive: 'sy-g-oauth', dropbox: 'sy-g-oauth', onedrive: 'sy-g-oauth', megas3: 'sy-g-megas3' };
+  var i, g;
+  var ids = ['sy-g-webdav', 'sy-g-oauth', 'sy-g-megas3'];
+  for (i = 0; i < ids.length; i++) {
+    g = document.getElementById(ids[i]);
+    if (g) g.hidden = (groups[cfg.provider] !== ids[i]);
+  }
+  var hint = document.getElementById('sy-hint');
+  if (hint) hint.textContent = SYNC_HINTS[cfg.provider] || '';
+  var sec = document.getElementById('sy-g-secret');
+  if (sec) sec.hidden = (cfg.provider !== 'gdrive');
+  var redir = document.getElementById('sy-redirect');
+  if (redir) {
+    var ru = syncRedirectUri();
+    redir.textContent = (cfg.provider === 'webdav' || cfg.provider === 'megas3')
+      ? ''
+      : (ru || 'Open the hosted https:// page — OAuth cannot start from file://.');
+  }
+  if (cfg.provider === 'webdav') {
+    syncSetVal('sy-url', cfg.url);
+    syncSetVal('sy-user', cfg.username);
+    if (cfg.password) syncSetVal('sy-passwd', cfg.password);
+    syncSetVal('sy-filename', cfg.filename);
+    var rem = document.getElementById('sy-remember');
+    if (rem) rem.checked = cfg.rememberPassword;
+  } else if (cfg.provider === 'megas3') {
+    syncSetVal('sy-endpoint', cfg.endpoint);
+    syncSetVal('sy-region', cfg.region);
+    syncSetVal('sy-bucket', cfg.bucket);
+    syncSetVal('sy-key', cfg.accessKey);
+    if (cfg.secretKey) syncSetVal('sy-skey', cfg.secretKey);
+    syncSetVal('sy-object', cfg.objectKey);
+    var rem2 = document.getElementById('sy-remember2');
+    if (rem2) rem2.checked = !!cfg.rememberSecret;
+  } else {
+    syncSetVal('sy-client', cfg.clientId);
+    if (cfg.clientSecret) syncSetVal('sy-secret', cfg.clientSecret);
+    syncSetVal('sy-filename2', cfg.filename);
+  }
+  var connected = false;
+  if (cfg.provider === 'webdav') connected = !!(cfg.url && (cfg.password || syncMemSecrets.password));
+  else if (cfg.provider === 'megas3') {
+    connected = !!(cfg.endpoint && cfg.bucket && cfg.accessKey && (cfg.secretKey || syncMemSecrets.secretKey));
+  } else connected = !!(cfg.tokens && cfg.tokens.access);
+  var last = cfg.lastSyncAt ? (' Last sync ' + String(cfg.lastSyncAt).slice(0, 19).replace('T', ' ') + ' UTC.') : '';
+  if (!syncBusy) syncSetStatus((connected ? ('Connected to ' + syncProviderLabel(cfg.provider) + '.') : 'Not connected.') + last);
+  var fp = document.getElementById('sy-fp');
+  var passEl = document.getElementById('sy-pass');
+  if (fp && passEl && passEl.value) {
+    syncFingerprint(passEl.value).then(function (f) {
+      var cur = document.getElementById('sy-pass');
+      if (cur && cur.value) {
+        var fel = document.getElementById('sy-fp');
+        if (fel) fel.textContent = 'Key fingerprint: ' + (f || '—') + ' (same on all devices = same passphrase)';
+      }
+    });
+  } else if (fp) {
+    fp.textContent = 'Key fingerprint: —';
+  }
+}
+
+function syncStartOAuth() {
+  if (syncBusy) return;
+  var rd = syncReadForm();
+  var cfg = rd.cfg;
+  if (cfg.provider !== 'gdrive' && cfg.provider !== 'dropbox' && cfg.provider !== 'onedrive') return;
+  if (!syncCryptoAvailable()) {
+    showBanner('This browser cannot do encrypted sync (WebCrypto unavailable).', 'error', {
+      title: 'Sync unavailable',
+      lines: ['Use Download backup in the Backup & restore tab instead.']
+    });
+    return;
+  }
+  if (!cfg.clientId) {
+    showBanner('Enter the OAuth client ID / app key first.', 'error', {
+      title: 'Connect',
+      lines: ['Create your own OAuth app with the provider, register the redirect URI shown, then paste the ID here.']
+    });
+    return;
+  }
+  if (cfg.provider === 'gdrive' && !cfg.clientSecret) {
+    showBanner('Enter the OAuth client secret too (Google needs it).', 'error', {
+      title: 'Connect',
+      lines: ['Google Web-application clients always have a secret — paste it alongside the client ID.']
+    });
+    return;
+  }
+  var redirect = syncRedirectUri();
+  if (!redirect) {
+    showBanner('OAuth needs the hosted https:// page.', 'error', {
+      title: 'Connect',
+      lines: ['Sign-in cannot start from a file:// window. Open your deployed site URL, then connect.']
+    });
+    return;
+  }
+  syncPersistFormSecrets(cfg);
+  syncSetBusy(true, 'Waiting for ' + syncProviderLabel(cfg.provider) + '…');
+  syncPkcePair().then(function (pair) {
+    var state = 'plutus-' + cfg.provider + '-' + syncB64UrlEncode(syncRandomBytes(12));
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem(SYNC_OAUTH_KEY, JSON.stringify({ state: state, verifier: pair.verifier, provider: cfg.provider }));
+      }
+    } catch (e) { /* ignore */ }
+    var url = syncOAuthAuthUrl(cfg.provider, cfg.clientId, redirect, pair.challenge, state);
+    var popup = null;
+    try {
+      popup = window.open(url, 'plutus-oauth', 'width=540,height=680');
+    } catch (e) {
+      popup = null;
+    }
+    if (!popup) {
+      syncSetBusy(false);
+      showBanner('Popup blocked — allow popups for this page, then try Connect again.', 'error', {
+        title: 'Connect',
+        lines: ['The drive sign-in opens in a popup window.']
+      });
+      return;
+    }
+    var done = false;
+    var timer = null;
+    function onMsg(e) {
+      var d = e && e.data;
+      if (!d || d.type !== 'plutus-oauth') return;
+      try {
+        if (e.origin !== window.location.origin) return;
+      } catch (e2) { /* ignore */ }
+      if (!d.state || d.state !== state) return;
+      if (done) return;
+      done = true;
+      try { window.removeEventListener('message', onMsg); } catch (e3) { /* ignore */ }
+      try { if (timer) clearInterval(timer); } catch (e4) { /* ignore */ }
+      if (d.error) {
+        syncSetBusy(false);
+        showBanner('Sign-in refused by the provider.', 'error', {
+          title: 'Connect',
+          lines: [String(d.error).slice(0, 200)]
+        });
+        return;
+      }
+      syncOAuthTokenExchange(cfg.provider, cfg, d.code, pair.verifier).then(function (tok) {
+        cfg.tokens = tok;
+        syncSaveConfig(cfg);
+        syncSetBusy(false);
+        syncRefreshSyncPanel();
+        clearBanner();
+      }, function (err) {
+        syncSetBusy(false);
+        showBanner('Sign-in failed — your data was left untouched.', 'error', {
+          title: 'Connect',
+          lines: [String((err && err.message) || err)]
+        });
+      });
+    }
+    try { window.addEventListener('message', onMsg); } catch (e5) { /* ignore */ }
+    timer = setInterval(function () {
+      var closed = false;
+      try { closed = !popup || popup.closed; } catch (e6) { closed = true; }
+      if (closed) {
+        try { clearInterval(timer); } catch (e7) { /* ignore */ }
+        try { window.removeEventListener('message', onMsg); } catch (e8) { /* ignore */ }
+        if (!done) {
+          done = true;
+          syncSetBusy(false);
+          syncRefreshSyncPanel();
+        }
+      }
+    }, 500);
+  }, function () {
+    syncSetBusy(false);
+    showBanner('Could not start sign-in (WebCrypto unavailable).', 'error', {
+      title: 'Connect',
+      lines: ['Use Download backup in the Backup & restore tab instead.']
+    });
+  });
+}
+
+function syncDisconnect() {
+  var cfg = syncLoadConfig();
+  cfg.tokens = null;
+  syncMemSecrets.password = '';
+  syncMemSecrets.secretKey = '';
+  syncSaveConfig(cfg);
+  try {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(SYNC_OAUTH_KEY);
+  } catch (e) { /* ignore */ }
+  syncRefreshSyncPanel();
+  clearBanner();
+}
+
+function buildSyncSettings() {
+  if (typeof document === 'undefined') return;
+  var prov = document.getElementById('sy-provider');
+  if (!prov || prov.getAttribute('data-wired')) return;
+  prov.setAttribute('data-wired', '1');
+  if (!syncCryptoAvailable()) {
+    var st0 = document.getElementById('sy-status');
+    if (st0) st0.textContent = 'Encrypted sync needs WebCrypto — this browser cannot do it. Use Download backup instead.';
+  }
+  prov.addEventListener('change', function () {
+    var cfg = syncReadForm().cfg;
+    syncSaveConfig(cfg);
+    syncRefreshSyncPanel();
+  });
+  var passEl = document.getElementById('sy-pass');
+  if (passEl) {
+    passEl.addEventListener('input', function () {
+      var v = passEl.value || '';
+      var fp = document.getElementById('sy-fp');
+      if (!v) {
+        if (fp) fp.textContent = 'Key fingerprint: —';
+        return;
+      }
+      syncFingerprint(v).then(function (f) {
+        var fel = document.getElementById('sy-fp');
+        if (fel) fel.textContent = 'Key fingerprint: ' + (f || '—') + ' (same on all devices = same passphrase)';
+      });
+    });
+  }
+  function wireBtn(id, fn) {
+    var b = document.getElementById(id);
+    if (b && !b.getAttribute('data-wired')) {
+      b.setAttribute('data-wired', '1');
+      b.addEventListener('click', fn);
+    }
+  }
+  wireBtn('sy-connect', syncStartOAuth);
+  wireBtn('sy-disconnect', syncDisconnect);
+  wireBtn('sy-push', syncPushFlow);
+  wireBtn('sy-pull', syncPullFlow);
+  wireBtn('sy-enc-download', syncDownloadEncrypted);
+  var up = document.getElementById('sy-enc-upload');
+  if (up && !up.getAttribute('data-wired')) {
+    up.setAttribute('data-wired', '1');
+    up.addEventListener('change', function (e) {
+      var input = e.target;
+      var f = input && input.files && input.files[0];
+      if (!f) return;
+      syncRestoreEncryptedFile(f);
+      try { input.value = ''; } catch (e2) { /* ignore */ }
+    });
+  }
+  syncRefreshSyncPanel();
+}
+
+// Expose Sync on window.Inoculens for tests.html.
+if (typeof window !== 'undefined') {
+  window.Inoculens = window.Inoculens || {};
+  window.Inoculens.SYNC_PROVIDERS = SYNC_PROVIDERS;
+  window.Inoculens.syncB64encode = syncB64encode;
+  window.Inoculens.syncB64decode = syncB64decode;
+  window.Inoculens.syncB64UrlEncode = syncB64UrlEncode;
+  window.Inoculens.syncUtf8Encode = syncUtf8Encode;
+  window.Inoculens.syncUtf8Decode = syncUtf8Decode;
+  window.Inoculens.syncEnvelopeWrap = syncEnvelopeWrap;
+  window.Inoculens.syncEnvelopeParse = syncEnvelopeParse;
+  window.Inoculens.syncCompareTimestamps = syncCompareTimestamps;
+  window.Inoculens.syncProviderById = syncProviderById;
+  window.Inoculens.syncIsProvider = syncIsProvider;
+  window.Inoculens.syncJoinUrl = syncJoinUrl;
+  window.Inoculens.syncSanitizeFilename = syncSanitizeFilename;
+  window.Inoculens.syncDefaultConfig = syncDefaultConfig;
+  window.Inoculens.syncSanitizeConfig = syncSanitizeConfig;
+  window.Inoculens.syncCryptoAvailable = syncCryptoAvailable;
+  window.Inoculens.syncEncryptEnvelope = syncEncryptEnvelope;
+  window.Inoculens.syncDecryptEnvelope = syncDecryptEnvelope;
+  window.Inoculens.syncFingerprint = syncFingerprint;
+  window.Inoculens.syncSha256 = syncSha256;
+  window.Inoculens.syncHmac = syncHmac;
+  window.Inoculens.syncOAuthAuthUrl = syncOAuthAuthUrl;
+  window.Inoculens.syncParseQuery = syncParseQuery;
+  window.Inoculens.syncS3CanonicalRequest = syncS3CanonicalRequest;
+  window.Inoculens.syncAmzDate = syncAmzDate;
+  window.Inoculens.syncSplitUrl = syncSplitUrl;
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('DOMContentLoaded', syncHandleOAuthRedirect);
   }
 }

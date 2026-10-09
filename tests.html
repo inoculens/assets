@@ -1553,6 +1553,133 @@
       } finally {
         restoreState();
       }
+    // === Sync tests (E2E encrypted sync core: pure helpers + crypto round-trip) ===
+    (function syncTests() {
+      var S = window.Inoculens || {};
+      function bytes(str) {
+        var a = [];
+        for (var i = 0; i < str.length; i++) a.push(str.charCodeAt(i) & 255);
+        return new Uint8Array(a);
+      }
+
+      test('sync providers cover five drives', function () {
+        assert(S.SYNC_PROVIDERS && S.SYNC_PROVIDERS.length === 5, 'expected 5 providers');
+        var ids = S.SYNC_PROVIDERS.map(function (p) { return p.id; });
+        assert(ids.join(',') === 'webdav,gdrive,dropbox,onedrive,megas3', 'bad provider ids: ' + ids.join(','));
+        assert(S.syncIsProvider('megas3') && !S.syncIsProvider('nope'), 'syncIsProvider wrong');
+      });
+
+      test('sync base64 RFC4648 vectors + rejects', function () {
+        assert(S.syncB64encode(bytes('')) === '', 'empty');
+        assert(S.syncB64encode(bytes('f')) === 'Zg==', 'f');
+        assert(S.syncB64encode(bytes('fo')) === 'Zm8=', 'fo');
+        assert(S.syncB64encode(bytes('foo')) === 'Zm9v', 'foo');
+        assert(S.syncB64encode(bytes('foobar')) === 'Zm9vYmFy', 'foobar');
+        var back = S.syncB64decode('Zm9vYmFy');
+        assert(back.length === 6 && back[0] === 102 && back[5] === 114, 'decode content');
+        var bad = ['A', 'AB=C', '!!!!', 'Zg='];
+        for (var i = 0; i < bad.length; i++) {
+          var threw = false;
+          try { S.syncB64decode(bad[i]); } catch (e) { threw = true; }
+          assert(threw, 'should reject ' + bad[i]);
+        }
+      });
+
+      test('sync utf8 round-trip incl emoji', function () {
+        ['plain', '€uro ƒiat — dash', 'emoji 😀🎉 done', ''].forEach(function (str) {
+          assert(S.syncUtf8Decode(S.syncUtf8Encode(str)) === str, 'round-trip failed: ' + str);
+        });
+        var euro = S.syncUtf8Encode('€');
+        assert(euro.length === 3 && euro[0] === 226 && euro[1] === 130 && euro[2] === 172, 'euro bytes wrong');
+      });
+
+      test('sync envelope wrap/parse + rejects', function () {
+        var ct = S.syncB64encode(new Uint8Array(32));
+        var env = S.syncEnvelopeWrap(ct, 'AAAAAAAAAAAAAAAAAAAAAA==', 'AAAAAAAAAAAAAAAA', 600000);
+        var p = S.syncEnvelopeParse(env);
+        assert(p.iter === 600000 && p.salt.length === 16 && p.iv.length === 12 && p.ciphertext.length === 32, 'bad parse: ' + env);
+        var cases = [
+          'nope',
+          JSON.stringify({ app: 'x', v: 1, iter: 1, salt: 'AAAAAAAAAAAAAAAAAAAAAA==', iv: 'AAAAAAAAAAAAAAAA', ciphertext: ct }),
+          JSON.stringify({ app: 'inoculens-plutus-sync', v: 99, iter: 600000, salt: 'AAAAAAAAAAAAAAAAAAAAAA==', iv: 'AAAAAAAAAAAAAAAA', ciphertext: ct }),
+          JSON.stringify({ app: 'inoculens-plutus-sync', v: 1, iter: 600000, salt: 'AAAA', iv: 'AAAAAAAAAAAAAAAA', ciphertext: ct })
+        ];
+        for (var i = 0; i < cases.length; i++) {
+          var threw = false;
+          try { S.syncEnvelopeParse(cases[i]); } catch (e) { threw = true; }
+          assert(threw, 'should reject envelope case ' + i);
+        }
+      });
+
+      test('sync timestamp compare matrix', function () {
+        assert(S.syncCompareTimestamps('2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z') === 'remote-newer', 'remote newer');
+        assert(S.syncCompareTimestamps('2026-01-02T00:00:00.000Z', '2026-01-01T00:00:00.000Z') === 'local-newer', 'local newer');
+        assert(S.syncCompareTimestamps('2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z') === 'equal', 'equal');
+        assert(S.syncCompareTimestamps('garbage', '2026-01-01T00:00:00.000Z') === 'unknown', 'unknown');
+      });
+
+      test('sync url join + filename + config shape', function () {
+        assert(S.syncJoinUrl('https://x.test/dav/', 'a b.json') === 'https://x.test/dav/a%20b.json', 'joinUrl');
+        assert(S.syncSanitizeFilename('../../etc/passwd') === '....etcpasswd', 'filename strips slashes');
+        assert(S.syncSanitizeFilename('') === 'plutus-sync.enc.json', 'filename default');
+        var c = S.syncSanitizeConfig({ provider: 'nope', password: 'sekret', rememberPassword: false, passphrase: 'leak?', tokens: { access: 'a' } });
+        assert(c.provider === 'webdav', 'provider fallback');
+        assert(c.password === '', 'password dropped when not remembered');
+        assert(!('passphrase' in c), 'config must never carry a passphrase');
+        var c2 = S.syncSanitizeConfig({ provider: 'gdrive', tokens: { access: 'tok', refresh: 'r', expiry: 123 } });
+        assert(c2.tokens.access === 'tok', 'tokens kept');
+      });
+
+      test('sync s3 canonical builder shape', function () {
+        var canon = S.syncS3CanonicalRequest('PUT', 'https://h.test/b/k', 'PAYLOADHASH', '20240102T030405Z');
+        assert(canon.indexOf('PUT\n/b/k\n\n') === 0, 'canon head: ' + canon);
+        assert(canon.indexOf('content-type;host;x-amz-content-sha256;x-amz-date') !== -1, 'canon signed headers');
+        assert(canon.slice(-11) === 'PAYLOADHASH', 'canon tail');
+        var cget = S.syncS3CanonicalRequest('GET', 'https://h.test/b/k', 'EMPTYHASH', '20240102T030405Z');
+        assert(cget.indexOf('GET\n') === 0 && cget.indexOf('content-type') === -1, 'get skips content-type');
+        assert(S.syncAmzDate(new Date(Date.UTC(2024, 0, 2, 3, 4, 5))) === '20240102T030405Z', 'amzdate');
+      });
+
+      test('sync oauth urls point at provider hosts', function () {
+        var g = S.syncOAuthAuthUrl('gdrive', 'CID', 'https://app.test/', 'CH', 'ST');
+        assert(g.indexOf('https://accounts.google.com/o/oauth2/v2/auth') === 0, 'gdrive host');
+        assert(g.indexOf('drive.file') !== -1 && g.indexOf('client_id=CID') !== -1, 'gdrive params');
+        var d = S.syncOAuthAuthUrl('dropbox', 'KEY', 'https://app.test/', 'CH', 'ST');
+        assert(d.indexOf('https://www.dropbox.com/oauth2/authorize') === 0, 'dropbox host');
+        var m = S.syncOAuthAuthUrl('onedrive', 'CID', 'https://app.test/', 'CH', 'ST');
+        assert(m.indexOf('login.microsoftonline.com') !== -1 && m.indexOf('AppFolder') !== -1, 'onedrive params');
+      });
+
+      testAsync('sync sha256 known vector (or skip without WebCrypto)', function () {
+        if (!S.syncCryptoAvailable()) return null;
+        return S.syncSha256(S.syncUtf8Encode('abc')).then(function (h) {
+          var hex = '';
+          for (var i = 0; i < h.length; i++) hex += (h[i] < 16 ? '0' : '') + h[i].toString(16);
+          assert(hex === 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'sha256(abc) wrong: ' + hex);
+        });
+      });
+
+      testAsync('sync envelope encrypt/decrypt round-trip (or skip without WebCrypto)', function () {
+        if (!S.syncCryptoAvailable()) return null;
+        var plain = '{"hello":"lume €😀"}';
+        return S.syncEncryptEnvelope(plain, 'correct horse').then(function (env) {
+          assert(typeof env === 'string' && env.indexOf('inoculens-plutus-sync') !== -1, 'bad envelope text');
+          return S.syncDecryptEnvelope(env, 'correct horse').then(function (back) {
+            assert(back === plain, 'round-trip mismatch');
+          });
+        });
+      });
+
+      testAsync('sync wrong passphrase fails closed (or skip without WebCrypto)', function () {
+        if (!S.syncCryptoAvailable()) return null;
+        return S.syncEncryptEnvelope('secret', 'right').then(function (env) {
+          return S.syncDecryptEnvelope(env, 'wrong').then(function () {
+            assert(false, 'wrong passphrase should not decrypt');
+          }, function (e) {
+            assert(String((e && e.message) || e).indexOf('wrong passphrase') !== -1, 'wrong error: ' + ((e && e.message) || e));
+          });
+        });
+      });
     })();
 
     renderResults();
