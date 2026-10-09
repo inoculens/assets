@@ -6191,11 +6191,6 @@ function syncSaveConfig(cfg) {
   }
 }
 
-function syncClearTokens(cfg) {
-  cfg.tokens = null;
-  syncSaveConfig(cfg);
-}
-
 // Secrets the user chose NOT to remember live only in memory, never in storage.
 function syncPassword(cfg) {
   if (cfg.password) return cfg.password;
@@ -6230,9 +6225,10 @@ function syncRandomBytes(n) {
     c.getRandomValues(out);
     return out;
   }
-  var i;
-  for (i = 0; i < n; i++) out[i] = Math.floor(Math.random() * 256);
-  return out;
+  // Never fall back to Math.random for salts, IVs or OAuth verifiers:
+  // predictable randomness would break the encryption. Callers already
+  // gate on syncCryptoAvailable(); this is a fail-closed backstop.
+  throw new Error('sync failed: no secure randomness available in this browser.');
 }
 
 function syncSha256(bytes) {
@@ -6319,12 +6315,59 @@ function syncNetErr(label) {
   };
 }
 
+// All sync traffic goes through here: a hung connection aborts after
+// SYNC_TIMEOUT_MS so the UI can never wedge with its buttons disabled.
+// Degrades to plain fetch where AbortController/timers are unavailable.
+var SYNC_TIMEOUT_MS = 30000;
+
+function syncFetch(url, opts, label) {
+  var o = opts || {};
+  try {
+    if (typeof AbortController !== 'undefined' && typeof setTimeout !== 'undefined') {
+      var ctrl = new AbortController();
+      o.signal = ctrl.signal;
+      var timer = setTimeout(function () { try { ctrl.abort(); } catch (e) { /* ignore */ } }, SYNC_TIMEOUT_MS);
+      return fetch(url, o).then(function (res) {
+        try { clearTimeout(timer); } catch (e) { /* ignore */ }
+        return res;
+      }, function (err) {
+        try { clearTimeout(timer); } catch (e) { /* ignore */ }
+        if (err && err.name === 'AbortError') {
+          throw new Error('sync failed: timed out reaching ' + label + '. Check your connection.');
+        }
+        throw new Error('sync failed: cannot reach ' + label + '. Check your connection.');
+      });
+    }
+  } catch (e) { /* fall through to plain fetch */ }
+  return fetch(url, o).then(null, syncNetErr(label));
+}
+
+// User-configured hosts must use https (loopback excepted) so logins and
+// tokens never travel in cleartext where anyone on the network can read them.
+function syncRequireHttpsUrl(url, label) {
+  var s = String(url || '');
+  var m = s.match(/^(https?):\/\/([^\/]+)/i);
+  if (!m) throw new Error('sync failed: enter the ' + label + ' URL starting with https://.');
+  var hostport = m[2].toLowerCase();
+  var host = hostport;
+  if (host.charAt(0) === '[') {
+    host = host.slice(1, host.indexOf(']'));
+  } else {
+    host = host.split(':')[0];
+  }
+  var local = (host === 'localhost' || host === '::1' || host === '127.0.0.1' || host.indexOf('127.') === 0);
+  if (m[1].toLowerCase() !== 'https' && !local) {
+    throw new Error('sync failed: the ' + label + ' URL must use https:// (not http) so your login stays private.');
+  }
+  return s;
+}
+
 function syncPostForm(url, body) {
-  return fetch(url, {
+  return syncFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body
-  }).then(function (res) {
+  }, 'the sign-in server').then(function (res) {
     return res.json().then(function (data) {
       if (!res.ok) {
         var msg = (data && (data.error_description || data.error)) || ('HTTP ' + res.status);
@@ -6335,7 +6378,7 @@ function syncPostForm(url, body) {
       if (!res.ok) throw new Error('sync failed: sign-in refused (HTTP ' + res.status + ').');
       throw new Error('sync failed: bad sign-in response.');
     });
-  }, syncNetErr('the sign-in server'));
+  });
 }
 
 // --- OAuth (PKCE, user's own app credentials; tokens stay in this browser) ---
@@ -6527,12 +6570,17 @@ function syncWebdavUpload(cfg, text) {
   var pw = syncPassword(cfg);
   if (!cfg.url) return Promise.reject(new Error('sync failed: enter the WebDAV server URL.'));
   if (!pw) return Promise.reject(new Error('sync failed: enter the WebDAV password.'));
+  try {
+    syncRequireHttpsUrl(cfg.url, 'WebDAV server');
+  } catch (e) {
+    return Promise.reject(e);
+  }
   var auth = 'Basic ' + syncB64encode(syncUtf8Encode(cfg.username + ':' + pw));
-  return fetch(syncJoinUrl(cfg.url, cfg.filename), {
+  return syncFetch(syncJoinUrl(cfg.url, cfg.filename), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', 'Authorization': auth },
     body: text
-  }).then(function (res) {
+  }, 'the WebDAV server').then(function (res) {
     if (res.ok) return true;
     if (res.status === 401 || res.status === 403) {
       throw new Error('sync failed: WebDAV login refused. Check the username and app password.');
@@ -6541,32 +6589,37 @@ function syncWebdavUpload(cfg, text) {
       throw new Error('sync failed: WebDAV folder not found. Check the server URL.');
     }
     throw new Error('sync failed: WebDAV upload refused (HTTP ' + res.status + ').');
-  }, syncNetErr('the WebDAV server'));
+  });
 }
 
 function syncWebdavDownload(cfg) {
   var pw = syncPassword(cfg);
   if (!cfg.url) return Promise.reject(new Error('sync failed: enter the WebDAV server URL.'));
   if (!pw) return Promise.reject(new Error('sync failed: enter the WebDAV password.'));
+  try {
+    syncRequireHttpsUrl(cfg.url, 'WebDAV server');
+  } catch (e) {
+    return Promise.reject(e);
+  }
   var auth = 'Basic ' + syncB64encode(syncUtf8Encode(cfg.username + ':' + pw));
-  return fetch(syncJoinUrl(cfg.url, cfg.filename), {
+  return syncFetch(syncJoinUrl(cfg.url, cfg.filename), {
     method: 'GET',
     headers: { 'Authorization': auth }
-  }).then(function (res) {
+  }, 'the WebDAV server').then(function (res) {
     if (res.ok) return res.text();
     if (res.status === 401 || res.status === 403) {
       throw new Error('sync failed: WebDAV login refused. Check the username and app password.');
     }
     if (res.status === 404) throw new Error('sync failed: no backup found on the server yet.');
     throw new Error('sync failed: WebDAV download refused (HTTP ' + res.status + ').');
-  }, syncNetErr('the WebDAV server'));
+  });
 }
 
 function syncDriveFind(access, name) {
   var q = "name = '" + String(name).replace(/'/g, '') + "' and trashed = false";
   var url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) +
     '&fields=' + encodeURIComponent('files(id,name,modifiedTime)') + '&spaces=drive';
-  return fetch(url, { headers: { 'Authorization': 'Bearer ' + access } }).then(function (res) {
+  return syncFetch(url, { headers: { 'Authorization': 'Bearer ' + access } }, 'Google Drive').then(function (res) {
     return res.json().then(function (data) {
       if (!res.ok) throw new Error('sync failed: Drive lookup refused (HTTP ' + res.status + ').');
       var files = (data && data.files) || [];
@@ -6574,28 +6627,28 @@ function syncDriveFind(access, name) {
     }, function () {
       throw new Error('sync failed: bad Drive response.');
     });
-  }, syncNetErr('Google Drive'));
+  });
 }
 
 function syncDrivePutMedia(access, id, text) {
-  return fetch('https://www.googleapis.com/upload/drive/v3/files/' + encodeURIComponent(id) + '?uploadType=media', {
+  return syncFetch('https://www.googleapis.com/upload/drive/v3/files/' + encodeURIComponent(id) + '?uploadType=media', {
     method: 'PATCH',
     headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
     body: text
-  }).then(function (res) {
+  }, 'Google Drive').then(function (res) {
     if (res.ok) return true;
     throw new Error('sync failed: Drive upload refused (HTTP ' + res.status + ').');
-  }, syncNetErr('Google Drive'));
+  });
 }
 
 function syncDriveUpload(access, name, text) {
   return syncDriveFind(access, name).then(function (id) {
     if (id) return syncDrivePutMedia(access, id, text);
-    return fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+    return syncFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: name, mimeType: 'application/json' })
-    }).then(function (res) {
+    }, 'Google Drive').then(function (res) {
       return res.json().then(function (data) {
         if (!res.ok || !data || !data.id) {
           throw new Error('sync failed: Drive could not create the file (HTTP ' + res.status + ').');
@@ -6604,19 +6657,19 @@ function syncDriveUpload(access, name, text) {
       }, function () {
         throw new Error('sync failed: bad Drive response.');
       });
-    }, syncNetErr('Google Drive'));
+    });
   });
 }
 
 function syncDriveDownload(access, name) {
   return syncDriveFind(access, name).then(function (id) {
     if (!id) throw new Error('sync failed: no backup found on the server yet.');
-    return fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) + '?alt=media', {
+    return syncFetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) + '?alt=media', {
       headers: { 'Authorization': 'Bearer ' + access }
-    }).then(function (res) {
+    }, 'Google Drive').then(function (res) {
       if (res.ok) return res.text();
       throw new Error('sync failed: Drive download refused (HTTP ' + res.status + ').');
-    }, syncNetErr('Google Drive'));
+    });
   });
 }
 
@@ -6625,7 +6678,7 @@ function syncDropboxPath(name) {
 }
 
 function syncDropboxUpload(access, name, text) {
-  return fetch('https://content.dropboxapi.com/2/files/upload', {
+  return syncFetch('https://content.dropboxapi.com/2/files/upload', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + access,
@@ -6633,24 +6686,35 @@ function syncDropboxUpload(access, name, text) {
       'Dropbox-API-Arg': JSON.stringify({ path: syncDropboxPath(name), mode: 'overwrite', autorename: false, mute: true })
     },
     body: text
-  }).then(function (res) {
+  }, 'Dropbox').then(function (res) {
     if (res.ok) return true;
     throw new Error('sync failed: Dropbox upload refused (HTTP ' + res.status + ').');
-  }, syncNetErr('Dropbox'));
+  });
 }
 
 function syncDropboxDownload(access, name) {
-  return fetch('https://content.dropboxapi.com/2/files/download', {
+  return syncFetch('https://content.dropboxapi.com/2/files/download', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + access,
       'Dropbox-API-Arg': JSON.stringify({ path: syncDropboxPath(name) })
     }
-  }).then(function (res) {
+  }, 'Dropbox').then(function (res) {
     if (res.ok) return res.text();
-    if (res.status === 409) throw new Error('sync failed: no backup found on the server yet.');
+    // 409 means the API refused the call: only treat path/not_found as
+    // "no backup yet" — anything else is a real refusal, not a first sync.
+    if (res.status === 409) {
+      return res.text().then(function (body) {
+        if (body && body.indexOf('not_found') !== -1) {
+          throw new Error('sync failed: no backup found on the server yet.');
+        }
+        throw new Error('sync failed: Dropbox refused the request (HTTP 409).');
+      }, function () {
+        throw new Error('sync failed: Dropbox download refused (HTTP 409).');
+      });
+    }
     throw new Error('sync failed: Dropbox download refused (HTTP ' + res.status + ').');
-  }, syncNetErr('Dropbox'));
+  });
 }
 
 function syncOneDriveUrl(name) {
@@ -6658,25 +6722,25 @@ function syncOneDriveUrl(name) {
 }
 
 function syncOneDriveUpload(access, name, text) {
-  return fetch(syncOneDriveUrl(name), {
+  return syncFetch(syncOneDriveUrl(name), {
     method: 'PUT',
     headers: { 'Authorization': 'Bearer ' + access, 'Content-Type': 'application/json' },
     body: text
-  }).then(function (res) {
+  }, 'OneDrive').then(function (res) {
     if (res.ok) return true;
     throw new Error('sync failed: OneDrive upload refused (HTTP ' + res.status + ').');
-  }, syncNetErr('OneDrive'));
+  });
 }
 
 function syncOneDriveDownload(access, name) {
-  return fetch(syncOneDriveUrl(name), {
+  return syncFetch(syncOneDriveUrl(name), {
     method: 'GET',
     headers: { 'Authorization': 'Bearer ' + access }
-  }).then(function (res) {
+  }, 'OneDrive').then(function (res) {
     if (res.ok) return res.text();
     if (res.status === 404) throw new Error('sync failed: no backup found on the server yet.');
     throw new Error('sync failed: OneDrive download refused (HTTP ' + res.status + ').');
-  }, syncNetErr('OneDrive'));
+  });
 }
 
 // --- MEGA S4 (S3-compatible SigV4; standard HMAC-SHA256, no custom crypto) ---
@@ -6724,17 +6788,24 @@ function syncAmzDate(d) {
 }
 
 function syncS3Sign(cfg, method, payloadText) {
-  if (!syncCryptoAvailable()) {
-    return Promise.reject(new Error('sync failed: this browser cannot do encrypted sync (WebCrypto unavailable).'));
-  }
+  // Cheap configuration checks first (no crypto needed, better messages on
+  // exotic browsers, and unit-testable without WebCrypto).
   var secret = syncSecret(cfg);
   if (!cfg.endpoint || syncSplitUrl(cfg.endpoint).host === '') {
     return Promise.reject(new Error('sync failed: enter the S3 endpoint URL.'));
+  }
+  try {
+    syncRequireHttpsUrl(cfg.endpoint, 'S3 endpoint');
+  } catch (e) {
+    return Promise.reject(e);
   }
   if (!cfg.bucket) return Promise.reject(new Error('sync failed: enter the S3 bucket.'));
   if (!cfg.accessKey) return Promise.reject(new Error('sync failed: enter the S3 access key.'));
   if (!secret) return Promise.reject(new Error('sync failed: enter the S3 secret key.'));
   if (!cfg.region) return Promise.reject(new Error('sync failed: enter the S3 region.'));
+  if (!syncCryptoAvailable()) {
+    return Promise.reject(new Error('sync failed: this browser cannot do encrypted sync (WebCrypto unavailable).'));
+  }
   var url = syncS3Url(cfg);
   var now = new Date();
   var amzDate = syncAmzDate(now);
@@ -6773,30 +6844,49 @@ function syncS3Sign(cfg, method, payloadText) {
   });
 }
 
+// Reads an S3 XML error body and maps it to a calm, specific message:
+// clock skew vs wrong keys vs missing object are very different problems.
+function syncS3ErrorBody(body, missingMsg) {
+  if (body && body.indexOf('RequestTimeTooSkewed') !== -1) {
+    return new Error('sync failed: the device clock looks wrong — S3 refused the time. Fix the date/time and retry.');
+  }
+  if (body && (body.indexOf('NoSuchBucket') !== -1 || body.indexOf('NoSuchKey') !== -1)) {
+    return new Error(missingMsg);
+  }
+  return null;
+}
+
 function syncS3Put(cfg, text) {
   return syncS3Sign(cfg, 'PUT', text).then(function (s) {
-    return fetch(s.url, { method: 'PUT', headers: s.headers, body: text }).then(function (res) {
+    return syncFetch(s.url, { method: 'PUT', headers: s.headers, body: text }, 'the S3 endpoint').then(function (res) {
       if (res.ok) return true;
-      if (res.status === 403) {
-        throw new Error('sync failed: S3 keys refused. Check the access key, secret and bucket policy.');
-      }
-      if (res.status === 404) {
-        throw new Error('sync failed: S3 bucket not found. Check the endpoint and bucket name.');
+      if (res.status === 403 || res.status === 404) {
+        return res.text().then(function (body) {
+          throw syncS3ErrorBody(body, 'sync failed: S3 bucket not found. Check the endpoint and bucket name.') ||
+            new Error('sync failed: S3 keys refused. Check the access key, secret, region and bucket policy.');
+        }, function () {
+          throw new Error('sync failed: S3 upload refused (HTTP ' + res.status + ').');
+        });
       }
       throw new Error('sync failed: S3 upload refused (HTTP ' + res.status + ').');
-    }, syncNetErr('the S3 endpoint'));
+    });
   });
 }
 
 function syncS3Get(cfg) {
   return syncS3Sign(cfg, 'GET', '').then(function (s) {
-    return fetch(s.url, { method: 'GET', headers: s.headers }).then(function (res) {
+    return syncFetch(s.url, { method: 'GET', headers: s.headers }, 'the S3 endpoint').then(function (res) {
       if (res.ok) return res.text();
       if (res.status === 404 || res.status === 403) {
-        throw new Error('sync failed: no backup found on the server yet.');
+        return res.text().then(function (body) {
+          throw syncS3ErrorBody(body, 'sync failed: no backup found on the server yet.') ||
+            new Error('sync failed: S3 keys refused. Check the access key, secret, region and bucket policy.');
+        }, function () {
+          throw new Error('sync failed: S3 download refused (HTTP ' + res.status + ').');
+        });
       }
       throw new Error('sync failed: S3 download refused (HTTP ' + res.status + ').');
-    }, syncNetErr('the S3 endpoint'));
+    });
   });
 }
 
@@ -6945,6 +7035,15 @@ function syncPullFlow() {
   }
   syncPersistFormSecrets(cfg);
   syncSetBusy(true, 'Downloading from ' + syncProviderLabel(cfg.provider) + '…');
+  // Snapshot first: importState() persists immediately, so a cancelled
+  // restore must put the previous state back — the confirm is real.
+  var beforeJson = null;
+  try {
+    beforeJson = exportState(loadState());
+  } catch (e) {
+    beforeJson = null;
+  }
+  var beforeAt = syncLocalExportedAt(beforeJson || '');
   syncRemoteDownload(cfg).then(function (remoteText) {
     return syncDecryptEnvelope(remoteText, pass);
   }).then(function (plain) {
@@ -6952,16 +7051,27 @@ function syncPullFlow() {
     try {
       next = importState(plain);
     } catch (e) {
+      if (e && e.message === 'storage-unavailable') throw e;
       throw new Error('sync failed: the drive backup is invalid (' + String((e && e.message) || e).slice(0, 160) + ').');
     }
     syncSetBusy(false);
+    // Stale-drive warning: restoring an older backup over newer local data
+    // is usually a mistake (or a rollback) — say so explicitly.
+    var stale = (syncCompareTimestamps(beforeAt, syncLocalExportedAt(plain)) === 'local-newer');
     return confirmAction(
-      'Replace this device?',
-      'Restore the drive backup here? This replaces all accounts, trades and settings on this device.',
-      'Restore backup',
+      stale ? 'Drive copy is older' : 'Replace this device?',
+      stale
+        ? 'The drive backup is older than this device. Restore it anyway? This replaces all accounts, trades and settings on this device with the older copy.'
+        : 'Restore the drive backup here? This replaces all accounts, trades and settings on this device.',
+      stale ? 'Restore older copy' : 'Restore backup',
       true
     ).then(function (ok) {
       if (!ok) {
+        if (beforeJson) {
+          try {
+            saveStateGuarded(JSON.parse(beforeJson));
+          } catch (e2) { /* banner already shown by the guard on storage failure */ }
+        }
         syncSetStatus('Restore cancelled.');
         return 'cancelled';
       }
@@ -7034,11 +7144,24 @@ function syncRestoreEncryptedFile(file) {
   }
   var reader = new FileReader();
   reader.onload = function () {
+    var beforeJson = null;
+    try {
+      beforeJson = exportState(loadState());
+    } catch (e) {
+      beforeJson = null;
+    }
     syncDecryptEnvelope(String(reader.result), pass).then(function (plain) {
       var next;
       try {
         next = importState(plain);
       } catch (e) {
+        if (e && e.message === 'storage-unavailable') {
+          showBanner('Storage unavailable — change was not saved.', 'error', {
+            title: 'Storage error',
+            lines: ['Your data was left untouched. Free space or leave private mode, then retry.']
+          });
+          return;
+        }
         showBanner('Import failed — your data was left untouched.', 'error', {
           title: 'Import error',
           lines: [String((e && e.message) || e)]
@@ -7051,7 +7174,15 @@ function syncRestoreEncryptedFile(file) {
         'Restore file',
         true
       ).then(function (ok) {
-        if (!ok) return;
+        if (!ok) {
+          if (beforeJson) {
+            try {
+              saveStateGuarded(JSON.parse(beforeJson));
+            } catch (e2) { /* banner already shown by the guard on storage failure */ }
+          }
+          syncSetStatus('Restore cancelled.');
+          return;
+        }
         if (!saveStateGuarded(next)) return;
         clearBanner();
         syncSetStatus('Restored from encrypted file.');
@@ -7212,9 +7343,10 @@ function syncRefreshSyncPanel() {
   var fp = document.getElementById('sy-fp');
   var passEl = document.getElementById('sy-pass');
   if (fp && passEl && passEl.value) {
-    syncFingerprint(passEl.value).then(function (f) {
+    var v0 = passEl.value;
+    syncFingerprint(v0).then(function (f) {
       var cur = document.getElementById('sy-pass');
-      if (cur && cur.value) {
+      if (cur && cur.value === v0) {
         var fel = document.getElementById('sy-fp');
         if (fel) fel.textContent = 'Key fingerprint: ' + (f || '—') + ' (same on all devices = same passphrase)';
       }
@@ -7222,6 +7354,12 @@ function syncRefreshSyncPanel() {
   } else if (fp) {
     fp.textContent = 'Key fingerprint: —';
   }
+}
+
+function syncClearOAuthAttempt() {
+  try {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(SYNC_OAUTH_KEY);
+  } catch (e) { /* ignore */ }
 }
 
 function syncStartOAuth() {
@@ -7259,6 +7397,7 @@ function syncStartOAuth() {
     return;
   }
   syncPersistFormSecrets(cfg);
+  syncClearOAuthAttempt();
   syncSetBusy(true, 'Waiting for ' + syncProviderLabel(cfg.provider) + '…');
   syncPkcePair().then(function (pair) {
     var state = 'plutus-' + cfg.provider + '-' + syncB64UrlEncode(syncRandomBytes(12));
@@ -7293,6 +7432,7 @@ function syncStartOAuth() {
       if (!d.state || d.state !== state) return;
       if (done) return;
       done = true;
+      syncClearOAuthAttempt();
       try { window.removeEventListener('message', onMsg); } catch (e3) { /* ignore */ }
       try { if (timer) clearInterval(timer); } catch (e4) { /* ignore */ }
       if (d.error) {
@@ -7346,9 +7486,7 @@ function syncDisconnect() {
   syncMemSecrets.password = '';
   syncMemSecrets.secretKey = '';
   syncSaveConfig(cfg);
-  try {
-    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(SYNC_OAUTH_KEY);
-  } catch (e) { /* ignore */ }
+  syncClearOAuthAttempt();
   syncRefreshSyncPanel();
   clearBanner();
 }
@@ -7377,8 +7515,11 @@ function buildSyncSettings() {
         return;
       }
       syncFingerprint(v).then(function (f) {
-        var fel = document.getElementById('sy-fp');
-        if (fel) fel.textContent = 'Key fingerprint: ' + (f || '—') + ' (same on all devices = same passphrase)';
+        var cur = document.getElementById('sy-pass');
+        if (cur && cur.value === v) {
+          var fel = document.getElementById('sy-fp');
+          if (fel) fel.textContent = 'Key fingerprint: ' + (f || '—') + ' (same on all devices = same passphrase)';
+        }
       });
     });
   }
@@ -7437,6 +7578,30 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncS3CanonicalRequest = syncS3CanonicalRequest;
   window.Inoculens.syncAmzDate = syncAmzDate;
   window.Inoculens.syncSplitUrl = syncSplitUrl;
+  window.Inoculens.syncRequireHttpsUrl = syncRequireHttpsUrl;
+  window.Inoculens.syncS3ErrorBody = syncS3ErrorBody;
+  window.Inoculens.syncFetch = syncFetch;
+  window.Inoculens.syncPostForm = syncPostForm;
+  window.Inoculens.syncEnsureAccessToken = syncEnsureAccessToken;
+  window.Inoculens.syncOAuthRefresh = syncOAuthRefresh;
+  window.Inoculens.syncWebdavUpload = syncWebdavUpload;
+  window.Inoculens.syncWebdavDownload = syncWebdavDownload;
+  window.Inoculens.syncDriveUpload = syncDriveUpload;
+  window.Inoculens.syncDriveDownload = syncDriveDownload;
+  window.Inoculens.syncDriveFind = syncDriveFind;
+  window.Inoculens.syncDropboxUpload = syncDropboxUpload;
+  window.Inoculens.syncDropboxDownload = syncDropboxDownload;
+  window.Inoculens.syncOneDriveUpload = syncOneDriveUpload;
+  window.Inoculens.syncOneDriveDownload = syncOneDriveDownload;
+  window.Inoculens.syncS3Put = syncS3Put;
+  window.Inoculens.syncS3Get = syncS3Get;
+  window.Inoculens.syncRemoteUpload = syncRemoteUpload;
+  window.Inoculens.syncRemoteDownload = syncRemoteDownload;
+  window.Inoculens.syncLoadConfig = syncLoadConfig;
+  window.Inoculens.syncSaveConfig = syncSaveConfig;
+  window.Inoculens.syncPushFlow = syncPushFlow;
+  window.Inoculens.syncPullFlow = syncPullFlow;
+  window.Inoculens.syncDisconnect = syncDisconnect;
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
     document.addEventListener('DOMContentLoaded', syncHandleOAuthRedirect);
   }

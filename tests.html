@@ -1680,6 +1680,109 @@
           });
         });
       });
+
+      testAsync('sync tampered ciphertext fails closed (or skip without WebCrypto)', function () {
+        if (!S.syncCryptoAvailable()) return null;
+        return S.syncEncryptEnvelope('secret', 'right').then(function (env) {
+          var mut = env.slice(0, -5) + (env.slice(-5, -4) === 'A' ? 'B' : 'A') + env.slice(-4);
+          return S.syncDecryptEnvelope(mut, 'right').then(function () {
+            assert(false, 'tampered envelope should not decrypt');
+          }, function (e) {
+            assert(String((e && e.message) || e).indexOf('sync failed') !== -1, 'wrong error: ' + ((e && e.message) || e));
+          });
+        });
+      });
+
+      testAsync('sync fingerprint is stable hex triples (or skip without WebCrypto)', function () {
+        if (!S.syncCryptoAvailable()) return null;
+        return S.syncFingerprint('same-pass').then(function (f1) {
+          assert(/^[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}$/.test(f1), 'bad fingerprint shape: ' + f1);
+          return S.syncFingerprint('same-pass').then(function (f2) {
+            assert(f2 === f1, 'fingerprint must be deterministic');
+            return S.syncFingerprint('other-pass').then(function (f3) {
+              assert(f3 !== f1, 'different passphrase must differ');
+            });
+          });
+        });
+      });
+
+      testAsync('sync webdav refuses http + maps 401/404 (stubbed fetch)', function () {
+        var origFetch = window.fetch;
+        var cfg = S.syncDefaultConfig();
+        cfg.url = 'http://plain.test/d';
+        cfg.username = 'u';
+        cfg.password = 'p';
+        return S.syncWebdavUpload(cfg, 'x').then(function () {
+          window.fetch = origFetch;
+          assert(false, 'http url should not upload');
+        }, function (e) {
+          assert(String((e && e.message) || e).indexOf('https://') !== -1, 'should demand https: ' + ((e && e.message) || e));
+          cfg.url = 'https://dav.test/d';
+          window.fetch = function () {
+            return Promise.resolve({ ok: false, status: 401 });
+          };
+          return S.syncWebdavUpload(cfg, 'x');
+        }).then(function () {
+          window.fetch = origFetch;
+          assert(false, '401 should not upload');
+        }, function (e) {
+          assert(String((e && e.message) || e).indexOf('login refused') !== -1, 'bad 401: ' + ((e && e.message) || e));
+          window.fetch = function () {
+            return Promise.resolve({ ok: false, status: 404, text: function () { return Promise.resolve(''); } });
+          };
+          return S.syncWebdavDownload(cfg);
+        }).then(function () {
+          window.fetch = origFetch;
+          assert(false, '404 should not download');
+        }, function (e) {
+          window.fetch = origFetch;
+          assert(String((e && e.message) || e).indexOf('no backup found') !== -1, 'bad 404: ' + ((e && e.message) || e));
+        });
+      });
+
+      testAsync('sync dropbox 409 discriminates missing vs refused (stubbed fetch)', function () {
+        var origFetch = window.fetch;
+        window.fetch = function () {
+          return Promise.resolve({ ok: false, status: 409, text: function () { return Promise.resolve('{"error_summary": "path/not_found/"}'); } });
+        };
+        return S.syncDropboxDownload('t', 'f').then(function () {
+          window.fetch = origFetch;
+          assert(false, 'not_found should not download');
+        }, function (e) {
+          assert(String((e && e.message) || e).indexOf('no backup found') !== -1, 'bad not_found: ' + ((e && e.message) || e));
+          window.fetch = function () {
+            return Promise.resolve({ ok: false, status: 409, text: function () { return Promise.resolve('{"error_summary": "too_many_write_operations/"}'); } });
+          };
+          return S.syncDropboxDownload('t', 'f');
+        }).then(function () {
+          window.fetch = origFetch;
+          assert(false, 'other 409 should not download');
+        }, function (e) {
+          window.fetch = origFetch;
+          assert(String((e && e.message) || e).indexOf('refused the request') !== -1, 'bad other-409: ' + ((e && e.message) || e));
+        });
+      });
+
+      test('sync storage never persists a passphrase', function () {
+        var backup = null;
+        try { backup = localStorage.getItem('inoculens.sync.v1'); } catch (e) { backup = null; }
+        try {
+          var cfg = S.syncDefaultConfig();
+          cfg.provider = 'webdav';
+          cfg.url = 'https://d.test/';
+          cfg.password = 'pw';
+          cfg.rememberPassword = true;
+          S.syncSaveConfig(cfg);
+          var raw = '';
+          try { raw = localStorage.getItem('inoculens.sync.v1') || ''; } catch (e) { raw = ''; }
+          assert(raw.indexOf('passphrase') === -1, 'passphrase key must never persist');
+        } finally {
+          try {
+            if (backup === null) localStorage.removeItem('inoculens.sync.v1');
+            else localStorage.setItem('inoculens.sync.v1', backup);
+          } catch (e) { /* ignore */ }
+        }
+      });
     })();
 
     renderResults();
