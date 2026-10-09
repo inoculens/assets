@@ -5485,16 +5485,20 @@ function buildSettings() {
     '<input id="sy-filename" autocomplete="off" spellcheck="false">' +
     '</div>' +
     '<div id="sy-g-oauth" hidden>' +
+    '<p class="muted set-blurb" id="sy-oneclick-note"></p>' +
+    '<label for="sy-filename2">Filename</label>' +
+    '<input id="sy-filename2" autocomplete="off" spellcheck="false">' +
+    '<details class="adv" id="sy-adv">' +
+    '<summary>Bring your own OAuth app (advanced)</summary>' +
     '<label for="sy-client">OAuth client ID (your own app)</label>' +
     '<input id="sy-client" autocomplete="off" spellcheck="false">' +
     '<div id="sy-g-secret">' +
     '<label for="sy-secret">OAuth client secret (Google only)</label>' +
     '<input id="sy-secret" type="password" autocomplete="off">' +
     '</div>' +
-    '<label for="sy-filename2">Filename</label>' +
-    '<input id="sy-filename2" autocomplete="off" spellcheck="false">' +
     '<p class="muted set-blurb">Redirect URI to register in your OAuth app:</p>' +
     '<p class="mono-break" id="sy-redirect"></p>' +
+    '</details>' +
     '</div>' +
     '<div id="sy-g-megas3" hidden>' +
     '<label for="sy-endpoint">Endpoint</label>' +
@@ -6100,11 +6104,31 @@ var SYNC_PROVIDERS = [
 ];
 var SYNC_HINTS = {
   webdav: 'Nextcloud or any WebDAV host. Create a folder (e.g. Plutus), paste its URL, and sign in with an app password. Only ciphertext is uploaded.',
-  gdrive: 'Your own Google OAuth app: enable the Drive API, add a Web-application client, register the redirect URI below, then paste the client ID + secret. The app only sees files it created.',
-  dropbox: 'Your own Dropbox app (Scoped access, App folder). Register the redirect URI below, then paste the app key. Files stay in the private app folder.',
-  onedrive: 'Your own Microsoft app registration (Single-page application). Register the redirect URI below with the Files.ReadWrite.AppFolder scope, then paste the client ID. Files land in the private app folder.',
+  gdrive: 'One-click Google sign-in when enabled below — otherwise expand the advanced box and use your own OAuth app (Web application, Drive API enabled). The app only sees files it created.',
+  dropbox: 'One-click Dropbox sign-in when enabled below — otherwise your own Dropbox app (Scoped access, App folder) plus its app key in the advanced box. Files stay in the private app folder.',
+  onedrive: 'One-click Microsoft sign-in when enabled below — otherwise your own app registration (Single-page application, Files.ReadWrite.AppFolder) plus its client ID. Files land in the private app folder.',
   megas3: 'MEGA S4 object storage (needs a MEGA account with S4). Create a bucket and access keys under Object Storage, then fill endpoint, region, bucket and keys. Only ciphertext is stored.'
 };
+
+// Built-in OAuth app IDs for one-click sign-in (public by design, exactly
+// like rclone/Joplin ship theirs — the ID only names the app to the
+// provider; tokens and ciphertext still flow directly browser<->provider
+// with no Plutus server anywhere). Empty until the app owner registers
+// them; while empty, users fall back to their own OAuth app below.
+var SYNC_SHARED_APPS = { gdrive: '', dropbox: '', onedrive: '' };
+
+function syncSharedId(providerId) {
+  var v = SYNC_SHARED_APPS[providerId];
+  return (typeof v === 'string' && v.trim() !== '') ? v.trim() : '';
+}
+
+// Effective client ID: the built-in one-click app wins when configured,
+// otherwise the user's own app from the advanced box.
+function syncEffectiveClientId(cfg) {
+  var shared = syncSharedId(cfg.provider);
+  if (shared) return shared;
+  return (typeof cfg.clientId === 'string') ? cfg.clientId : '';
+}
 
 var syncBusy = false;
 var syncMemSecrets = { password: '', secretKey: '' };
@@ -6626,6 +6650,7 @@ function syncOAuthAuthUrl(providerId, clientId, redirectUri, challenge, state) {
 
 function syncOAuthTokenExchange(providerId, cfg, code, verifier) {
   var redirect = syncRedirectUri();
+  var cid = syncEffectiveClientId(cfg);
   var body;
   var url;
   if (providerId === 'gdrive') {
@@ -6633,7 +6658,7 @@ function syncOAuthTokenExchange(providerId, cfg, code, verifier) {
     body = 'grant_type=authorization_code' +
       '&code=' + encodeURIComponent(code) +
       '&redirect_uri=' + encodeURIComponent(redirect) +
-      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&client_id=' + encodeURIComponent(cid) +
       '&client_secret=' + encodeURIComponent(cfg.clientSecret || '') +
       '&code_verifier=' + encodeURIComponent(verifier);
   } else if (providerId === 'dropbox') {
@@ -6641,14 +6666,14 @@ function syncOAuthTokenExchange(providerId, cfg, code, verifier) {
     body = 'grant_type=authorization_code' +
       '&code=' + encodeURIComponent(code) +
       '&redirect_uri=' + encodeURIComponent(redirect) +
-      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&client_id=' + encodeURIComponent(cid) +
       '&code_verifier=' + encodeURIComponent(verifier);
   } else {
     url = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
     body = 'grant_type=authorization_code' +
       '&code=' + encodeURIComponent(code) +
       '&redirect_uri=' + encodeURIComponent(redirect) +
-      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&client_id=' + encodeURIComponent(cid) +
       '&code_verifier=' + encodeURIComponent(verifier);
   }
   return syncPostForm(url, body).then(function (tok) {
@@ -6659,24 +6684,25 @@ function syncOAuthTokenExchange(providerId, cfg, code, verifier) {
 function syncOAuthRefresh(providerId, cfg) {
   var t = cfg.tokens || {};
   if (!t.refresh) return Promise.reject(new Error('sync failed: connect your drive first.'));
+  var cid = syncEffectiveClientId(cfg);
   var body;
   var url;
   if (providerId === 'gdrive') {
     url = 'https://oauth2.googleapis.com/token';
     body = 'grant_type=refresh_token' +
       '&refresh_token=' + encodeURIComponent(t.refresh) +
-      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&client_id=' + encodeURIComponent(cid) +
       '&client_secret=' + encodeURIComponent(cfg.clientSecret || '');
   } else if (providerId === 'dropbox') {
     url = 'https://api.dropboxapi.com/oauth2/token';
     body = 'grant_type=refresh_token' +
       '&refresh_token=' + encodeURIComponent(t.refresh) +
-      '&client_id=' + encodeURIComponent(cfg.clientId);
+      '&client_id=' + encodeURIComponent(cid);
   } else {
     url = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
     body = 'grant_type=refresh_token' +
       '&refresh_token=' + encodeURIComponent(t.refresh) +
-      '&client_id=' + encodeURIComponent(cfg.clientId) +
+      '&client_id=' + encodeURIComponent(cid) +
       '&redirect_uri=' + encodeURIComponent(syncRedirectUri());
   }
   return syncPostForm(url, body).then(function (tok) {
@@ -7484,6 +7510,17 @@ function syncRefreshSyncPanel() {
       ? ''
       : (ru || 'Open the hosted https:// page — OAuth cannot start from file://.');
   }
+  var sharedNow = syncSharedId(cfg.provider);
+  var note = document.getElementById('sy-oneclick-note');
+  if (note) {
+    note.textContent = sharedNow
+      ? ('One-click sign-in is ready — just press Connect.' + (cfg.provider === 'gdrive' ? ' Google sessions last about an hour; reconnect when asked.' : ''))
+      : 'One-click is not set up for this provider yet — expand the advanced box below to use your own OAuth app.';
+  }
+  var adv = document.getElementById('sy-adv');
+  if (adv) {
+    try { adv.open = !sharedNow; } catch (e) { /* ignore */ }
+  }
   if (cfg.provider === 'webdav') {
     syncSetVal('sy-url', cfg.url);
     syncSetVal('sy-user', cfg.username);
@@ -7538,7 +7575,11 @@ function syncStartOAuth() {
   if (syncBusy) return;
   var rd = syncReadForm();
   var cfg = rd.cfg;
-  if (cfg.provider !== 'gdrive' && cfg.provider !== 'dropbox' && cfg.provider !== 'onedrive') return;
+  // WebDAV / MEGA have no OAuth dance: Connect simply tests the login.
+  if (cfg.provider !== 'gdrive' && cfg.provider !== 'dropbox' && cfg.provider !== 'onedrive') {
+    syncTestConnection();
+    return;
+  }
   if (!syncCryptoAvailable()) {
     showBanner('This browser cannot do encrypted sync (WebCrypto unavailable).', 'error', {
       title: 'Sync unavailable',
@@ -7546,17 +7587,40 @@ function syncStartOAuth() {
     });
     return;
   }
-  if (!cfg.clientId) {
-    showBanner('Enter the OAuth client ID / app key first.', 'error', {
+  var shared = syncSharedId(cfg.provider);
+  var clientId = shared || cfg.clientId;
+  if (!clientId) {
+    showBanner('One-click sign-in is not set up for ' + syncProviderLabel(cfg.provider) + ' yet.', 'error', {
       title: 'Connect',
-      lines: ['Create your own OAuth app with the provider, register the redirect URI shown, then paste the ID here.']
+      lines: ['Expand "Bring your own OAuth app" below, create an app with the provider, register the redirect URI shown, then paste its client ID.']
     });
     return;
   }
-  if (cfg.provider === 'gdrive' && !cfg.clientSecret) {
-    showBanner('Enter the OAuth client secret too (Google needs it).', 'error', {
+  if (cfg.provider === 'gdrive' && !shared && !cfg.clientSecret) {
+    showBanner('Enter the OAuth client secret too (Google needs it for your own app).', 'error', {
       title: 'Connect',
       lines: ['Google Web-application clients always have a secret — paste it alongside the client ID.']
+    });
+    return;
+  }
+  // Google one-click uses Google's own sign-in library (loaded only now,
+  // never on page load): no secret, no redirect URI, just your login.
+  if (cfg.provider === 'gdrive' && shared) {
+    syncPersistFormSecrets(cfg);
+    syncSetBusy(true, 'Waiting for ' + syncProviderLabel(cfg.provider) + '…');
+    syncGoogleOneClick(cfg).then(function (tok) {
+      cfg.tokens = tok;
+      syncSaveConfig(cfg);
+      syncSetBusy(false);
+      syncRefreshSyncPanel();
+      clearBanner();
+    }, function (err) {
+      syncSetBusy(false);
+      syncRefreshSyncPanel();
+      showBanner('Sign-in failed — your data was left untouched.', 'error', {
+        title: 'Connect',
+        lines: [String((err && err.message) || err)]
+      });
     });
     return;
   }
@@ -7578,7 +7642,7 @@ function syncStartOAuth() {
         sessionStorage.setItem(SYNC_OAUTH_KEY, JSON.stringify({ state: state, verifier: pair.verifier, provider: cfg.provider }));
       }
     } catch (e) { /* ignore */ }
-    var url = syncOAuthAuthUrl(cfg.provider, cfg.clientId, redirect, pair.challenge, state);
+    var url = syncOAuthAuthUrl(cfg.provider, clientId, redirect, pair.challenge, state);
     var popup = null;
     try {
       popup = window.open(url, 'plutus-oauth', 'width=540,height=680');
@@ -7663,6 +7727,119 @@ function syncDisconnect() {
   clearBanner();
 }
 
+// Google one-click sign-in via Google's own sign-in library. The script is
+// loaded lazily on first Connect — never on page load — and only needs the
+// public client ID: you just log in with Google, no app to register.
+var syncGisLoading = null;
+
+function syncLoadGis() {
+  try {
+    if (typeof window !== 'undefined' && window.google && window.google.accounts && window.google.accounts.oauth2) {
+      return Promise.resolve(window.google.accounts.oauth2);
+    }
+  } catch (e) { /* ignore */ }
+  if (syncGisLoading) return syncGisLoading;
+  syncGisLoading = new Promise(function (resolve, reject) {
+    try {
+      if (typeof document === 'undefined') throw new Error('sync failed: cannot load Google sign-in here.');
+      var s = document.createElement('script');
+      s.src = 'https://accounts.google.com/gsi/client';
+      s.async = true;
+      s.defer = true;
+      s.onload = function () {
+        try {
+          resolve(window.google.accounts.oauth2);
+        } catch (e) {
+          syncGisLoading = null;
+          reject(new Error('sync failed: could not start Google sign-in.'));
+        }
+      };
+      s.onerror = function () {
+        syncGisLoading = null;
+        reject(new Error('sync failed: could not load Google sign-in. Check your connection.'));
+      };
+      document.head.appendChild(s);
+    } catch (e) {
+      syncGisLoading = null;
+      reject(e);
+    }
+  });
+  return syncGisLoading;
+}
+
+function syncGoogleOneClick(cfg) {
+  return syncLoadGis().then(function (oauth2) {
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = null;
+      try {
+        if (typeof setTimeout !== 'undefined') {
+          timer = setTimeout(function () {
+            if (done) return;
+            done = true;
+            reject(new Error('sync cancelled — the Google window was closed.'));
+          }, 180000);
+        }
+      } catch (e) { /* ignore */ }
+      function settle(fn, arg) {
+        if (done) return;
+        done = true;
+        try { if (timer) clearTimeout(timer); } catch (e2) { /* ignore */ }
+        fn(arg);
+      }
+      try {
+        var client = oauth2.initTokenClient({
+          client_id: syncSharedId('gdrive'),
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: function (resp) {
+            if (resp && resp.access_token) settle(resolve, resp);
+            else settle(reject, new Error('sync failed: Google sign-in gave no token.'));
+          }
+        });
+        client.requestAccessToken({ prompt: 'consent' });
+      } catch (e) {
+        settle(reject, new Error('sync failed: could not start Google sign-in.'));
+      }
+    });
+  }).then(function (resp) {
+    var exp = Number(resp.expires_in);
+    if (!isFinite(exp) || exp <= 0) exp = 3600;
+    return { access: resp.access_token, refresh: '', expiry: Date.now() + exp * 1000 };
+  });
+}
+
+// WebDAV / MEGA have no OAuth: Connect simply proves the login works.
+// Both "backup found" and "no backup yet" mean the login is good.
+function syncTestConnection() {
+  if (syncBusy) return;
+  var rd = syncReadForm();
+  var cfg = rd.cfg;
+  syncPersistFormSecrets(cfg);
+  syncSetBusy(true, 'Checking connection…');
+  return syncRemoteDownload(cfg).then(function () {
+    syncSetBusy(false);
+    syncSaveConfig(cfg);
+    syncRefreshSyncPanel();
+    clearBanner();
+    syncSetStatus('Connected to ' + syncProviderLabel(cfg.provider) + ' — backup found.');
+  }, function (err) {
+    syncSetBusy(false);
+    var m = String((err && err.message) || err);
+    if (m.indexOf('no backup found') !== -1) {
+      syncSaveConfig(cfg);
+      syncRefreshSyncPanel();
+      clearBanner();
+      syncSetStatus('Connected to ' + syncProviderLabel(cfg.provider) + ' — no backup on the drive yet.');
+      return;
+    }
+    syncRefreshSyncPanel();
+    showBanner('Connection failed — your data was left untouched.', 'error', {
+      title: 'Connect',
+      lines: [m]
+    });
+  });
+}
+
 function buildSyncSettings() {
   if (typeof document === 'undefined') return;
   var prov = document.getElementById('sy-provider');
@@ -7725,6 +7902,7 @@ function buildSyncSettings() {
 if (typeof window !== 'undefined') {
   window.Inoculens = window.Inoculens || {};
   window.Inoculens.SYNC_PROVIDERS = SYNC_PROVIDERS;
+  window.Inoculens.SYNC_SHARED_APPS = SYNC_SHARED_APPS;
   window.Inoculens.syncB64encode = syncB64encode;
   window.Inoculens.syncB64decode = syncB64decode;
   window.Inoculens.syncB64UrlEncode = syncB64UrlEncode;
@@ -7753,6 +7931,9 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncRequireHttpsUrl = syncRequireHttpsUrl;
   window.Inoculens.syncS3ErrorBody = syncS3ErrorBody;
   window.Inoculens.syncFetch = syncFetch;
+  window.Inoculens.syncSharedId = syncSharedId;
+  window.Inoculens.syncEffectiveClientId = syncEffectiveClientId;
+  window.Inoculens.syncTestConnection = syncTestConnection;
   window.Inoculens.updateModalLock = updateModalLock;
   window.Inoculens.syncPostForm = syncPostForm;
   window.Inoculens.syncEnsureAccessToken = syncEnsureAccessToken;

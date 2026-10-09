@@ -1808,6 +1808,14 @@
         assert(!document.body.classList.contains('modal-open'), 'background must unfreeze after close');
       });
 
+      test('sync one-click panel elements exist', function () {
+        if (typeof init === 'function') init();
+        assert(document.getElementById('sy-adv') !== null, 'advanced BYO box missing');
+        assert(document.getElementById('sy-oneclick-note') !== null, 'one-click note missing');
+        assert(S.syncSharedId('dropbox') === '' || typeof S.syncSharedId('dropbox') === 'string', 'shared id shape');
+        assert(S.syncEffectiveClientId({ provider: 'dropbox', clientId: 'ME' }) === (S.syncSharedId('dropbox') || 'ME'), 'effective id');
+      });
+
       test('modal-born errors die with the dialog; page errors return', function () {
         if (typeof init === 'function') init();
         ['trade-dialog', 'account-dialog', 'confirm-dialog', 'note-dialog', 'error-dialog', 'color-dialog'].forEach(function (id) {
