@@ -983,6 +983,55 @@
           assert(out.BTC === 67000 && out.ETH === 3500, 'bad values: ' + JSON.stringify(out));
         }, function (e) { restore(); throw e; });
       });
+
+      testAsync('overlapping refreshes: stale fiat results are discarded', function () {
+        // EUR->RON switch while the EUR batch is still in flight: the late
+        // EUR response must not overwrite the fresh RON live price (it used
+        // to paint EUR numbers labeled RON with a phantom loss vs cost).
+        var origFetch = window.fetch;
+        function ronState(main) {
+          return { settings: { mainCurrency: main, costMethod: 'average' },
+            accounts: [{ id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }],
+            trades: [{ id: 't1', type: 'buy', symbol: 'BTC', qty: 0.00058193, total: 50, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'a1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-10-06T00:00:00.000Z' }],
+            priceOverrides: {} };
+        }
+        setState(ronState('EUR'));
+        clearPriceCache();
+        try {
+          var lp = (window.Inoculens.getLivePrices && window.Inoculens.getLivePrices()) || {};
+          Object.keys(lp).forEach(function (k) { delete lp[k]; });
+        } catch (e) { /* ignore */ }
+        var pending = [];
+        window.fetch = function (url) {
+          return new Promise(function (resolve) { pending.push({ url: String(url), resolve: resolve }); });
+        };
+        function restore() { window.fetch = origFetch; restoreState(); }
+        function flush() { return new Promise(function (r) { setTimeout(r, 0); }); }
+        function reply(substr, body) {
+          for (var i = 0; i < pending.length; i++) {
+            if (pending[i].url.indexOf(substr) !== -1) {
+              pending[i].resolve({ ok: true, json: function () { return Promise.resolve(body); } });
+              pending.splice(i, 1);
+              return true;
+            }
+          }
+          return false;
+        }
+        var done1 = refreshPrices(); // gen1: EUR batch in flight
+        setState(ronState('RON'));
+        var done2 = refreshPrices(); // gen2: RON batch in flight
+        return flush().then(function () {
+          assert(reply('vs_currencies=ron', { bitcoin: { ron: 458000, usd: 100000 } }), 'RON batch never requested: ' + JSON.stringify(pending.map(function (p) { return p.url; })));
+          return flush();
+        }).then(function () {
+          assert(reply('vs_currencies=eur', { bitcoin: { eur: 85920, usd: 93000 } }), 'EUR batch never requested');
+          return Promise.all([done1, done2]).then(flush).then(flush);
+        }).then(function () {
+          var lp2 = (window.Inoculens.getLivePrices && window.Inoculens.getLivePrices()) || {};
+          restore();
+          assert(lp2.BTC === 458000, 'stale EUR batch overwrote the RON live price, got ' + lp2.BTC);
+        }, function (e) { restore(); throw e; });
+      });
     })();
 
     // === Historical execution-price tests (Exec reference API) ===

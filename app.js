@@ -6550,6 +6550,14 @@ function clearAllData() {
 
 // --- Render loop ---
 
+// Generation guard: rapid fiat switches (or a slow first paint racing init's
+// fetch) can leave two refreshes in flight; without a guard the STALE one may
+// resolve last and paint live values in the wrong fiat (e.g. EUR numbers
+// labeled RON against a correctly converted cost → a phantom ~200 RON loss
+// on a 50 EUR trade). Only the latest request for the CURRENT main may write
+// livePrices, banner, or repaint — anything older is quietly discarded.
+var priceReqGen = 0;
+
 function refreshPrices() {
   var st = loadState();
   var mainNow = st.settings.mainCurrency;
@@ -6574,7 +6582,14 @@ function refreshPrices() {
     render();
     return Promise.resolve({});
   }
+  var gen = ++priceReqGen;
+  function isCurrent() {
+    if (gen !== priceReqGen) return false; // superseded by a newer refresh
+    try { return loadState().settings.mainCurrency === mainNow; }
+    catch (e) { return false; }
+  }
   return refreshAllPrices(syms, mainNow, kinds).then(function (out) {
+    if (!isCurrent()) return out; // stale: newer refresh owns livePrices + paint
     Object.keys(out).forEach(function (k) {
       var v = out[k];
       if (isFinite(Number(v)) && Number(v) > 0) livePrices[k] = Number(v);
@@ -6588,8 +6603,10 @@ function refreshPrices() {
     // One gentle retry for transient failures (e.g. CoinGecko 429) before
     // telling the user anything — most hiccups heal within seconds.
     return new Promise(function (res) { setTimeout(res, 2500); }).then(function () {
+      if (!isCurrent()) return out; // main moved on during the wait: stay quiet
       return refreshAllPrices(missing, mainNow, kinds);
     }).then(function (out2) {
+      if (!isCurrent()) return out; // stale retry: discard, no paint, no banner
       Object.keys(out2).forEach(function (k) {
         var v = out2[k];
         if (isFinite(Number(v)) && Number(v) > 0) livePrices[k] = Number(v);
