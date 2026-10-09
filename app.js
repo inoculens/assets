@@ -5512,8 +5512,6 @@ function buildSettings() {
     '</div>' +
     '<label for="sy-pass">Sync passphrase</label>' +
     '<input id="sy-pass" type="password" autocomplete="new-password" placeholder="Required — only you know it">' +
-    '<label for="sy-pass2">Confirm passphrase (for uploads)</label>' +
-    '<input id="sy-pass2" type="password" autocomplete="new-password">' +
     '<p class="muted set-blurb" id="sy-fp">Key fingerprint: —</p>' +
     '<p class="muted set-blurb" id="sy-status">Not connected.</p>' +
     '<div class="sync-btns">' +
@@ -7136,13 +7134,6 @@ function syncPushFlow() {
     });
     return;
   }
-  if (rd.passConfirm !== null && pass !== rd.passConfirm) {
-    showBanner('The two passphrases do not match.', 'error', {
-      title: 'Sync passphrase',
-      lines: ['Retype the same passphrase in both fields, then try again.']
-    });
-    return;
-  }
   var st = loadState();
   if ((!st.accounts || !st.accounts.length) && (!st.trades || !st.trades.length)) {
     showBanner('Nothing to sync yet — add an account first.', 'error', {
@@ -7290,18 +7281,10 @@ function syncPullFlow() {
 function syncDownloadEncrypted() {
   if (syncBusy) return;
   var pass = uiVal('sy-pass', '');
-  var pass2 = uiVal('sy-pass2', '');
   if (!pass) {
     showBanner('Enter a sync passphrase first — it encrypts the file.', 'error', {
       title: 'Encrypted file',
       lines: ['Type a passphrase in the Sync tab. It is never stored.']
-    });
-    return;
-  }
-  if (pass2 !== '' && pass !== pass2) {
-    showBanner('The two passphrases do not match.', 'error', {
-      title: 'Encrypted file',
-      lines: ['Retype the same passphrase in both fields, then try again.']
     });
     return;
   }
@@ -7441,7 +7424,7 @@ function syncReadForm() {
     cfg.filename = syncSanitizeFilename(fn);
   }
   var out = syncSanitizeConfig(cfg);
-  return { cfg: out, passphrase: val('sy-pass', ''), passConfirm: val('sy-pass2', '') };
+  return { cfg: out, passphrase: val('sy-pass', '') };
 }
 
 function syncPersistFormSecrets(cfg) {
