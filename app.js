@@ -8042,6 +8042,7 @@ function syncStartOAuth() {
       syncSetBusy(false);
       syncRefreshSyncPanel();
       clearBanner();
+      syncSetStatus('Connected to Google Drive — press "Sync now (upload)" to send your first encrypted backup.');
     }, function (err) {
       syncSetBusy(false);
       syncRefreshSyncPanel();
@@ -8113,6 +8114,7 @@ function syncStartOAuth() {
         syncSetBusy(false);
         syncRefreshSyncPanel();
         clearBanner();
+        syncSetStatus('Connected to ' + syncProviderLabel(cfg.provider) + ' — press "Sync now (upload)" to send your first encrypted backup.');
       }, function (err) {
         syncSetBusy(false);
         showBanner('Sign-in failed — your data was left untouched.', 'error', {
