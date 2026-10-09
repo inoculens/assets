@@ -6154,6 +6154,14 @@ function syncEffectiveClientId(cfg) {
 
 var syncBusy = false;
 var syncMemSecrets = { password: '', secretKey: '' };
+// Session-only overwrite consent: pressing Sync now again after declining
+// the taken-name prompt means "yes, overwrite it". Keyed by destination,
+// cleared on any success or disconnect, gone on reload.
+var syncOverwriteArmed = {};
+
+function syncArmOverwrite(locKey) {
+  try { syncOverwriteArmed[locKey] = true; } catch (e) { /* ignore */ }
+}
 
 // --- Small pure codecs (no atob/TextEncoder dependency) ---
 
@@ -7508,8 +7516,37 @@ function syncAutoPush() {
   } catch (e) { /* ignore */ }
 }
 
-function syncPushFlow(opts) {
-  if (syncBusy) return;
+// Adopts an already-downloaded + decrypted drive backup (used by the
+// taken-name prompt's "Download instead"). Validates fully before touching
+// anything, like the pull flow; the confirm already happened, so no snapshot
+// dance is needed. Keeps the settings dialog open with a status line.
+function syncAdoptRemote(cfg, remotePlain) {
+  var next;
+  try {
+    next = importState(remotePlain);
+  } catch (e) {
+    if (e && e.message === 'storage-unavailable') throw e;
+    throw new Error('sync failed: the drive backup is invalid (' + String((e && e.message) || e).slice(0, 160) + ').');
+  }
+  if (!saveStateGuarded(next)) return 'failed';
+  cfg.lastSyncAt = new Date().toISOString();
+  try {
+    var d = JSON.parse(remotePlain);
+    if (d && typeof d.exportedAt === 'string') cfg.lastRemoteAt = d.exportedAt;
+  } catch (e) { /* ignore */ }
+  cfg.lastSyncedHash = syncHashOfExport(remotePlain);
+  cfg.lastLocation = syncLocationKey(cfg);
+  syncOverwriteArmed = {};
+  syncSaveConfig(cfg);
+  syncRefreshSyncPanel();
+  try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
+  clearBanner();
+  syncSetStatus('Restored from ' + syncProviderLabel(cfg.provider) + '.');
+  refreshPrices();
+  return 'pulled';
+}
+
+function syncPushFlow(opts) {  if (syncBusy) return;
   var auto = !!(opts && opts.auto);
   var rd = syncReadForm();
   var cfg = rd.cfg;
@@ -7552,16 +7589,55 @@ function syncPushFlow(opts) {
   syncEncryptEnvelope(plain, pass).then(function (env) {
     syncSetStatus('Uploading to ' + syncProviderLabel(cfg.provider) + '…');
     var locKey = syncLocationKey(cfg);
-    // First save to a destination this device has never synced: refuse to
+    // First save to a destination this device has never synced: never
     // clobber a stranger's file (e.g. another profile's backup sharing the
     // same drive). Same destination as last time uploads freely.
     if (!cfg.lastLocation || cfg.lastLocation !== locKey) {
-      return syncRemoteExists(cfg).then(function (taken) {
-        if (taken) {
-          throw new Error('sync failed: "' + cfg.filename + '" already exists in this folder. Choose a different name or folder so profiles never overwrite each other.');
-        }
+      if (syncOverwriteArmed[locKey]) {
+        // User saw the taken-name prompt and pressed Sync again: explicit
+        // overwrite intent, upload straight through.
+        syncOverwriteArmed = {};
         return syncRemoteEnsureFolder(cfg).then(function () {
           return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
+        });
+      }
+      return syncRemoteExists(cfg).then(function (taken) {
+        if (!taken) {
+          return syncRemoteEnsureFolder(cfg).then(function () {
+            return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
+          });
+        }
+        return syncRemoteDownload(cfg).then(function (remoteText) {
+          return syncDecryptEnvelope(remoteText, pass).then(function (remotePlain) {
+            if (curHash && syncHashOfExport(remotePlain) === curHash) {
+              // Same content (e.g. reconnect with nothing changed): adopt
+              // silently — no prompt, no pointless re-upload.
+              cfg.lastLocation = locKey;
+              cfg.lastRemoteAt = syncLocalExportedAt(remotePlain);
+              cfg.lastSyncedHash = curHash;
+              syncSaveConfig(cfg);
+              syncSetBusy(false);
+              syncRefreshSyncPanel();
+              try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
+              syncSetStatus('Already up to date.');
+              return 'adopted';
+            }
+            // Different content under our name: offer download, never ambush.
+            syncSetBusy(false);
+            return confirmAction(
+              'Name already taken',
+              'A different backup named "' + cfg.filename + '" already exists in this folder. Download it instead of overwriting?',
+              'Download instead',
+              false
+            ).then(function (pullIt) {
+              if (pullIt) return syncAdoptRemote(cfg, remotePlain);
+              syncSetStatus('Kept the drive file. Change the name or folder — or press Sync now again to overwrite it.');
+              syncArmOverwrite(locKey);
+              return 'cancelled';
+            });
+          }, function () {
+            throw new Error('sync failed: "' + cfg.filename + '" already exists in this folder, under a different passphrase. Choose a different name or folder — or delete that file on the drive if it is yours.');
+          });
         });
       });
     }
@@ -7609,12 +7685,13 @@ function syncPushFlow(opts) {
     });
   }).then(function (outcome) {
     syncSetBusy(false);
-    if (outcome === 'cancelled' || outcome === 'conflict-remote') return;
+    if (outcome === 'cancelled' || outcome === 'conflict-remote' || outcome === 'adopted' || outcome === 'pulled') return;
     var now = new Date().toISOString();
     cfg.lastSyncAt = now;
     cfg.lastRemoteAt = localAt;
     cfg.lastSyncedHash = curHash;
     cfg.lastLocation = syncLocationKey(cfg);
+    syncOverwriteArmed = {};
     syncSaveConfig(cfg);
     syncRefreshSyncPanel();
     try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
@@ -7699,6 +7776,7 @@ function syncPullFlow() {
       } catch (e) { /* ignore */ }
       cfg.lastSyncedHash = syncHashOfExport(plain);
       cfg.lastLocation = syncLocationKey(cfg); // adopt: future pushes update this file
+      syncOverwriteArmed = {};
       syncSaveConfig(cfg);
       syncRefreshSyncPanel();
       try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
@@ -8190,7 +8268,9 @@ function syncStartOAuth() {
 function syncDisconnect() {
   var cfg = syncLoadConfig();
   // Forget the whole connection: tokens, remembered passwords/keys and
-  // session secrets. Boring config (provider, urls, names) stays.
+  // session secrets — plus the location trust, so the next push treats the
+  // destination as unknown and refuses to blindly overwrite it.
+  // Boring config (provider, urls, names) stays.
   cfg.tokens = null;
   cfg.password = '';
   cfg.rememberPassword = false;
@@ -8198,6 +8278,11 @@ function syncDisconnect() {
   cfg.rememberSecret = false;
   cfg.passphrase = '';
   cfg.rememberPassphrase = false;
+  cfg.lastLocation = null;
+  cfg.lastSyncedHash = null;
+  cfg.lastRemoteAt = null;
+  cfg.lastSyncAt = null;
+  syncOverwriteArmed = {};
   syncMemSecrets.password = '';
   syncMemSecrets.secretKey = '';
   syncSaveConfig(cfg);

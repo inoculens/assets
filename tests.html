@@ -1966,7 +1966,7 @@
         assert(a !== S.syncLocationKey({ provider: 'gdrive', folder: 'Q', filename: 'a.enc.json' }), 'location differs by folder');
       });
 
-      testAsync('sync duplicate gate refuses taken names', function () {
+      testAsync('sync taken name offers download, cancel arms overwrite, same adopts', function () {
         var L = window.Inoculens;
         var v2 = null, sy = null;
         var origFetch = window.fetch;
@@ -1996,53 +1996,86 @@
             })();
           });
         }
+        function seed() {
+          L.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [{ id: 'gate-acct', name: 'Gate BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }],
+            trades: [{ id: 'gate-t', type: 'buy', symbol: 'BTC', qty: 1, total: 10, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'gate-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }],
+            priceOverrides: {}
+          });
+        }
+        function useForm() {
+          document.getElementById('sy-provider').value = 'webdav';
+          document.getElementById('sy-url').value = 'https://dav.test/r';
+          document.getElementById('sy-user').value = 'u';
+          document.getElementById('sy-passwd').value = 'p';
+          document.getElementById('sy-remember').checked = true;
+          document.getElementById('sy-filename').value = 'plutus.inoculens.com';
+          document.getElementById('sy-pass').value = 'pw';
+          document.getElementById('sy-auto').checked = false;
+          document.getElementById('sy-provider').dispatchEvent(new Event('change', { bubbles: true }));
+        }
         try { v2 = localStorage.getItem('inoculens.v2'); } catch (e) { v2 = null; }
         try { sy = localStorage.getItem('inoculens.sync.v1'); } catch (e) { sy = null; }
         if (typeof init === 'function') init();
         try { localStorage.removeItem('inoculens.sync.v1'); } catch (e) { /* ignore */ }
-        L.saveState({
-          settings: { mainCurrency: 'EUR', costMethod: 'average' },
-          accounts: [{ id: 'dup-acct', name: 'Dup BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }],
-          trades: [{ id: 'dup-t', type: 'buy', symbol: 'BTC', qty: 1, total: 10, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'dup-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }],
-          priceOverrides: {}
-        });
-        document.getElementById('sy-provider').value = 'webdav';
-        document.getElementById('sy-url').value = 'https://dav.test/r';
-        document.getElementById('sy-user').value = 'u';
-        document.getElementById('sy-passwd').value = 'p';
-        document.getElementById('sy-remember').checked = true;
-        document.getElementById('sy-filename').value = 'plutus.inoculens.com';
-        document.getElementById('sy-pass').value = 'pw';
-        document.getElementById('sy-auto').checked = false;
-        document.getElementById('sy-provider').dispatchEvent(new Event('change', { bubbles: true }));
-        var remoteTaken = true;
+        seed();
+        useForm();
+        var remoteText = '';
         window.fetch = function (url, opts) {
           var m = (opts && opts.method) || 'GET';
           if (m === 'PUT') { puts++; return Promise.resolve({ ok: true, status: 200 }); }
           if (m === 'MKCOL') return Promise.resolve({ ok: true, status: 201 });
-          if (remoteTaken) return Promise.resolve({ ok: true, status: 200, text: function () { return Promise.resolve('{"taken":true}'); } });
-          return Promise.resolve({ ok: false, status: 404 });
+          return Promise.resolve({ ok: true, status: 200, text: function () { return Promise.resolve(remoteText); } });
         };
-        S.syncPushFlow();
-        return waitFor(function () {
-          return document.getElementById('banner-text').textContent.indexOf('already exists') !== -1 ? true : null;
-        }, 20000, 'duplicate refusal').then(function () {
-          assert(puts === 0, 'taken name must never upload, PUTs=' + puts);
-          clearBanner();
-          remoteTaken = false;
+        // Remote holds DIFFERENT content under our name: prompt, then cancel.
+        var alt = JSON.parse(JSON.stringify(L.loadState()));
+        alt.trades[0].total = 999;
+        return S.syncEncryptEnvelope(JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: new Date().toISOString(), settings: alt.settings, accounts: alt.accounts, trades: alt.trades, priceOverrides: alt.priceOverrides }), 'pw').then(function (env) {
+          remoteText = env;
+          S.syncPushFlow();
+          return waitFor(function () {
+            return document.getElementById('confirm-message').textContent.indexOf('already exists') !== -1 ? true : null;
+          }, 25000, 'taken-name prompt');
+        }).then(function () {
+          document.getElementById('confirm-cancel').click();
+          return waitFor(function () {
+            return document.getElementById('sy-status').textContent.indexOf('Kept the drive file') !== -1 ? true : null;
+          }, 5000, 'cancel keeps the file');
+        }).then(function () {
+          assert(puts === 0, 'declined overwrite must never upload, PUTs=' + puts);
+          // Press again: armed overwrite goes straight through.
           S.syncPushFlow();
           return waitFor(function () {
             return document.getElementById('sy-status').textContent.indexOf('Synced') !== -1 ? true : null;
-          }, 20000, 'first upload to a free name');
+          }, 25000, 'armed overwrite');
         }).then(function () {
-          assert(puts === 1, 'free name must upload once, PUTs=' + puts);
+          assert(puts === 1, 'armed overwrite must upload once, PUTs=' + puts);
+          // Same content on the drive: adopt silently, no prompt, no upload.
+          var c = S.syncLoadConfig();
+          c.lastLocation = null;
+          S.syncSaveConfig(c);
+          return S.syncEncryptEnvelope(exportStateForHash(), 'pw');
+        }).then(function (env2) {
+          remoteText = env2;
+          S.syncPushFlow();
+          return waitFor(function () {
+            return document.getElementById('sy-status').textContent.indexOf('Already up to date') !== -1 ? true : null;
+          }, 25000, 'silent adopt');
+        }).then(function () {
+          assert(puts === 1, 'adopt must not upload, PUTs=' + puts);
+          assert(!document.getElementById('confirm-dialog').open, 'adopt must not prompt');
           var back = S.syncLoadConfig();
-          assert(back.lastLocation && back.lastLocation.indexOf('webdav|') === 0, 'push must record the location');
+          assert(back.lastLocation && back.lastLocation.indexOf('webdav|') === 0, 'adopt must record the location');
           restoreAll();
         }, function (e) {
           restoreAll();
           throw e;
         });
+        function exportStateForHash() {
+          var s = L.loadState();
+          return JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: new Date().toISOString(), settings: s.settings, accounts: s.accounts, trades: s.trades, priceOverrides: s.priceOverrides });
+        }
       });
 
       test('sync connect locks once established', function () {
