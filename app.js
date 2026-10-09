@@ -861,6 +861,20 @@ function normalizeTrade(t) {
     }
   }
   var out = { totalMain: totalMain, feeMain: fee * feeRate };
+  // Fee economics: when the fee shares the trade currency it comes OUT OF
+  // the stated total (exchange model: 100 in, 1 fee, 99 invested), so cost
+  // counts total-minus-fee while the fee books separately as a realized
+  // loss (visible drag, honest break-even). A differently-denominated fee
+  // is separate money and stays additive. fee:0 behaves exactly as before.
+  var sameCcy = !ccy || !feeCcy || feeCcy === ccy;
+  if (sameCcy) {
+    out.netMain = totalMain - out.feeMain;
+    if (!(out.netMain > 0)) out.netMain = 0;
+    out.feeLossMain = out.feeMain;
+  } else {
+    out.netMain = totalMain + out.feeMain;
+    out.feeLossMain = 0;
+  }
   if (feeFxAssumedSameRate) out.feeFxAssumedSameRate = true;
   return out;
 }
@@ -908,7 +922,8 @@ function computeAverage(trades) {
       if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
       var ebi = bySym.get(sym);
       ebi.qty += qbi;
-      ebi.cost += n.totalMain + n.feeMain;
+      ebi.cost += n.netMain;
+      ebi.realized -= n.feeLossMain; // fee carved from total: visible loss, honest break-even
     } else if (t.type === 'sell') {
       var qs = Number(t.qty);
       if (!isFinite(qs) || qs <= 0) continue;
@@ -943,7 +958,7 @@ function computeAverage(trades) {
         }
       }
       if (hasT || (n.feeMain > 0)) {
-        ee.realized -= (n.totalMain + n.feeMain); // cash lost / gas paid in fiat
+        ee.realized -= (n.netMain + n.feeLossMain); // cash lost (fee inside total when same currency)
       }
     } else if (t.type === 'transfer') {
       var qt = Number(t.qty);
@@ -952,7 +967,7 @@ function computeAverage(trades) {
       if (!isFinite(nft) || nft < 0 || nft >= qt) continue;
       if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
       var et = bySym.get(sym);
-      var fiatT = n.totalMain + n.feeMain;
+      var fiatT = n.netMain + n.feeLossMain;
       if (et.qty <= LEDGER_EPS) {
         // no inventory: cannot move, but fiat fee still lost
         if (fiatT > 0) et.realized -= fiatT;
@@ -995,7 +1010,8 @@ function computeFifo(trades) {
     if (t.type === 'buy' || t.type === 'income') {
       var qb = Number(t.qty);
       if (!isFinite(qb) || qb <= 0) continue;
-      q.push({ qty: qb, unitCost: (n.totalMain + n.feeMain) / qb, date: t.date });
+      q.push({ qty: qb, unitCost: qb > 0 ? n.netMain / qb : 0, date: t.date });
+      st.realized -= n.feeLossMain;
     } else if (t.type === 'sell') {
       var qty = Number(t.qty);
       if (!isFinite(qty) || qty <= 0) continue;
@@ -1058,14 +1074,14 @@ function computeFifo(trades) {
         }
       }
       if (hasT || n.feeMain > 0) {
-        st.realized -= (n.totalMain + n.feeMain);
+        st.realized -= (n.netMain + n.feeLossMain);
       }
     } else if (t.type === 'transfer') {
       var qt = Number(t.qty);
       if (!isFinite(qt) || qt <= 0) continue;
       var nft = (t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee);
       if (!isFinite(nft) || nft < 0 || nft >= qt) continue;
-      var fiatT = n.totalMain + n.feeMain;
+      var fiatT = n.netMain + n.feeLossMain;
       var heldT = q.reduce(function (s, l) { return s + l.qty; }, 0);
       if (heldT <= LEDGER_EPS) {
         if (fiatT > 0) st.realized -= fiatT;
@@ -1230,8 +1246,10 @@ function computePortfolio(allTrades, live, method) {
       var sb = stFor(t.accountId, sym);
       sb.touched = true;
       sb.qty += qb;
-      var cb = n.totalMain + n.feeMain;
+      var cb = n.netMain;
       sb.cost += cb;
+      sb.realized -= n.feeLossMain;
+      totals.realized -= n.feeLossMain;
       sb.fees += n.feeMain;
       totals.invested += cb;
       totals.feesFiat += n.feeMain;
@@ -1242,8 +1260,10 @@ function computePortfolio(allTrades, live, method) {
       var si = stFor(t.accountId, sym);
       si.touched = true;
       si.qty += qi;
-      var ci = n.totalMain + n.feeMain;
+      var ci = n.netMain;
       si.cost += ci;
+      si.realized -= n.feeLossMain;
+      totals.realized -= n.feeLossMain;
       si.income += n.totalMain;
       si.fees += n.feeMain;
       totals.income += n.totalMain;
@@ -1344,7 +1364,7 @@ function computePortfolio(allTrades, live, method) {
         }
       }
       if (hasT || n.feeMain > 0) {
-        var fl = n.totalMain + n.feeMain;
+        var fl = n.netMain + n.feeLossMain;
         se.realized -= fl;
         totals.realized -= fl;
         totals.expensesFiat += fl;
@@ -1364,7 +1384,7 @@ function computePortfolio(allTrades, live, method) {
         : from;
       from.touched = true;
       to.touched = true;
-      var fiatT = n.totalMain + n.feeMain;
+      var fiatT = n.netMain + n.feeLossMain;
       if (isFifo) {
         var heldT = from.queue.reduce(function (s, l) { return s + l.qty; }, 0);
         if (heldT <= LEDGER_EPS) {
@@ -1556,6 +1576,20 @@ function validateTrade(t, heldQty) {
     if (typeof t.fee !== 'number' && typeof t.fee !== 'string') return 'fee must be >= 0';
     var fee = Number(t.fee);
     if (!isFinite(fee) || fee < 0) return 'fee must be >= 0';
+  }
+  // Fee comes out of the total when they share a currency: it cannot exceed
+  // an explicitly stated positive total (standalone fees with no total, and
+  // cross-currency fees, stay allowed).
+  if (t.fee !== undefined && t.fee !== null && String(t.fee).trim() !== '' &&
+      t.total !== undefined && t.total !== null && String(t.total).trim() !== '') {
+    var vFee = Number(t.fee);
+    var vTot = Number(t.total);
+    var tCcy = String(t.currency || '').trim().toUpperCase();
+    var fCcyRaw = String(t.feeCurrency || '').trim().toUpperCase();
+    var fCcy = (fCcyRaw && fCcyRaw !== 'CUSTOM') ? fCcyRaw : tCcy;
+    if (tCcy && fCcy && tCcy === fCcy && isFinite(vTot) && vTot > 0 && isFinite(vFee) && vFee > vTot) {
+      return 'fee cannot exceed total';
+    }
   }
   if (t.networkFee !== undefined && t.networkFee !== null && String(t.networkFee).trim() !== '') {
     if (typeof t.networkFee !== 'number' && typeof t.networkFee !== 'string') return 'network fee must be >= 0';
@@ -3470,13 +3504,13 @@ function tradeBlock(t, main, accountNameById) {
     if (Number(t.networkFee) > 0) box.appendChild(statRow('Network fee', fmtQty(t.networkFee) + ' ' + String(t.symbol || '').toUpperCase(), t.networkFee, false));
     box.appendChild(statRow('Received', fmtQty(netQ) + ' ' + String(t.symbol || '').toUpperCase(), netQ, false));
     if ((Number(t.total) > 0 || Number(t.fee) > 0)) {
-      box.appendChild(statRow('Fiat cost', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+      box.appendChild(statRow('Fiat cost', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
     }
   } else if (t.type === 'income') {
     box.appendChild(statRow('Received', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
     if (Number(t.total) > 0) {
       box.appendChild(statRow('Value', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
-      box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+      box.appendChild(statRow('Converted', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
     } else {
       box.appendChild(statRow('Value', '— (free)', null, false));
     }
@@ -3486,11 +3520,21 @@ function tradeBlock(t, main, accountNameById) {
     }
     if (t.total !== undefined && t.total !== null && String(t.total).trim() !== '' && Number(t.total) > 0) {
       box.appendChild(statRow('Fiat lost', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
-      box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+      box.appendChild(statRow('Converted', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
     }
   } else {
     box.appendChild(statRow('Paid', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
-    box.appendChild(statRow('Converted', fmtMoney(n.totalMain + n.feeMain, main), n.totalMain + n.feeMain, false));
+    box.appendChild(statRow('Converted', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
+    // Two prices when a fee splits them: execution (quoted, reference only)
+    // vs real (net of fee — the one the ledger accounts with).
+    var pq = Number(t.qty);
+    if (n.feeMain > 0 && isFinite(pq) && pq > 0 && n.totalMain > 0) {
+      var symU = String(t.symbol || '').toUpperCase();
+      var execP = n.totalMain / pq;
+      var realP = (t.type === 'sell' ? Math.max(0, n.totalMain - n.feeMain) : n.netMain) / pq;
+      box.appendChild(statRow('Exec. price', fmtMoney(execP, main) + ' / ' + symU, execP, false));
+      box.appendChild(statRow('Real price', fmtMoney(realP, main) + ' / ' + symU, realP, false));
+    }
   }
   var rate = document.createElement('div');
   rate.className = 'stat-row rate-line';
@@ -4554,6 +4598,7 @@ function buildTradeForm() {
     '<p class="fld-hint">On-chain gas / miner fee taken from the moved amount. Tracked as a real loss.</p></div>' +
     '<label for="t-fee">Fee (fiat)</label>' +
     '<input id="t-fee" inputmode="decimal" placeholder="e.g. 0">' +
+    '<p class="fld-hint">If it shares the trade currency, it comes out of the total above.</p>' +
     '<label for="t-feeccy">Fee currency</label>' +
     '<select id="t-feeccy">' + ccyOptions('EUR', false) + '</select>' +
     '<label for="t-note">Note</label>' +

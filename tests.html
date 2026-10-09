@@ -773,6 +773,67 @@
         assert(closed.unrealized === 0, 'closed unrealized should be 0, got ' + closed.unrealized);
         assert(Math.abs(closed.totalPL - 5) < 1e-9, 'closed totalPL should be realized ~5, got ' + closed.totalPL);
       });
+
+      // Fee model: same-currency fee comes out of the total (100 in, 1 fee,
+      // 49.5 held => cost 99, entry 2.0, fee booked as a -1 realized loss).
+      function feeBuy(over) {
+        var t = { id: 'f-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } };
+        for (var k in over) { if (Object.prototype.hasOwnProperty.call(over, k)) t[k] = over[k]; }
+        return t;
+      }
+
+      test('normalizeTrade splits net cost and fee loss', function () {
+        var n = normalizeTrade({ total: 100, fee: 1, currency: 'EUR', feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } });
+        assert(n.totalMain === 100 && n.feeMain === 1, 'raw conversion intact');
+        assert(n.netMain === 99 && n.feeLossMain === 1, 'net/fee split wrong: ' + JSON.stringify(n));
+        var d = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
+        assert(d.netMain === 55 && d.feeLossMain === 0, 'cross-currency fee stays additive: ' + JSON.stringify(d));
+        var c = normalizeTrade({ total: 5, fee: 10, currency: 'EUR', feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } });
+        assert(c.netMain === 0 && c.feeLossMain === 10, 'net cost never negative: ' + JSON.stringify(c));
+      });
+
+      test('fee carved from cost, booked as loss, in both methods', function () {
+        var avg = computeAverage([feeBuy({})]).get('BTC');
+        assert(avg.qty === 49.5, 'avg qty held wrong');
+        assert(Math.abs(avg.avgEntry - 2) < 1e-9, 'avg entry must be the real price 2.0, got ' + avg.avgEntry);
+        assert(avg.realized === -1, 'avg must book the fee as realized loss, got ' + avg.realized);
+        var fifo = computeFifo([feeBuy({})]).get('BTC');
+        assert(fifo.qty === 49.5, 'fifo qty held wrong');
+        assert(Math.abs(fifo.avgEntry - 2) < 1e-9, 'fifo entry must be the real price 2.0, got ' + fifo.avgEntry);
+        assert(fifo.realized === -1, 'fifo must book the fee as realized loss, got ' + fifo.realized);
+      });
+
+      test('selling back at execution price breaks even except the fee', function () {
+        var sell = { id: 'f-b', type: 'sell', symbol: 'BTC', qty: 49.5, total: 99, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } };
+        var avg = computeAverage([feeBuy({}), sell]).get('BTC');
+        assert(avg.qty === 0, 'avg should be closed');
+        assert(avg.realized === -1, 'avg lifetime must be exactly the fee drag, got ' + avg.realized);
+        var fifo = computeFifo([feeBuy({}), sell]).get('BTC');
+        assert(fifo.qty === 0, 'fifo should be closed');
+        assert(fifo.realized === -1, 'fifo lifetime must be exactly the fee drag, got ' + fifo.realized);
+        assert(fifo.lots.length === 1 && fifo.lots[0].gain === 0, 'closing lot must break even, got ' + JSON.stringify(fifo.lots));
+      });
+
+      test('positions show real entry plus fee drag with unknown price', function () {
+        var p = computePositions([feeBuy({})], {}, 'average')[0];
+        assert(p.qtyHeld === 49.5, 'qty changed');
+        assert(Math.abs(p.avgEntry - 2) < 1e-9, 'entry must be the real price, got ' + p.avgEntry);
+        assert(p.livePrice === null && p.marketValue === null && p.unrealized === null, 'unknowns must stay null');
+        assert(p.realized === -1 && p.totalPL === -1, 'fee drag must show with no fake loss, got ' + JSON.stringify(p));
+      });
+
+      test('validateTrade rejects same-currency fee over total', function () {
+        function vt(over) {
+          var t = { type: 'buy', symbol: 'BTC', qty: 1, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR' };
+          for (var k in over) { if (Object.prototype.hasOwnProperty.call(over, k)) t[k] = over[k]; }
+          return validateTrade(t, 0);
+        }
+        assert(vt({}) === null, 'sane fee passes');
+        assert(String(vt({ fee: 120 })).indexOf('fee cannot exceed total') !== -1, 'same-ccy fee over total must reject');
+        assert(vt({ fee: 100 }) === null, 'fee equal to total allowed');
+        assert(vt({ fee: 120, feeCurrency: 'USD' }) === null, 'cross-ccy fee not compared');
+        assert(validateTrade({ type: 'expense', symbol: 'BTC', qty: 1, total: '', fee: 5, currency: 'EUR', feeCurrency: 'EUR', date: '2026-01-01' }) === null, 'standalone fee without total allowed');
+      });
     })();
 
     // === Prices tests (Task 5: mapping/cache only, no network asserts) ===
@@ -1408,6 +1469,30 @@
           route();
           var det = document.getElementById('account-detail');
           assert(det.querySelector('.trade-block') !== null, 'new trade rows should render in the account');
+        });
+
+        test('trade blocks show exec and real prices when a fee splits them', function () {
+          L.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [
+              { id: 'px-acct', name: 'Px BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            trades: [
+              { id: 'px-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', note: '', accountId: 'px-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            priceOverrides: {}
+          });
+          if (typeof init === 'function') init();
+          navTo('px-acct');
+          route();
+          render();
+          var det2 = document.getElementById('account-detail');
+          var execCell = det2.querySelector('[data-label="Exec. price"]');
+          var realCell = det2.querySelector('[data-label="Real price"]');
+          assert(execCell !== null && realCell !== null, 'both price rows should render when a fee is present');
+          assert(Math.abs(Number(execCell.getAttribute('data-value')) - 100 / 49.5) < 1e-9, 'exec price must quote the full total, got ' + execCell.getAttribute('data-value'));
+          assert(Math.abs(Number(realCell.getAttribute('data-value')) - 2) < 1e-9, 'real price must be net of fee, got ' + realCell.getAttribute('data-value'));
+          navHome();
         });
       } finally {
         restoreState();
