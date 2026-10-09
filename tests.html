@@ -1770,7 +1770,7 @@
         });
       });
 
-      test('sync storage never persists a passphrase', function () {
+      test('sync storage keeps passphrase empty unless remembered', function () {
         var backup = null;
         try { backup = localStorage.getItem('inoculens.sync.v1'); } catch (e) { backup = null; }
         try {
@@ -1780,9 +1780,12 @@
           cfg.password = 'pw';
           cfg.rememberPassword = true;
           S.syncSaveConfig(cfg);
-          var raw = '';
-          try { raw = localStorage.getItem('inoculens.sync.v1') || ''; } catch (e) { raw = ''; }
-          assert(raw.indexOf('passphrase') === -1, 'passphrase key must never persist');
+          var stored = S.syncLoadConfig();
+          assert(stored.passphrase === '', 'passphrase must stay empty without opt-in');
+          cfg.rememberPassphrase = true;
+          cfg.passphrase = 'pw-secret';
+          S.syncSaveConfig(cfg);
+          assert(S.syncLoadConfig().passphrase === 'pw-secret', 'opt-in passphrase must persist');
         } finally {
           try {
             if (backup === null) localStorage.removeItem('inoculens.sync.v1');
