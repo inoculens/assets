@@ -442,10 +442,14 @@ function importState(json) {
   // All validation passed — only now replace stored state (never partial).
   // Note: legacy files may carry settings.defaultAccountId; it is ignored.
   var normalizedSettings = normalizeSettings(data.settings, defaultState().settings);
+  var mappedTrades = data.trades.map(normalizeTradeForStore);
+  // Drop quotes baked in the wrong fiat by the pre-fix freezer (exact live
+  // override copies) so imports never reintroduce the nominal lie.
+  try { dropBakedExecLocks(mappedTrades, priceOverrides); } catch (e) { /* repair never breaks import */ }
   var next = {
     settings: normalizedSettings,
     accounts: data.accounts.map(normalizeAccount),
-    trades: data.trades.map(normalizeTradeForStore),
+    trades: mappedTrades,
     priceOverrides: priceOverrides
   };
   saveState(next);
@@ -2315,6 +2319,41 @@ function clearHistCache() {
   } catch (e) { /* ignore */ }
 }
 
+// One-time repair for quotes baked in the wrong fiat: an earlier build
+// stamped the live global override raw under the display main when freezing.
+// A non-manual frozen quote that exactly equals a current global override is
+// such a stamped copy (a genuine market quote never equals a hand-entered
+// number to the cent) — dropping it lets the row fall back to the override
+// itself (still shown while set) or a genuine history refetch. Manual quotes
+// are the user's own words and are never touched. Pure: mutates the passed
+// array, returns true when anything was dropped. Never throws.
+function dropBakedExecLocks(trades, overrides) {
+  var changed = false;
+  try {
+    var ov = (overrides && typeof overrides === 'object' && !Array.isArray(overrides)) ? overrides : {};
+    var keys = Object.keys(ov);
+    (trades || []).forEach(function (t) {
+      if (!t || typeof t !== 'object' || (t.type !== 'buy' && t.type !== 'sell')) return;
+      var fr = null;
+      try { fr = frozenExecOf(t); } catch (e) { fr = null; }
+      if (!fr || String(fr.source).toLowerCase() === 'manual') return;
+      var sym = String((t && t.symbol) || '').toUpperCase();
+      for (var i = 0; i < keys.length; i++) {
+        if (String(keys[i]).toUpperCase() !== sym) continue;
+        var raw = ov[keys[i]];
+        var op = (typeof raw === 'number') ? raw
+          : ((raw && typeof raw === 'object' && !Array.isArray(raw)) ? Number(raw.price) : NaN);
+        if (isFinite(op) && op > 0 && op === fr.price) {
+          try { delete t.execLock; } catch (e) { t.execLock = undefined; }
+          changed = true;
+        }
+        break;
+      }
+    });
+  } catch (e) { /* repair never breaks the run */ }
+  return changed;
+}
+
 // Frozen reference quote stamped on the trade at save time:
 // {price, vs, source}. Extra trade key, ignored by validation/ledger/export
 // shape checks (isValidImportTrade only asserts known fields).
@@ -2621,6 +2660,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.priceOverrideEntry = priceOverrideEntry;
   window.Inoculens.priceOverrideFor = priceOverrideFor;
   window.Inoculens.resolveExecPrice = resolveExecPrice;
+  window.Inoculens.dropBakedExecLocks = dropBakedExecLocks;
 }
 
 // === Ui ===
@@ -7035,6 +7075,7 @@ function init() {
     render();
     return;
   }
+  try { repairBakedExecLocksOnce(); } catch (e) { /* repair never breaks boot */ }
   if (!document.getElementById('accounts')) return;
   buildTopbar();
   buildAccounts();
@@ -7075,6 +7116,21 @@ function init() {
   refreshPrices();
 }
 
+
+// Runs the baked-quote repair once per page load (see dropBakedExecLocks).
+// Later init() calls (tests re-render constantly) must not re-save.
+var execRepairDone = false;
+function repairBakedExecLocksOnce() {
+  if (execRepairDone) return false;
+  execRepairDone = true;
+  var st = null;
+  try { st = loadState(); } catch (e) { return false; }
+  var changed = false;
+  try { changed = dropBakedExecLocks(st.trades, st.priceOverrides); } catch (e) { changed = false; }
+  if (!changed) return false;
+  try { saveStateGuarded(st); } catch (e) { return false; }
+  return true;
+}
 
 // Expose Ui on window.Inoculens for tests.html; init/render are also bare
 // globals (classic script top-level functions) for the DOM checklist.

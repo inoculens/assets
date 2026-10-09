@@ -289,6 +289,29 @@
           }
           assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected imports');
         });
+
+        test('import drops exec quotes baked from a live override', function () {
+          var backup = null;
+          try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+          try {
+            var seed = {
+              settings: { mainCurrency: 'RON', costMethod: 'average' },
+              accounts: [{ id: 'rp-acct', name: 'Rp', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }],
+              trades: [{ id: 'rp-a', type: 'buy', symbol: 'BTC', qty: 1, total: 50, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', accountId: 'rp-acct', fxLock: { pair: 'EUR/RON', rate: 4.97, source: 'ECB-2026-01-01' }, execLock: { price: 84892.65, vs: 'RON', source: 'history' } }],
+              priceOverrides: { BTC: 84892.65 }
+            };
+            var back = importState(exportState(seed));
+            assert(!('execLock' in back.trades[0]), 'baked copy must be repaired on import, got ' + JSON.stringify(back.trades[0].execLock));
+            assert(JSON.stringify(loadState()) === JSON.stringify(back), 'repaired state must persist');
+          } finally {
+            try {
+              if (backup === null) localStorage.removeItem('inoculens.v2');
+              else localStorage.setItem('inoculens.v2', backup);
+            } catch (e) { /* ignore */ }
+            try { render(); } catch (e) { /* ignore */ }
+          }
+        });
+        test('import rejects bad trade shape, state untouched', function () {
           function envelope(trades) {
             return JSON.stringify({ app: 'inoculens-plutus', version: 1, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: trades });
           }
@@ -1230,6 +1253,23 @@
           assert(changed === false, 'nothing to fill');
           assert(calls === 0, 'frozen trades need no network, got ' + calls + ' calls');
         }, function (e) { restore(); throw e; });
+      });
+
+      test('repair drops baked copies, keeps manual and genuine quotes', function () {
+        var H2 = window.Inoculens || {};
+        var tr = [
+          { id: 'a', type: 'buy', symbol: 'BTC', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01', execLock: { price: 84892.65, vs: 'RON', source: 'history' } },
+          { id: 'b', type: 'buy', symbol: 'BTC', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01', execLock: { price: 84892.65, vs: 'EUR', source: 'manual' } },
+          { id: 'c', type: 'buy', symbol: 'BTC', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01', execLock: { price: 70000, vs: 'EUR', source: 'history' } },
+          { id: 'd', type: 'sell', symbol: 'BTC', qty: 1, total: 1, currency: 'EUR', date: '2026-01-01' }
+        ];
+        assert(H2.dropBakedExecLocks(tr, { BTC: 84892.65 }) === true, 'must report the drop');
+        assert(!('execLock' in tr[0]), 'baked copy must go');
+        assert(tr[1].execLock && tr[1].execLock.price === 84892.65, 'manual quote must stay');
+        assert(tr[2].execLock && tr[2].execLock.price === 70000, 'genuine quote must stay');
+        assert(!('execLock' in tr[3]), 'absent stays absent');
+        assert(H2.dropBakedExecLocks(tr, { BTC: 84892.65 }) === false, 'second run must be clean');
+        assert(H2.dropBakedExecLocks(tr, {}) === false, 'no overrides means nothing to do');
       });
     })();
 
