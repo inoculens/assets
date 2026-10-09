@@ -289,8 +289,6 @@
           }
           assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected imports');
         });
-
-        test('import rejects bad trade shape, state untouched', function () {
           function envelope(trades) {
             return JSON.stringify({ app: 'inoculens-plutus', version: 1, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: trades });
           }
@@ -1777,7 +1775,7 @@
               trades: [
                 { id: 'px-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', note: '', accountId: 'px-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, execLock: { price: 90000, vs: 'EUR', source: 'history' }, createdAt: '2026-01-01T00:00:00.000Z' }
               ],
-              priceOverrides: { BTC: 1.5 }
+              priceOverrides: { BTC: { price: 1.5, vs: 'EUR' } }
             });
             try { L2.clearHistCache(); } catch (e) { /* ignore */ }
             if (typeof init === 'function') init();
@@ -1788,7 +1786,7 @@
             var execCell = det2.querySelector('[data-label="Exec. price"]');
             var realCell = det2.querySelector('[data-label="Real price"]');
             assert(execCell !== null && realCell !== null, 'both price rows should render');
-            assert(Number(execCell.getAttribute('data-value')) === 1.5, 'exec must be the manual override (historical wins only without one), got ' + execCell.getAttribute('data-value'));
+            assert(Number(execCell.getAttribute('data-value')) === 1.5, 'exec must be the fiat-tagged override (explicit live intent beats frozen), got ' + execCell.getAttribute('data-value'));
             assert(Math.abs(Number(realCell.getAttribute('data-value')) - 100 / 49.5) < 1e-9, 'real must be the all-in total/qty, got ' + realCell.getAttribute('data-value'));
             var feesLine = det2.querySelector('[data-label="Total fees paid"]');
             assert(feesLine !== null, 'fees must render as a line below the 8-card grid');
@@ -1805,6 +1803,70 @@
               else localStorage.setItem('inoculens.histcache.v1', backupHist);
             } catch (e) { /* ignore */ }
             try { L2.reloadFxCache(); } catch (e) { /* ignore */ }
+            try { L2.reloadHistCache(); } catch (e) { /* ignore */ }
+          }
+        });
+
+        test('frozen quote beats a legacy bare-number override', function () {
+          var L2 = window.Inoculens;
+          var backupFx = null;
+          try { backupFx = localStorage.getItem('inoculens.fxcache.v1'); } catch (e) { backupFx = null; }
+          try {
+            // Legacy bare 1.5 (fiat unknown) must not shadow the frozen 90000 EUR
+            // quote, and must never render nominal in a foreign main.
+            L2.saveState({
+              settings: { mainCurrency: 'EUR', costMethod: 'average' },
+              accounts: [
+                { id: 'lg-acct', name: 'Lg BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              trades: [
+                { id: 'lg-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', note: '', accountId: 'lg-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, execLock: { price: 90000, vs: 'EUR', source: 'history' }, createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              priceOverrides: { BTC: 1.5 }
+            });
+            try { L2.clearHistCache(); } catch (e) { /* ignore */ }
+            if (typeof init === 'function') init();
+            navTo('lg-acct');
+            route();
+            render();
+            var det = document.getElementById('account-detail');
+            var execCell = det.querySelector('[data-label="Exec. price"]');
+            assert(execCell !== null, 'exec row should render');
+            assert(Number(execCell.getAttribute('data-value')) === 90000, 'frozen quote must beat the legacy bare override, got ' + execCell.getAttribute('data-value'));
+            navHome();
+          } finally {
+            try {
+              if (backupFx === null) localStorage.removeItem('inoculens.fxcache.v1');
+              else localStorage.setItem('inoculens.fxcache.v1', backupFx);
+            } catch (e) { /* ignore */ }
+            try { L2.reloadFxCache(); } catch (e) { /* ignore */ }
+            try { L2.reloadHistCache(); } catch (e) { /* ignore */ }
+          }
+        });
+
+        test('legacy bare override alone still serves raw (old behavior)', function () {
+          var L2 = window.Inoculens;
+          try {
+            L2.saveState({
+              settings: { mainCurrency: 'EUR', costMethod: 'average' },
+              accounts: [
+                { id: 'lb-acct', name: 'Lb BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              trades: [
+                { id: 'lb-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', note: '', accountId: 'lb-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              priceOverrides: { BTC: 1.5 }
+            });
+            try { L2.clearHistCache(); } catch (e) { /* ignore */ }
+            if (typeof init === 'function') init();
+            navTo('lb-acct');
+            route();
+            render();
+            var det = document.getElementById('account-detail');
+            var execCell = det.querySelector('[data-label="Exec. price"]');
+            assert(execCell !== null && Number(execCell.getAttribute('data-value')) === 1.5, 'legacy override with no frozen quote must still serve, got ' + (execCell && execCell.getAttribute('data-value')));
+            navHome();
+          } finally {
             try { L2.reloadHistCache(); } catch (e) { /* ignore */ }
           }
         });
@@ -1943,6 +2005,29 @@
             try { L2.reloadFxCache(); } catch (e) { /* ignore */ }
             try { L2.reloadHistCache(); } catch (e) { /* ignore */ }
           }
+        });
+
+        test('settings fiat picker declares a legacy override once', function () {
+          var L2 = window.Inoculens;
+          L2.saveState({
+            settings: { mainCurrency: 'RON', costMethod: 'average' },
+            accounts: [],
+            trades: [],
+            priceOverrides: { BTC: 84892.65 }
+          });
+          if (typeof init === 'function') init();
+          render();
+          var sel = document.querySelector('#o-list [data-override-fiat="BTC"]');
+          assert(sel !== null, 'untagged override must offer a fiat picker');
+          assert(sel.value === '', 'picker must start undeclared, got ' + sel.value);
+          sel.value = 'EUR';
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          var st = L2.loadState();
+          var got = st.priceOverrides && st.priceOverrides.BTC;
+          assert(got && got.price === 84892.65 && got.vs === 'EUR', 'picker must tag the entry fiat, got ' + JSON.stringify(got));
+          var rowText = document.querySelector('#o-list li').textContent;
+          assert(rowText.indexOf('RON') === -1, 'declared entry must not read as RON, got ' + rowText);
+          navHome();
         });
 
         testAsync('submit freezes the exec quote on the saved trade', function () {

@@ -2508,15 +2508,16 @@ function fetchHistoricalPrice(symbol, dateStr, vs, kind) {
   if (!sym || !isValidDateStr(day) || isFutureDateStr(day)) return Promise.resolve(null);
   // (1) Manual override wins — no market network. Legacy bare numbers are
   // denominated in the requested fiat; fiat-tagged overrides convert at the
-  // HISTORICAL rate of the trade date (best effort — raw price fallback).
+  // HISTORICAL rate of the trade date (null when unconvertible — never a
+  // nominal value in the wrong fiat).
   var ovE = null;
   try { ovE = priceOverrideEntry(sym); } catch (e) { ovE = null; }
   if (ovE !== null) {
     if (!ovE.vs || ovE.vs === cur) return Promise.resolve(ovE.price);
     return fetchEcbRate(day, ovE.vs, cur).then(function (r) {
       var v = ovE.price * Number(r.rate);
-      return (isFinite(v) && v > 0) ? v : ovE.price;
-    }, function () { return ovE.price; });
+      return (isFinite(v) && v > 0) ? v : null;
+    }, function () { return null; });
   }
   var kd = (typeof kind === 'string') ? kind.trim().toLowerCase() : '';
   if (kd === 'custom' || kd === 'cash') return Promise.resolve(null);
@@ -2619,6 +2620,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.freezeExecLock = freezeExecLock;
   window.Inoculens.priceOverrideEntry = priceOverrideEntry;
   window.Inoculens.priceOverrideFor = priceOverrideFor;
+  window.Inoculens.resolveExecPrice = resolveExecPrice;
 }
 
 // === Ui ===
@@ -3984,6 +3986,47 @@ function openNoteDialog(text, title) {
   openDialog('note-dialog');
 }
 
+// Resolve the reference Exec quote for a trade row: {price, ccy} or null.
+// Precedence is deliberate: a fiat-tagged global override is explicit live
+// intent and always convertible; a frozen per-trade quote carries its own
+// known fiat and beats a legacy bare-number override (whose fiat is unknown
+// — showing it raw in a foreign main would be a nominal lie); the legacy
+// number still serves when nothing better exists; then async history.
+// Cross-fiat values convert at the trade-date historical rate; when the rate
+// is unavailable the value shows in its OWN fiat, never nominal in the
+// display fiat. Never throws; P&L never reads this (display-only).
+function resolveExecPrice(t, main, kind) {
+  var m = String(main || '').toUpperCase();
+  if (!t || typeof t !== 'object' || !m) return null;
+  function converted(price, vs) {
+    var p = Number(price);
+    var from = String(vs || '').trim().toUpperCase();
+    if (!isFinite(p) || p <= 0 || !/^[A-Z]{2,10}$/.test(from)) return null;
+    if (from === m) return { price: p, ccy: m };
+    var hr = null;
+    try { hr = getCachedRate(t.date, from, m); } catch (e) { hr = null; }
+    if (hr && isFinite(Number(hr.rate)) && Number(hr.rate) > 0) {
+      return { price: p * Number(hr.rate), ccy: m };
+    }
+    return { price: p, ccy: from };
+  }
+  var oe = null;
+  try { oe = priceOverrideEntry(t.symbol); } catch (e) { oe = null; }
+  if (oe !== null && oe.vs) return converted(oe.price, oe.vs);
+  var fr = null;
+  try { fr = frozenExecOf(t); } catch (e) { fr = null; }
+  if (fr) return converted(fr.price, fr.vs);
+  if (oe !== null) {
+    var lp = Number(oe.price);
+    if (isFinite(lp) && lp > 0) return { price: lp, ccy: m }; // legacy bare: old nominal behavior
+    return null;
+  }
+  var hi = null;
+  try { hi = getHistoricalExec(t.symbol, t.date, main, kind); } catch (e) { hi = null; }
+  if (hi && isFinite(Number(hi.price)) && Number(hi.price) > 0) return { price: Number(hi.price), ccy: m };
+  return null;
+}
+
 function tradeBlock(t, main, accountNameById, kind) {
   var n = normalizeTrade(t);
   var box = document.createElement('article');
@@ -4063,61 +4106,16 @@ function tradeBlock(t, main, accountNameById, kind) {
     // at the historical FX rate (or manual rate), divided by qty received —
     // e.g. 50 EUR / 0.00058193 BTC = 85920.99. Shown rounded half-up to 2
     // decimals; the books run on this exact value (== Average entry). Exec is
-    // the reference-only market quote: manual override wins, else the quote
-    // frozen on the trade at save time (converted to the display fiat at the
-    // historical rate), else the legacy async history lookup. It never
+    // the reference-only market quote resolved by resolveExecPrice(); it never
     // touches P&L; "—" only when nothing is known (never 0, never a guess).
     var pq = Number(t.qty);
     if (isFinite(pq) && pq > 0 && n.netMain > 0) {
       var symU = String(t.symbol || '').toUpperCase();
       var realP = n.netMain / pq;
-      var execShown = null;
-      var execCcy = main;
-      var ovEntry = null;
-      try { ovEntry = priceOverrideEntry(t.symbol); } catch (e) { ovEntry = null; }
-      if (ovEntry !== null) {
-        // Manual override wins. Legacy bare numbers are denominated in the
-        // display fiat (old behavior); fiat-tagged overrides convert at the
-        // trade-date historical rate, else show in their own fiat — never a
-        // nominal value mislabeled as converted.
-        if (!ovEntry.vs || ovEntry.vs === main) {
-          execShown = ovEntry.price;
-        } else {
-          var ovRate = null;
-          try { ovRate = getCachedRate(t.date, ovEntry.vs, main); } catch (e) { ovRate = null; }
-          if (ovRate && isFinite(Number(ovRate.rate)) && Number(ovRate.rate) > 0) {
-            execShown = ovEntry.price * Number(ovRate.rate);
-          } else {
-            execShown = ovEntry.price;
-            execCcy = ovEntry.vs;
-          }
-        }
-      } else {
-        var frExec = null;
-        try { frExec = frozenExecOf(t); } catch (e) { frExec = null; }
-        if (frExec) {
-          if (frExec.vs === main) {
-            execShown = frExec.price;
-          } else {
-            var hrExec = null;
-            try { hrExec = getCachedRate(t.date, frExec.vs, main); } catch (e) { hrExec = null; }
-            if (hrExec && isFinite(Number(hrExec.rate)) && Number(hrExec.rate) > 0) {
-              execShown = frExec.price * Number(hrExec.rate);
-            } else {
-              execShown = frExec.price; // conversion pending: show frozen as-stored
-              execCcy = frExec.vs;
-            }
-          }
-        } else {
-          var execInfo = null;
-          try { execInfo = getHistoricalExec(t.symbol, t.date, main, kind); } catch (e) { execInfo = null; }
-          if (execInfo && isFinite(Number(execInfo.price)) && Number(execInfo.price) > 0) {
-            execShown = Number(execInfo.price);
-          }
-        }
-      }
-      if (execShown !== null) {
-        box.appendChild(statRow('Exec. price', fmtMoney(execShown, execCcy) + ' / ' + symU, execShown, false));
+      var ex = null;
+      try { ex = resolveExecPrice(t, main, kind); } catch (e) { ex = null; }
+      if (ex !== null) {
+        box.appendChild(statRow('Exec. price', fmtMoney(ex.price, ex.ccy) + ' / ' + symU, ex.price, false));
       } else {
         box.appendChild(statRow('Exec. price', '—', null, false));
       }
@@ -6513,6 +6511,26 @@ function buildSettings() {
     }
     refreshPrices();
   });
+  // Fiat tag for legacy bare-number overrides (saved before the entry fiat
+  // was recorded): declaring it once converts the override everywhere
+  // instead of reading it nominal in the display fiat.
+  document.getElementById('o-list').addEventListener('change', function (e) {
+    var sel = e && e.target && e.target.closest ? e.target.closest('[data-override-fiat]') : null;
+    if (!sel || !sel.value) return;
+    var sym = sel.getAttribute('data-override-fiat');
+    var vs = String(sel.value).trim().toUpperCase();
+    if (!/^[A-Z]{2,10}$/.test(vs)) return;
+    var st = loadState();
+    if (!st.priceOverrides || typeof st.priceOverrides !== 'object') return;
+    var cur = Object.prototype.hasOwnProperty.call(st.priceOverrides, sym)
+      ? st.priceOverrides[sym] : null;
+    var price = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? Number(cur.price) : Number(cur);
+    if (!isFinite(price) || price <= 0) return;
+    st.priceOverrides[sym] = { price: price, vs: vs };
+    if (!saveStateGuarded(st)) return;
+    clearBanner();
+    refreshPrices(); // re-resolve + repaint with the declared fiat
+  });
   document.getElementById('s-download').addEventListener('click', downloadBackup);
   var csvT = document.getElementById('s-csv-trades');
   if (csvT) csvT.addEventListener('click', downloadTradesCsv);
@@ -6588,6 +6606,24 @@ function syncTopbar(st) {
       var oc = (oe && oe.vs) ? oe.vs : st.settings.mainCurrency;
       label.textContent = sym + ' — ' + fmtMoney(op, oc) + ' ';
       li.appendChild(label);
+      // Untagged legacy entries get a one-time fiat declaration so they
+      // convert instead of reading nominal; tagged ones show their fiat.
+      var fiatSel = document.createElement('select');
+      fiatSel.setAttribute('data-override-fiat', sym);
+      fiatSel.setAttribute('aria-label', 'Fiat for ' + sym + ' override');
+      var ph = document.createElement('option');
+      ph.value = '';
+      ph.textContent = (oe && oe.vs) ? oe.vs : 'fiat…';
+      fiatSel.appendChild(ph);
+      MAIN_CURRENCIES.forEach(function (code) {
+        if (oe && oe.vs === code) return; // already shown as the current label
+        var o = document.createElement('option');
+        o.value = code;
+        o.textContent = code;
+        fiatSel.appendChild(o);
+      });
+      li.appendChild(fiatSel);
+      li.appendChild(document.createTextNode(' '));
       var rm = document.createElement('button');
       rm.type = 'button';
       rm.textContent = 'Remove';
