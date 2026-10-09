@@ -2111,6 +2111,7 @@
           assert(document.getElementById('sy-status').classList.contains('sync-live'), 'green indicator once established');
           S.syncDisconnect();
           assert(document.getElementById('sy-connect').disabled === false, 'connect back after disconnect');
+          assert(document.getElementById('tb-sync').hidden === true, 'header icon hides on disconnect');
         } finally {
           try {
             if (sy === null) localStorage.removeItem('inoculens.sync.v1');

@@ -8388,6 +8388,7 @@ function syncDisconnect() {
   var rememberPassBox = (typeof document !== 'undefined') ? document.getElementById('sy-remember-pass') : null;
   if (rememberPassBox) rememberPassBox.checked = false;
   syncRefreshSyncPanel();
+  try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
   clearBanner();
 }
 
@@ -8540,6 +8541,7 @@ function buildSyncSettings() {
     var cfg = syncReadForm().cfg;
     syncSaveConfig(cfg);
     syncRefreshSyncPanel();
+    try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
   });
   var autoBox = document.getElementById('sy-auto');
   if (autoBox && !autoBox.getAttribute('data-wired')) {
