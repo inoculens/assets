@@ -8541,6 +8541,19 @@ function buildSyncSettings() {
     syncSaveConfig(cfg);
     syncRefreshSyncPanel();
   });
+  var autoBox = document.getElementById('sy-auto');
+  if (autoBox && !autoBox.getAttribute('data-wired')) {
+    autoBox.setAttribute('data-wired', '1');
+    autoBox.addEventListener('change', function () {
+      var cfg = syncReadForm().cfg;
+      syncSaveConfig(cfg);
+      syncRefreshSyncPanel();
+      if (autoBox.checked) {
+        syncSetStatus('Auto-sync on — changes upload a few seconds after you make them.');
+      }
+      try { syncScheduleAuto(); } catch (e) { /* ignore */ }
+    });
+  }
   var passEl = document.getElementById('sy-pass');
   if (passEl) {
     passEl.addEventListener('input', function () {

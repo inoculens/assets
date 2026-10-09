@@ -2309,6 +2309,29 @@
         });
       });
 
+      test('sync auto checkbox persists on toggle', function () {
+        var sy = null;
+        try { sy = localStorage.getItem('inoculens.sync.v1'); } catch (e) { sy = null; }
+        try {
+          if (typeof init === 'function') init();
+          try { localStorage.removeItem('inoculens.sync.v1'); } catch (e) { /* ignore */ }
+          var box = document.getElementById('sy-auto');
+          assert(box, 'auto checkbox missing');
+          box.checked = true;
+          box.dispatchEvent(new Event('change', { bubbles: true }));
+          assert(S.syncLoadConfig().autoSync === true, 'ticking must persist immediately');
+          box.checked = false;
+          box.dispatchEvent(new Event('change', { bubbles: true }));
+          assert(S.syncLoadConfig().autoSync === false, 'unticking must persist immediately');
+        } finally {
+          try {
+            if (sy === null) localStorage.removeItem('inoculens.sync.v1');
+            else localStorage.setItem('inoculens.sync.v1', sy);
+          } catch (e) { /* ignore */ }
+          try { S.syncRefreshSyncPanel(); } catch (e) { /* ignore */ }
+        }
+      });
+
       test('modal-born errors die with the dialog; page errors return', function () {
         if (typeof init === 'function') init();
         ['trade-dialog', 'account-dialog', 'confirm-dialog', 'note-dialog', 'error-dialog', 'color-dialog'].forEach(function (id) {
