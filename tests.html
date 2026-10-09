@@ -2092,7 +2092,7 @@
           var top = rows[0].offsetTop;
           Array.prototype.forEach.call(rows, function (r) {
             assert(r.offsetTop === top, 'fact wrapped to a second line: ' + r.getAttribute('data-label'));
-            assert(window.getComputedStyle(r).flexGrow === '1', 'fact cells must share the row equally, no trailing dead space: ' + r.getAttribute('data-label'));
+            assert(window.getComputedStyle(r).flexGrow === '0', 'fact cells size to content, never stretch: ' + r.getAttribute('data-label'));
           });
           var noteVal = document.querySelector('#account-detail [data-label="Note"] .stat-val');
           assert(noteVal && noteVal.scrollWidth > noteVal.clientWidth + 1, 'long note must trim inside the single line');
@@ -2125,6 +2125,7 @@
           render();
           var rateRow = document.querySelector('#account-detail .trade-block .trade-facts > .stat-row.rate-line');
           assert(rateRow !== null, 'rate row should render');
+          assert(rateRow.offsetWidth < 100, 'short rate stays content-sized, never stretched, got ' + rateRow.offsetWidth + 'px');
           var rows = document.querySelectorAll('#account-detail .trade-block .trade-facts > .stat-row');
           var top = rows[0].offsetTop;
           Array.prototype.forEach.call(rows, function (r) {
@@ -2132,7 +2133,7 @@
           });
           if (window.innerWidth > 720) {
             Array.prototype.forEach.call(rows, function (r) {
-              assert(window.getComputedStyle(r).flexGrow === '1', 'fact cells must share the row equally: ' + r.getAttribute('data-label'));
+              assert(window.getComputedStyle(r).flexGrow === '0', 'fact cells size to content, never stretch: ' + r.getAttribute('data-label'));
             });
             var facts = document.querySelector('#account-detail .trade-block .trade-facts');
             assert(facts !== null, 'facts strip should render');
