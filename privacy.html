@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Privacy Policy — INOCULENS PLUTUS</title>
+  <meta name="description" content="Privacy policy for INOCULENS PLUTUS, a local-first portfolio tracker. No account, no server, no tracking: your data stays in your browser.">
+  <link rel="canonical" href="https://plutus.inoculens.com/privacy.html">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #07080b;
+      color: #f4f1e8;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+    main { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    a { color: #e3c57c; }
+    h1 { font-size: 1.9rem; letter-spacing: -0.02em; margin: 0 0 0.4rem; }
+    h2 { font-size: 1.15rem; margin: 2rem 0 0.6rem; }
+    p, li { color: #d8d4c8; }
+    .muted { color: #9aa3b2; }
+    ul { padding-left: 1.3rem; }
+    li { margin: 0.35rem 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em; color: #e3c57c; }
+    .back { display: inline-block; margin-bottom: 1.5rem; font-size: 0.93rem; }
+    footer { border-top: 1px solid rgba(255,255,255,0.07); padding: 1.4rem 1.25rem 2.5rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="/">‹ Back to Plutus</a>
+    <h1>Privacy Policy</h1>
+    <p class="muted">INOCULENS PLUTUS — effective 9 October 2026.</p>
+
+    <h2>The short version</h2>
+    <p>Plutus is a <strong>local-first</strong> portfolio tracker. There is no Plutus server, no account, no analytics and no tracking. Your portfolio lives only in your browser's local storage. Market prices come from public price services. If you enable sync, an <strong>encrypted</strong> copy is stored on a cloud drive <strong>you</strong> choose — and only you hold the passphrase that can decrypt it.</p>
+
+    <h2>Who we are</h2>
+    <p>Data controller: INOCULENS PLUTUS. Contact: <a href="mailto:dev@sebastian.ghiveci.com">dev@sebastian.ghiveci.com</a>.</p>
+
+    <h2>Data we store about you: none</h2>
+    <p>We operate no database and receive no data from the app. Everything below stays on your device unless you actively send it somewhere yourself:</p>
+    <ul>
+      <li><strong>Portfolio data</strong> — accounts, trades, settings and price overrides, kept in your browser's local storage so the app works offline and privately.</li>
+      <li><strong>Sync configuration</strong> — only if you use sync: which provider you chose, filenames, and sign-in tokens. Your sync <strong>passphrase is never stored anywhere</strong>.</li>
+      <li><strong>Price cache</strong> — recent market prices and currency rates, to limit network requests.</li>
+      <li><strong>Backup files</strong> — only where you choose to download or upload them.</li>
+    </ul>
+
+    <h2>Others who process data when you use the app</h2>
+    <ul>
+      <li><strong>Hosting (Netlify).</strong> This page and the app are static files. Like any web host, Netlify sees standard server logs (IP address, user agent, timestamps).</li>
+      <li><strong>Price services.</strong> To show live values the app queries public market data: CoinGecko (coin + currency), Frankfurter/ECB rates (currency pair + date) and Stooq (stock symbol). These are market-data lookups only — your portfolio is never sent. These services see your IP address like any website you visit; their own privacy policies apply.</li>
+      <li><strong>Fonts.</strong> The app loads its typefaces from Google Fonts.</li>
+      <li><strong>Sync destinations — only if you enable sync.</strong> Google Drive, Dropbox, OneDrive, MEGA object storage or your own WebDAV server receive a single file encrypted with AES-256-GCM. The provider <strong>cannot read it</strong>: decryption happens only in your browser with your passphrase, which is never transmitted or stored. Google's sign-in helper script loads only at the moment you press Connect.</li>
+      <li><strong>Sign-in providers.</strong> When you connect a drive, Google, Dropbox or Microsoft verify your identity for <em>your</em> drive. Plutus receives only access tokens, which stay in your browser.</li>
+    </ul>
+
+    <h2>Why each drive permission is needed</h2>
+    <ul>
+      <li><strong>Google Drive (<code>drive.file</code>):</strong> access only to files the Plutus app itself created — your other Drive files stay invisible to it.</li>
+      <li><strong>Dropbox (app folder):</strong> an isolated app folder Plutus can read and write; the rest of your Dropbox is untouched.</li>
+      <li><strong>OneDrive (app folder + staying signed in):</strong> a private app folder, plus the standard permission that lets the app refresh its own sign-in without asking you every hour.</li>
+    </ul>
+
+    <h2>How sync encryption works</h2>
+    <p>Before anything leaves your browser, your portfolio is encrypted with AES-256-GCM, with the key derived from your passphrase via PBKDF2-SHA256 (600,000 rounds) and a fresh random salt and nonce on every upload. A wrong passphrase or a tampered file fails closed — nothing is decrypted, nothing is overwritten. There is no recovery: if you lose the passphrase, the encrypted copy cannot be opened by anyone, including us.</p>
+
+    <h2>Your rights (including GDPR)</h2>
+    <p>Legal bases: your consent for optional features such as sync, and our legitimate interest in serving a secure static site. Because we hold no data about you server-side:</p>
+    <ul>
+      <li><strong>Access / portability:</strong> use Download backup and the CSV exports inside the app at any time.</li>
+      <li><strong>Erasure:</strong> use Clear all data in Settings (Danger zone), delete any drive copies, and revoke the app's access in your Google/Dropbox/Microsoft account settings.</li>
+      <li><strong>Objection / restriction:</strong> stop using sync (Disconnect) or stop using the app; without local data there is nothing to process.</li>
+      <li>To exercise any right against us directly, contact us at the address above — though in practice there is nothing for us to hand over or delete.</li>
+    </ul>
+
+    <h2>Retention</h2>
+    <p>We retain nothing. Data in your browser persists until you clear it; drive copies persist until you delete them; host server logs follow our hosting provider's retention.</p>
+
+    <h2>Security</h2>
+    <p>All traffic uses TLS. Sync payloads are end-to-end encrypted as described above. Sign-in tokens live in your browser's storage, so the security of your device and browser profile matters — on a shared device, prefer private browsing and do not tick "remember".</p>
+
+    <h2>Children</h2>
+    <p>Plutus is a general finance utility not directed at children under 16.</p>
+
+    <h2>Changes</h2>
+    <p>If this policy changes materially, the updated version will be posted here with a new effective date.</p>
+  </main>
+  <footer>
+    <span class="muted">INOCULENS <strong>PLUTUS</strong> · Private · Local-first · No account, no server</span>
+  </footer>
+</body>
+</html>
