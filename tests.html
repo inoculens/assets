@@ -273,6 +273,23 @@
           assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected import');
         });
 
+        test('fiat-tagged priceOverrides round-trip, bad shapes reject', function () {
+          var s = { settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [], priceOverrides: { BTC: { price: 84892.65, vs: 'EUR' }, ETH: 3000.5 } };
+          var out = JSON.parse(exportState(s));
+          assert(JSON.stringify(out.priceOverrides) === JSON.stringify(s.priceOverrides), 'envelope dropped tagged overrides');
+          try { localStorage.removeItem('inoculens.v2'); } catch (e) { /* ignore */ }
+          var back = importState(JSON.stringify(out));
+          assert(JSON.stringify(back.priceOverrides) === JSON.stringify(s.priceOverrides), 'tagged overrides must survive round-trip');
+          var before = loadState();
+          var badShapes = [{ price: -1, vs: 'EUR' }, { price: 1 }, { price: 1, vs: 'xx!' }, { price: 'high', vs: 'EUR' }, [1]];
+          for (var i = 0; i < badShapes.length; i++) {
+            var bad = JSON.stringify({ app: 'inoculens-plutus', version: 2, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, accounts: [], trades: [], priceOverrides: { BTC: badShapes[i] } });
+            try { importState(bad); assert(false, 'should have thrown for bad shape ' + i); }
+            catch (e) { assert(true); }
+          }
+          assert(JSON.stringify(loadState()) === JSON.stringify(before), 'state changed after rejected imports');
+        });
+
         test('import rejects bad trade shape, state untouched', function () {
           function envelope(trades) {
             return JSON.stringify({ app: 'inoculens-plutus', version: 1, exportedAt: '2026-01-01T00:00:00.000Z', settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: trades });
@@ -929,6 +946,26 @@
           restore();
           assert(p === null, 'unknown symbol should be null, got ' + p);
           assert(called === 0, 'unknown symbol must not hit network');
+        }, function (e) { restore(); throw e; });
+      });
+
+      testAsync('tagged override converts at the current rate, null when unreachable', function () {
+        var origFetch = window.fetch;
+        setState({ settings: { mainCurrency: 'RON', costMethod: 'average' }, trades: [], priceOverrides: { BTC: { price: 84892.65, vs: 'EUR' } } });
+        clearPriceCache();
+        window.fetch = function (url) {
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ rates: { RON: 5 } }); } });
+        };
+        function restore() { window.fetch = origFetch; restoreState(); }
+        return fetchLivePrice('BTC', 'RON').then(function (p) {
+          assert(Math.abs(p - 84892.65 * 5) < 1e-6, 'tagged override must convert EUR->RON at the current rate, got ' + p);
+          setState({ settings: { mainCurrency: 'RON', costMethod: 'average' }, trades: [], priceOverrides: { BTC: { price: 84892.65, vs: 'EUR' } } });
+          clearPriceCache();
+          window.fetch = function () { return Promise.reject(new Error('offline')); };
+          return fetchLivePrice('BTC', 'RON');
+        }).then(function (p2) {
+          restore();
+          assert(p2 === null, 'unconvertible tagged override must resolve unknown, never mislabeled, got ' + p2);
         }, function (e) { restore(); throw e; });
       });
 
@@ -1847,6 +1884,64 @@
               else localStorage.setItem('inoculens.fxcache.v1', backupFx);
             } catch (e) { /* ignore */ }
             try { L2.reloadFxCache(); } catch (e) { /* ignore */ }
+          }
+        });
+
+        test('tagged override converts exec at the historical rate, else keeps its fiat', function () {
+          var L2 = window.Inoculens;
+          var origFetch = window.fetch;
+          var backupFx = null;
+          try { backupFx = localStorage.getItem('inoculens.fxcache.v1'); } catch (e) { backupFx = null; }
+          function seed(main) {
+            L2.saveState({
+              settings: { mainCurrency: main, costMethod: 'average' },
+              accounts: [
+                { id: 'ov-acct', name: 'Ov BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              trades: [
+                { id: 'ov-a', type: 'buy', symbol: 'BTC', qty: 0.00058193, total: 50, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'ov-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              priceOverrides: { BTC: { price: 84892.65, vs: 'EUR' } }
+            });
+          }
+          try {
+            // Converted case: historical EUR->RON cached.
+            seed('RON');
+            try { L2.clearHistCache(); } catch (e) { /* ignore */ }
+            L2.cacheRate('2026-01-01', 'EUR', 'RON', 4.97, 'ECB-2026-01-01');
+            window.fetch = function (url) {
+              if (String(url).indexOf('simple/price') !== -1) {
+                return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ bitcoin: { usd: 100000 } }); } });
+              }
+              return Promise.reject(new Error('offline'));
+            };
+            if (typeof init === 'function') init();
+            navTo('ov-acct');
+            route();
+            render();
+            var det = document.getElementById('account-detail');
+            var execCell = det.querySelector('[data-label="Exec. price"]');
+            assert(execCell !== null, 'exec row should render');
+            assert(Math.abs(Number(execCell.getAttribute('data-value')) - 84892.65 * 4.97) < 1e-6, 'exec must convert EUR->RON at the historical rate, got ' + execCell.getAttribute('data-value'));
+            assert(execCell.textContent.indexOf('RON') !== -1, 'converted exec must read in RON, got ' + execCell.textContent);
+            // Fallback case: rate unreachable — original fiat, never nominal RON.
+            try { L2.clearFxCache(); } catch (e) { /* ignore */ }
+            window.fetch = function () { return Promise.reject(new Error('offline')); };
+            render();
+            var det2 = document.getElementById('account-detail');
+            var execCell2 = det2.querySelector('[data-label="Exec. price"]');
+            assert(execCell2 !== null, 'exec row should still render');
+            assert(Number(execCell2.getAttribute('data-value')) === 84892.65, 'fallback must keep the raw override value, got ' + execCell2.getAttribute('data-value'));
+            assert(execCell2.textContent.indexOf('RON') === -1, 'fallback must not pose as RON, got ' + execCell2.textContent);
+            navHome();
+          } finally {
+            window.fetch = origFetch;
+            try {
+              if (backupFx === null) localStorage.removeItem('inoculens.fxcache.v1');
+              else localStorage.setItem('inoculens.fxcache.v1', backupFx);
+            } catch (e) { /* ignore */ }
+            try { L2.reloadFxCache(); } catch (e) { /* ignore */ }
+            try { L2.reloadHistCache(); } catch (e) { /* ignore */ }
           }
         });
 

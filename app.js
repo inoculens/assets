@@ -332,11 +332,21 @@ function normalizeTradeForStore(t) {
   return c;
 }
 
+function isValidOverrideValue(v) {
+  if (typeof v === 'number') return isFinite(v) && v > 0;
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    // Fiat-tagged form {price, vs}: the fiat the manual price was entered in.
+    return typeof v.price === 'number' && isFinite(v.price) && v.price > 0 &&
+      typeof v.vs === 'string' && /^[A-Z]{2,10}$/.test(v.vs.trim().toUpperCase());
+  }
+  return false;
+}
+
 function isValidPriceOverrides(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   var keys = Object.keys(v);
   for (var i = 0; i < keys.length; i++) {
-    if (typeof v[keys[i]] !== 'number' || !isFinite(Number(v[keys[i]])) || Number(v[keys[i]]) <= 0) return false;
+    if (!isValidOverrideValue(v[keys[i]])) return false;
   }
   return true;
 }
@@ -771,10 +781,14 @@ function displayPairs(trades, main) {
     if (isFinite(feeN) && feeN > 0 && fc && fc !== c) need(d, fc);
     // Frozen exec quote in another fiat needs its own historical rate to
     // render in the current main (deduped by `seen` when it matches a leg).
+    // Same for a fiat-tagged manual override (Exec falls back to it).
     if (t.type === 'buy' || t.type === 'sell') {
       var fr = null;
       try { fr = frozenExecOf(t); } catch (e) { fr = null; }
       if (fr && fr.vs && fr.vs !== m) need(d, fr.vs);
+      var oe = null;
+      try { oe = priceOverrideEntry(t.symbol); } catch (e) { oe = null; }
+      if (oe && oe.vs && oe.vs !== m) need(d, oe.vs);
     }
   });
   return out;
@@ -1833,6 +1847,15 @@ function priceCacheKey(symbol, vs) {
 }
 
 function priceOverrideFor(symbol) {
+  var e = null;
+  try { e = priceOverrideEntry(symbol); } catch (err) { e = null; }
+  return e ? e.price : null;
+}
+
+// Raw override entry with its fiat: {price, vs} where vs is null for legacy
+// bare numbers (fiat unknown — treated as the requested fiat, exactly the
+// old behavior). New saves always tag the fiat they were entered in.
+function priceOverrideEntry(symbol) {
   var sym = String(symbol).trim().toUpperCase();
   var ov = null;
   try {
@@ -1842,17 +1865,23 @@ function priceOverrideFor(symbol) {
     ov = null;
   }
   if (!ov || typeof ov !== 'object') return null;
+  var raw = null;
   if (Object.prototype.hasOwnProperty.call(ov, sym)) {
-    var v = Number(ov[sym]);
-    if (typeof ov[sym] === 'number' && isFinite(v) && v > 0) return v;
-  }
-  // Tolerate differently-cased keys without touching stored data.
-  var keys = Object.keys(ov);
-  for (var i = 0; i < keys.length; i++) {
-    if (String(keys[i]).toUpperCase() === sym) {
-      var w = Number(ov[keys[i]]);
-      if (typeof ov[keys[i]] === 'number' && isFinite(w) && w > 0) return w;
+    raw = ov[sym];
+  } else {
+    // Tolerate differently-cased keys without touching stored data.
+    var keys = Object.keys(ov);
+    for (var i = 0; i < keys.length; i++) {
+      if (String(keys[i]).toUpperCase() === sym) { raw = ov[keys[i]]; break; }
     }
+  }
+  if (typeof raw === 'number') {
+    return (isFinite(raw) && raw > 0) ? { price: raw, vs: null } : null;
+  }
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    var p = Number(raw.price);
+    var vs = (typeof raw.vs === 'string') ? raw.vs.trim().toUpperCase() : '';
+    if (isFinite(p) && p > 0 && /^[A-Z]{2,10}$/.test(vs)) return { price: p, vs: vs };
   }
   return null;
 }
@@ -2032,22 +2061,38 @@ function fetchLivePrice(symbol, vs, kind) {
   cur = String(cur).trim().toUpperCase();
   if (MAIN_CURRENCIES.indexOf(cur) === -1 && ['USDC', 'USDT', 'DAI'].indexOf(cur) === -1) cur = 'EUR';
   var curLow = String(cur).toLowerCase();
-  // (1) Manual override wins — no network.
-  var override = priceOverrideFor(sym);
-  if (override !== null) return Promise.resolve(override);
+  // (2) Fresh cache (60s) avoids network.
+  var key = priceCacheKey(sym, cur);
+  var now = Date.now();
+  var cached = priceCache[key];
+  // (1) Manual override wins — no market network. A legacy bare number is
+  // denominated in the requested fiat (old behavior); a fiat-tagged override
+  // converts at the CURRENT rate (it stands in for the live price), and
+  // resolves unknown — never mislabeled — when conversion fails.
+  var ovEntry = null;
+  try { ovEntry = priceOverrideEntry(sym); } catch (e) { ovEntry = null; }
+  if (ovEntry !== null) {
+    if (!ovEntry.vs || ovEntry.vs === cur) return Promise.resolve(ovEntry.price);
+    var ovCached = priceCache[key];
+    return fetchEcbRate(todayStr(), ovEntry.vs, cur).then(function (r) {
+      var v = ovEntry.price * Number(r.rate);
+      if (!isFinite(v) || v <= 0) {
+        if (ovCached && isFinite(Number(ovCached.price)) && Number(ovCached.price) > 0) return Number(ovCached.price);
+        return null;
+      }
+      priceCache[key] = { price: v, at: Date.now() };
+      return v;
+    }, function () {
+      if (ovCached && isFinite(Number(ovCached.price)) && Number(ovCached.price) > 0) return Number(ovCached.price);
+      return null;
+    });
+  }
   var kd = (typeof kind === 'string') ? kind.trim().toLowerCase() : '';
   if (kd === 'stock') return fetchStockPrice(sym, cur);
   if (kd === 'custom' || kd === 'cash') return Promise.resolve(null);
   // (3a) Unknown ticker: null immediately, never throws, no network.
   var id = SYMBOL_MAP[sym];
   if (!id) return Promise.resolve(null);
-  // (2) Fresh cache (60s) avoids network.
-  var key = priceCacheKey(sym, cur);
-  var now = Date.now();
-  var cached = priceCache[key];
-  if (cached && (now - cached.at) < PRICE_CACHE_TTL_MS && isFinite(Number(cached.price)) && Number(cached.price) > 0) {
-    return Promise.resolve(Number(cached.price));
-  }
   var url = 'https://api.coingecko.com/api/v3/simple/price?ids=' +
     encodeURIComponent(id) + '&vs_currencies=' + encodeURIComponent(curLow);
   // Hermetic async: capture fetch at call time so a later stub restore
@@ -2125,10 +2170,19 @@ function refreshAllPrices(symbols, vs, kinds) {
   var errors = {};
   var crypto = [];
   var stocks = [];
+  var ovConvJobs = [];
   uniq.forEach(function (sym) {
-    // Manual override wins — no network, never an error.
-    var ov = priceOverrideFor(sym);
-    if (ov !== null) { out[sym] = ov; return; }
+    // Manual override wins — no market network. Legacy bare numbers are
+    // denominated in the requested fiat; fiat-tagged overrides convert at the
+    // current rate (or resolve unknown when conversion fails — never
+    // mislabeled).
+    var ovE = null;
+    try { ovE = priceOverrideEntry(sym); } catch (e) { ovE = null; }
+    if (ovE !== null) {
+      if (!ovE.vs || ovE.vs === cur) { out[sym] = ovE.price; return; }
+      ovConvJobs.push({ sym: sym, price: ovE.price, vs: ovE.vs });
+      return;
+    }
     var kd = (typeof kindFor(sym) === 'string') ? kindFor(sym).trim().toLowerCase() : '';
     if (kd === 'stock') { stocks.push(sym); return; }
     if (kd === 'custom' || kd === 'cash') {
@@ -2146,6 +2200,29 @@ function refreshAllPrices(symbols, vs, kinds) {
     crypto.push(sym);
   });
   var jobs = [];
+  if (ovConvJobs.length) {
+    jobs.push(Promise.all(ovConvJobs.map(function (j) {
+      return fetchEcbRate(todayStr(), j.vs, cur).then(function (r) {
+        var v = j.price * Number(r.rate);
+        if (isFinite(v) && v > 0) {
+          out[j.sym] = v;
+          priceCache[priceCacheKey(j.sym, cur)] = { price: v, at: Date.now() };
+        } else {
+          out[j.sym] = null;
+          errors[j.sym] = 'manual override could not convert to ' + cur + ' — try a manual override in ' + cur + ' under Settings';
+        }
+        return true;
+      }, function () {
+        var c = priceCache[priceCacheKey(j.sym, cur)];
+        if (c && isFinite(Number(c.price)) && Number(c.price) > 0) out[j.sym] = Number(c.price);
+        else {
+          out[j.sym] = null;
+          errors[j.sym] = 'manual override unreachable in ' + cur + ' (ECB) — try a manual override in ' + cur + ' under Settings';
+        }
+        return false;
+      });
+    })).then(function () { /* mapped into out/errors above */ }));
+  }
   if (crypto.length) {
     jobs.push(fetchBatchPrices(crypto, cur).then(function (res) {
       Object.keys(res.prices).forEach(function (k) { out[k] = res.prices[k]; });
@@ -2246,7 +2323,8 @@ function frozenExecOf(t) {
 // Fetch-once patch for trades saved without a frozen quote (history fetch
 // failed at save, or a pre-freeze legacy trade being edited). Never blocks
 // saving and never throws: on failure the legacy async display path keeps
-// serving the row (override → hist cache → network → "—").
+// serving the row (override → frozen → hist cache → network → "—").
+// A fiat-tagged manual override freezes verbatim (no fetch, no conversion).
 function freezeExecLock(tradeId, symbol, date, mainU, kind) {
   var sym = String(symbol || '').trim().toUpperCase();
   var day = (typeof date === 'string') ? date.slice(0, 10) : '';
@@ -2255,25 +2333,31 @@ function freezeExecLock(tradeId, symbol, date, mainU, kind) {
   if (!tradeId || !sym || !isValidDateStr(day)) return;
   if (kd === 'custom' || kd === 'cash') return;
   if (kd !== 'stock' && !SYMBOL_MAP[sym]) return;
-  fetchHistoricalPrice(sym, day, m, kd).then(function (r) {
-    var price = (r && typeof r === 'object') ? r.price : r;
+  function patch(price, vs, source) {
     if (!(isFinite(Number(price)) && Number(price) > 0)) return;
+    if (!/^[A-Z]{2,10}$/.test(String(vs || ''))) return;
     var st = null;
     try { st = loadState(); } catch (e) { return; }
     var found = false;
     (st.trades || []).forEach(function (t) {
       if (t && t.id === tradeId && !frozenExecOf(t)) {
-        t.execLock = {
-          price: Number(price),
-          vs: m,
-          source: (r && typeof r === 'object' && r.day) ? ('Stooq-' + r.day) : 'history'
-        };
+        t.execLock = { price: Number(price), vs: String(vs).toUpperCase(), source: String(source || '') };
         found = true;
       }
     });
     if (!found) return;
     try { saveStateGuarded(st); } catch (e) { return; }
     try { render(); } catch (e) { /* paint stays, next render picks it up */ }
+  }
+  var oe = null;
+  try { oe = priceOverrideEntry(sym); } catch (e) { oe = null; }
+  if (oe !== null && oe.vs) {
+    patch(oe.price, oe.vs, 'manual'); // tagged override: exact fiat, no fetch
+    return;
+  }
+  fetchHistoricalPrice(sym, day, m, kd).then(function (r) {
+    var price = (r && typeof r === 'object') ? r.price : r;
+    patch(price, m, (r && typeof r === 'object' && r.day) ? ('Stooq-' + r.day) : 'history');
   }, function () { /* legacy async display path covers the row */ });
 }
 
@@ -2392,8 +2476,18 @@ function fetchHistoricalPrice(symbol, dateStr, vs, kind) {
   var day = (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateStr)) ? dateStr.slice(0, 10) : '';
   var cur = String(priceDefaultVs(vs)).trim().toUpperCase();
   if (!sym || !isValidDateStr(day) || isFutureDateStr(day)) return Promise.resolve(null);
-  // (1) Manual override wins — no network.
-  if (priceOverrideFor(sym) !== null) return Promise.resolve(priceOverrideFor(sym));
+  // (1) Manual override wins — no market network. Legacy bare numbers are
+  // denominated in the requested fiat; fiat-tagged overrides convert at the
+  // HISTORICAL rate of the trade date (best effort — raw price fallback).
+  var ovE = null;
+  try { ovE = priceOverrideEntry(sym); } catch (e) { ovE = null; }
+  if (ovE !== null) {
+    if (!ovE.vs || ovE.vs === cur) return Promise.resolve(ovE.price);
+    return fetchEcbRate(day, ovE.vs, cur).then(function (r) {
+      var v = ovE.price * Number(r.rate);
+      return (isFinite(v) && v > 0) ? v : ovE.price;
+    }, function () { return ovE.price; });
+  }
   var kd = (typeof kind === 'string') ? kind.trim().toLowerCase() : '';
   if (kd === 'custom' || kd === 'cash') return Promise.resolve(null);
   if (kd === 'stock') return fetchHistoricalStockPrice(sym, day, cur);
@@ -2490,6 +2584,8 @@ if (typeof window !== 'undefined') {
   window.Inoculens.roundHalfUp2 = roundHalfUp2;
   window.Inoculens.frozenExecOf = frozenExecOf;
   window.Inoculens.freezeExecLock = freezeExecLock;
+  window.Inoculens.priceOverrideEntry = priceOverrideEntry;
+  window.Inoculens.priceOverrideFor = priceOverrideFor;
 }
 
 // === Ui ===
@@ -3944,10 +4040,25 @@ function tradeBlock(t, main, accountNameById, kind) {
       var realP = n.netMain / pq;
       var execShown = null;
       var execCcy = main;
-      var ovExec = null;
-      try { ovExec = priceOverrideFor(t.symbol); } catch (e) { ovExec = null; }
-      if (ovExec !== null) {
-        execShown = ovExec;
+      var ovEntry = null;
+      try { ovEntry = priceOverrideEntry(t.symbol); } catch (e) { ovEntry = null; }
+      if (ovEntry !== null) {
+        // Manual override wins. Legacy bare numbers are denominated in the
+        // display fiat (old behavior); fiat-tagged overrides convert at the
+        // trade-date historical rate, else show in their own fiat — never a
+        // nominal value mislabeled as converted.
+        if (!ovEntry.vs || ovEntry.vs === main) {
+          execShown = ovEntry.price;
+        } else {
+          var ovRate = null;
+          try { ovRate = getCachedRate(t.date, ovEntry.vs, main); } catch (e) { ovRate = null; }
+          if (ovRate && isFinite(Number(ovRate.rate)) && Number(ovRate.rate) > 0) {
+            execShown = ovEntry.price * Number(ovRate.rate);
+          } else {
+            execShown = ovEntry.price;
+            execCcy = ovEntry.vs;
+          }
+        }
       } else {
         var frExec = null;
         try { frExec = frozenExecOf(t); } catch (e) { frExec = null; }
@@ -5440,7 +5551,7 @@ function onTradeSubmit(ev) {
       if (manualPrice !== null) {
         st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
         // manual live price applies to the received asset
-        st.priceOverrides[toSym] = manualPrice;
+        st.priceOverrides[toSym] = { price: manualPrice, vs: String(main).toUpperCase() };
       }
       var swapId = uid();
       var sellLeg = { id: uid(), type: 'sell', symbol: fromSym, qty: fromQty, total: swapTotal, currency: swapCcy, date: date, fee: feeS, feeCurrency: feeCcyS, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: accountId, swapId: swapId, createdAt: new Date().toISOString() };
@@ -5618,11 +5729,11 @@ function onTradeSubmit(ev) {
   // feeLock is the optional feeFxLock ({rate,...}) when the fee has its own
   // currency; null/undefined means the fee rides the trade lock (same
   // currency) or is zero.
-  function proceed(lock, feeLock) {
+    function proceed(lock, feeLock) {
     var st = loadState();
     if (manualPrice !== null && (side === 'buy' || side === 'sell')) {
       st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
-      st.priceOverrides[symbol] = manualPrice;
+      st.priceOverrides[symbol] = { price: manualPrice, vs: String(main).toUpperCase() };
     }
     function withFeeLock(trade) {
       if (feeLock && typeof feeLock.rate === 'number' && isFinite(feeLock.rate) && feeLock.rate > 0) {
@@ -6225,7 +6336,7 @@ function buildSettings() {
     '<section data-setpanel="overrides" role="tabpanel" aria-label="Price overrides">' +
     '<label for="o-symbol">Symbol</label>' +
     '<input id="o-symbol" autocomplete="off" spellcheck="false" placeholder="e.g. BTC">' +
-    '<label for="o-price">Price (in fiat)</label>' +
+    '<label for="o-price">Price (in current fiat)</label>' +
     '<input id="o-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '<button id="o-add" type="button">Save override</button>' +
     '<ul id="o-list"></ul>' +
@@ -6332,7 +6443,7 @@ function buildSettings() {
     if (!isFinite(price) || price <= 0) { showBanner('Override price must be > 0.'); return; }
     var st = loadState();
     st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
-    st.priceOverrides[sym] = price;
+    st.priceOverrides[sym] = { price: price, vs: String(st.settings.mainCurrency).toUpperCase() };
     if (!saveStateGuarded(st)) return;
     uiSetVal('o-symbol', '');
     uiSetVal('o-price', '');
@@ -6418,7 +6529,11 @@ function syncTopbar(st) {
     Object.keys(ov).sort().forEach(function (sym) {
       var li = document.createElement('li');
       var label = document.createElement('span');
-      label.textContent = sym + ' — ' + fmtMoney(ov[sym], st.settings.mainCurrency) + ' ';
+      var oe = null;
+      try { oe = priceOverrideEntry(sym); } catch (e) { oe = null; }
+      var op = (oe && isFinite(Number(oe.price))) ? Number(oe.price) : Number(ov[sym]);
+      var oc = (oe && oe.vs) ? oe.vs : st.settings.mainCurrency;
+      label.textContent = sym + ' — ' + fmtMoney(op, oc) + ' ';
       li.appendChild(label);
       var rm = document.createElement('button');
       rm.type = 'button';
