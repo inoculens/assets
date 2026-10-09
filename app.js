@@ -7960,6 +7960,22 @@ function syncRefreshSyncPanel() {
   if (autoBox) autoBox.checked = !!cfg.autoSync;
   var last = cfg.lastSyncAt ? (' Last sync ' + String(cfg.lastSyncAt).slice(0, 19).replace('T', ' ') + ' UTC.') : '';
   if (!syncBusy) syncSetStatus((connected ? ('Connected to ' + syncProviderLabel(cfg.provider) + '.') : 'Not connected.') + last);
+  // Connection state is unmistakable on every visit: Connect locks once
+  // established, Disconnect unlocks, and the status line turns green.
+  // (While busy, syncSetBusy owns the disabled flags — don't fight it.)
+  if (!syncBusy) {
+    var connectBtn = document.getElementById('sy-connect');
+    if (connectBtn) connectBtn.disabled = connected;
+    var disconnectBtn = document.getElementById('sy-disconnect');
+    if (disconnectBtn) disconnectBtn.disabled = !connected;
+  }
+  var statusEl = document.getElementById('sy-status');
+  if (statusEl && statusEl.classList) {
+    try {
+      if (connected) statusEl.classList.add('sync-live');
+      else statusEl.classList.remove('sync-live');
+    } catch (e) { /* ignore */ }
+  }
   var fp = document.getElementById('sy-fp');
   var passEl = document.getElementById('sy-pass');
   if (fp && passEl && passEl.value) {
@@ -8376,6 +8392,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncRefreshHeaderIcon = syncRefreshHeaderIcon;
   window.Inoculens.syncAutoPush = syncAutoPush;
   window.Inoculens.syncAutoDelay = syncAutoDelay;
+  window.Inoculens.syncRefreshSyncPanel = syncRefreshSyncPanel;
   window.Inoculens.syncSharedId = syncSharedId;
   window.Inoculens.syncEffectiveClientId = syncEffectiveClientId;
   window.Inoculens.syncTestConnection = syncTestConnection;

@@ -2042,6 +2042,36 @@
         });
       });
 
+      test('sync connect locks once established', function () {
+        var sy = null;
+        try { sy = localStorage.getItem('inoculens.sync.v1'); } catch (e) { sy = null; }
+        try {
+          if (typeof init === 'function') init();
+          try { localStorage.removeItem('inoculens.sync.v1'); } catch (e) { /* ignore */ }
+          S.syncRefreshSyncPanel();
+          assert(document.getElementById('sy-connect').disabled === false, 'connect enabled when idle');
+          assert(document.getElementById('sy-disconnect').disabled === true, 'disconnect greyed when idle');
+          var cfg = S.syncDefaultConfig();
+          cfg.url = 'https://dav.test/r';
+          cfg.username = 'u';
+          cfg.password = 'p';
+          cfg.rememberPassword = true;
+          S.syncSaveConfig(cfg);
+          S.syncRefreshSyncPanel();
+          assert(document.getElementById('sy-connect').disabled === true, 'connect greyed once established');
+          assert(document.getElementById('sy-disconnect').disabled === false, 'disconnect live once established');
+          assert(document.getElementById('sy-status').classList.contains('sync-live'), 'green indicator once established');
+          S.syncDisconnect();
+          assert(document.getElementById('sy-connect').disabled === false, 'connect back after disconnect');
+        } finally {
+          try {
+            if (sy === null) localStorage.removeItem('inoculens.sync.v1');
+            else localStorage.setItem('inoculens.sync.v1', sy);
+          } catch (e) { /* ignore */ }
+          try { S.syncRefreshSyncPanel(); } catch (e) { /* ignore */ }
+        }
+      });
+
       test('modal-born errors die with the dialog; page errors return', function () {
         if (typeof init === 'function') init();
         ['trade-dialog', 'account-dialog', 'confirm-dialog', 'note-dialog', 'error-dialog', 'color-dialog'].forEach(function (id) {

@@ -1684,6 +1684,8 @@ label.sync-check input {
   margin: 0;
 }
 #sy-status, #sy-fp { overflow-wrap: anywhere; }
+#sy-status.sync-live { color: var(--gain); }
+#sy-status.sync-live::before { content: "● "; }
 #sy-enc-upload { pointer-events: none; cursor: default; }
 #sy-enc-upload::file-selector-button {
   font: inherit; font-weight: 600; color: var(--text);
