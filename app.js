@@ -6118,6 +6118,10 @@ var SYNC_STORAGE_KEY = 'inoculens.sync.v1';
 var SYNC_OAUTH_KEY = 'inoculens.oauth.v1';
 var SYNC_DEFAULT_BASENAME = 'plutus.inoculens.com';
 var SYNC_DEFAULT_FILENAME = 'plutus.inoculens.com.enc.json';
+// Trust stamp for "this device synced this destination before". Bumped
+// whenever the gate rules change so markers written by older app versions
+// never count — the next push re-verifies instead of blindly overwriting.
+var SYNC_LOC_V = 2;
 var SYNC_PBKDF2_ITER = 600000;
 var SYNC_PROVIDERS = [
   { id: 'webdav', label: 'WebDAV / Nextcloud', kind: 'basic' },
@@ -6410,6 +6414,7 @@ function syncDefaultConfig() {
     objectKey: SYNC_DEFAULT_FILENAME,
     folder: '',
     lastLocation: null,
+    locV: null,
     autoSync: false,
     lastSyncedHash: null,
     lastSyncAt: null,
@@ -6463,6 +6468,8 @@ function syncSanitizeConfig(raw) {
   d.objectKey = syncSanitizeFilename(d.objectKey);
   d.folder = syncNormalizeFolder(c.folder) || folderFromKey;
   if (typeof c.lastLocation === 'string' && c.lastLocation !== '') d.lastLocation = c.lastLocation.slice(0, 512);
+  d.locV = (c.locV === SYNC_LOC_V) ? SYNC_LOC_V : null;
+  if (d.locV === null) d.lastLocation = null;
   d.autoSync = (c.autoSync === true);
   if (typeof c.lastSyncedHash === 'string' && c.lastSyncedHash !== '') d.lastSyncedHash = c.lastSyncedHash.slice(0, 64);
   if (typeof c.lastSyncAt === 'string' && isFinite(Date.parse(c.lastSyncAt))) d.lastSyncAt = c.lastSyncAt;
@@ -7536,6 +7543,7 @@ function syncAdoptRemote(cfg, remotePlain) {
   } catch (e) { /* ignore */ }
   cfg.lastSyncedHash = syncHashOfExport(remotePlain);
   cfg.lastLocation = syncLocationKey(cfg);
+  cfg.locV = SYNC_LOC_V;
   syncOverwriteArmed = {};
   syncSaveConfig(cfg);
   syncRefreshSyncPanel();
@@ -7613,6 +7621,7 @@ function syncPushFlow(opts) {  if (syncBusy) return;
               // Same content (e.g. reconnect with nothing changed): adopt
               // silently — no prompt, no pointless re-upload.
               cfg.lastLocation = locKey;
+              cfg.locV = SYNC_LOC_V;
               cfg.lastRemoteAt = syncLocalExportedAt(remotePlain);
               cfg.lastSyncedHash = curHash;
               syncSaveConfig(cfg);
@@ -7623,7 +7632,14 @@ function syncPushFlow(opts) {  if (syncBusy) return;
               return 'adopted';
             }
             // Different content under our name: offer download, never ambush.
+            // (Auto-sync never prompts either: it stands down for the user.)
             syncSetBusy(false);
+            if (auto) {
+              syncRefreshSyncPanel();
+              try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
+              syncSetStatus('Drive holds a different copy — open Sync to resolve.');
+              return 'conflict-remote';
+            }
             return confirmAction(
               'Name already taken',
               'A different backup named "' + cfg.filename + '" already exists in this folder. Download it instead of overwriting?',
@@ -7691,6 +7707,7 @@ function syncPushFlow(opts) {  if (syncBusy) return;
     cfg.lastRemoteAt = localAt;
     cfg.lastSyncedHash = curHash;
     cfg.lastLocation = syncLocationKey(cfg);
+    cfg.locV = SYNC_LOC_V;
     syncOverwriteArmed = {};
     syncSaveConfig(cfg);
     syncRefreshSyncPanel();
@@ -7776,6 +7793,7 @@ function syncPullFlow() {
       } catch (e) { /* ignore */ }
       cfg.lastSyncedHash = syncHashOfExport(plain);
       cfg.lastLocation = syncLocationKey(cfg); // adopt: future pushes update this file
+      cfg.locV = SYNC_LOC_V;
       syncOverwriteArmed = {};
       syncSaveConfig(cfg);
       syncRefreshSyncPanel();
@@ -8279,6 +8297,7 @@ function syncDisconnect() {
   cfg.passphrase = '';
   cfg.rememberPassphrase = false;
   cfg.lastLocation = null;
+  cfg.locV = null;
   cfg.lastSyncedHash = null;
   cfg.lastRemoteAt = null;
   cfg.lastSyncAt = null;
