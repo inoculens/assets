@@ -5255,7 +5255,7 @@ function buildTradeForm() {
     '<input id="t-note" autocomplete="off" placeholder="e.g. monthly savings">' +
     '<label for="t-manual-rate">Manual FX rate (fallback when ECB is unavailable)</label>' +
     '<input id="t-manual-rate" inputmode="decimal" placeholder="e.g. 0.92">' +
-    '<label for="t-manual-price">Manual exec price (this trade only, in fiat)</label>' +
+    '<label for="t-manual-price">Manual exec price (this trade only, in trade fiat)</label>' +
     '<input id="t-manual-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '</details>' +
     '<div class="fld-error-row"><p id="t-error" class="banner-error" role="alert" hidden></p>' +
@@ -5648,8 +5648,10 @@ function onTradeSubmit(ev) {
       }
       var buyLeg = { id: uid(), type: 'buy', symbol: toSym, qty: toQty, total: swapTotal, currency: swapCcy, date: date, fee: 0, feeCurrency: swapCcy, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: toAccSwap.id, swapId: swapId, createdAt: new Date().toISOString() };
       if (manualPrice !== null) {
-        // Manual quote is for the received asset; the sold leg freezes via history.
-        buyLeg.execLock = { price: manualPrice, vs: String(main).toUpperCase(), source: 'manual' };
+        // Manual quote is for the received asset, denominated in the trade's
+        // own Currency (like total and fee) — never the header display fiat.
+        // The sold leg freezes via history.
+        buyLeg.execLock = { price: manualPrice, vs: String(swapCcy).toUpperCase(), source: 'manual' };
       }
       var e1 = validateTrade(sellLeg, heldFrom);
       if (e1) { tradeFormError(e1); lockSubmit(false, 'Add record'); return; }
@@ -5858,7 +5860,9 @@ function onTradeSubmit(ev) {
       var needRefreeze = false;
       if (side === 'buy' || side === 'sell') {
         if (manualPrice !== null) {
-          trade.execLock = { price: manualPrice, vs: String(main).toUpperCase(), source: 'manual' };
+          // Manual quote follows the trade's Currency field (like total and
+          // fee), never the header display fiat — display converts it.
+          trade.execLock = { price: manualPrice, vs: String(from).toUpperCase(), source: 'manual' };
         } else {
           var prevFrozen = null;
           try { prevFrozen = frozenExecOf(prev); } catch (e) { prevFrozen = null; }
@@ -5925,7 +5929,9 @@ function onTradeSubmit(ev) {
     if (side === 'expense' && qty === null) { delete trade.qty; }
     if (side === 'buy' || side === 'sell') {
       if (manualPrice !== null) {
-        trade.execLock = { price: manualPrice, vs: String(main).toUpperCase(), source: 'manual' };
+        // Same rule as the edit path: the manual quote follows the trade's
+        // Currency field, never the header display fiat.
+        trade.execLock = { price: manualPrice, vs: String(from).toUpperCase(), source: 'manual' };
       }
     } else {
       try { delete trade.execLock; } catch (e) { /* ignore */ }

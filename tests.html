@@ -2362,6 +2362,63 @@
             'manual must freeze per-trade, got ' + JSON.stringify(last.execLock));
           assert(!Object.prototype.hasOwnProperty.call(st.priceOverrides, 'BTC'), 'trade manual must not leak into global overrides, got ' + JSON.stringify(st.priceOverrides));
         });
+
+        test('trade manual price follows the trade Currency field, not the header', function () {
+          var origFetch = window.fetch;
+          window.fetch = function (url) {
+            var u = String(url);
+            if (u.indexOf('simple/price') !== -1) {
+              return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ bitcoin: { ron: 458000 } }); } });
+            }
+            if (u.indexOf('frankfurter.dev') !== -1) {
+              return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ date: '2026-03-01', rates: { RON: 4.97 } }); } });
+            }
+            return Promise.reject(new Error('offline'));
+          };
+          var backupFx = null;
+          try { backupFx = localStorage.getItem('inoculens.fxcache.v1'); } catch (e) { backupFx = null; }
+          try {
+            L.saveState({
+              settings: { mainCurrency: 'RON', costMethod: 'average' },
+              accounts: [
+                { id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' }
+              ],
+              trades: [],
+              priceOverrides: {}
+            });
+            L.cacheRate('2026-03-01', 'EUR', 'RON', 4.97, 'ECB-2026-03-01');
+            init();
+            openPrefillTrade('a1');
+            document.getElementById('t-side').value = 'buy';
+            document.getElementById('t-qty').value = '0.001';
+            document.getElementById('t-total').value = '84';
+            document.getElementById('t-currency').value = 'EUR';
+            document.getElementById('t-currency').dispatchEvent(new Event('change', { bubbles: true }));
+            document.getElementById('t-date').value = '2026-03-01';
+            document.getElementById('t-fee').value = '';
+            document.getElementById('t-note').value = '';
+            document.getElementById('t-manual-rate').value = '';
+            document.getElementById('t-manual-price').value = '84000';
+            onTradeSubmit({ preventDefault: function () {} });
+            var st = L.loadState();
+            assert(st.trades.length === 1, 'buy should save, got ' + st.trades.length);
+            var ex = st.trades[0].execLock;
+            assert(ex && ex.price === 84000 && ex.vs === 'EUR', 'manual must freeze in trade fiat EUR, got ' + JSON.stringify(ex));
+            var det = document.getElementById('account-detail');
+            var execCell = det && det.querySelector('[data-label="Exec. price"]');
+            assert(execCell !== null, 'exec row should render');
+            assert(Math.abs(Number(execCell.getAttribute('data-value')) - 84000 * 4.97) < 1e-6, 'exec must convert EUR->RON at the historical rate, got ' + (execCell && execCell.getAttribute('data-value')));
+            assert(execCell.textContent.indexOf('RON') !== -1, 'converted exec must read in RON, got ' + execCell.textContent);
+            navHome();
+          } finally {
+            window.fetch = origFetch;
+            try {
+              if (backupFx === null) localStorage.removeItem('inoculens.fxcache.v1');
+              else localStorage.setItem('inoculens.fxcache.v1', backupFx);
+            } catch (e) { /* ignore */ }
+            try { L.reloadFxCache(); } catch (e) { /* ignore */ }
+          }
+        });
       } finally {
         restoreState();
       }
