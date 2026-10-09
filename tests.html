@@ -792,26 +792,32 @@
         assert(c.netMain === 0 && c.feeLossMain === 10, 'net cost never negative: ' + JSON.stringify(c));
       });
 
-      test('fee carved from cost, booked as loss, in both methods', function () {
+      test('fee carved from cost, tracked apart from realized, in both methods', function () {
         var avg = computeAverage([feeBuy({})]).get('BTC');
         assert(avg.qty === 49.5, 'avg qty held wrong');
         assert(Math.abs(avg.avgEntry - 2) < 1e-9, 'avg entry must be the real price 2.0, got ' + avg.avgEntry);
-        assert(avg.realized === -1, 'avg must book the fee as realized loss, got ' + avg.realized);
+        assert(avg.realized === 0, 'avg realized must stay pure trading gains, got ' + avg.realized);
+        assert(avg.feeDrag === 1, 'avg fee drag tracked separately, got ' + avg.feeDrag);
         var fifo = computeFifo([feeBuy({})]).get('BTC');
         assert(fifo.qty === 49.5, 'fifo qty held wrong');
         assert(Math.abs(fifo.avgEntry - 2) < 1e-9, 'fifo entry must be the real price 2.0, got ' + fifo.avgEntry);
-        assert(fifo.realized === -1, 'fifo must book the fee as realized loss, got ' + fifo.realized);
+        assert(fifo.realized === 0, 'fifo realized must stay pure, got ' + fifo.realized);
+        assert(fifo.feeDrag === 1, 'fifo fee drag tracked separately, got ' + fifo.feeDrag);
       });
 
       test('selling back at execution price breaks even except the fee', function () {
         var sell = { id: 'f-b', type: 'sell', symbol: 'BTC', qty: 49.5, total: 99, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } };
         var avg = computeAverage([feeBuy({}), sell]).get('BTC');
         assert(avg.qty === 0, 'avg should be closed');
-        assert(avg.realized === -1, 'avg lifetime must be exactly the fee drag, got ' + avg.realized);
+        assert(avg.realized === 0, 'avg realized must show no fee label, got ' + avg.realized);
+        var ap = L.computePositions([feeBuy({}), sell], {}, 'average')[0];
+        assert(ap.totalPL === -1, 'avg lifetime drag is exactly the fee, got ' + ap.totalPL);
         var fifo = computeFifo([feeBuy({}), sell]).get('BTC');
         assert(fifo.qty === 0, 'fifo should be closed');
-        assert(fifo.realized === -1, 'fifo lifetime must be exactly the fee drag, got ' + fifo.realized);
+        assert(fifo.realized === 0, 'fifo realized must show no fee label, got ' + fifo.realized);
         assert(fifo.lots.length === 1 && fifo.lots[0].gain === 0, 'closing lot must break even, got ' + JSON.stringify(fifo.lots));
+        var fp = L.computePositions([feeBuy({}), sell], {}, 'fifo')[0];
+        assert(fp.totalPL === -1, 'fifo lifetime drag is exactly the fee, got ' + fp.totalPL);
       });
 
       test('positions show real entry plus fee drag with unknown price', function () {
@@ -819,7 +825,9 @@
         assert(p.qtyHeld === 49.5, 'qty changed');
         assert(Math.abs(p.avgEntry - 2) < 1e-9, 'entry must be the real price, got ' + p.avgEntry);
         assert(p.livePrice === null && p.marketValue === null && p.unrealized === null, 'unknowns must stay null');
-        assert(p.realized === -1 && p.totalPL === -1, 'fee drag must show with no fake loss, got ' + JSON.stringify(p));
+        assert(p.realized === 0, 'realized must stay pure, got ' + p.realized);
+        assert(p.feeDrag === 1, 'fee drag must ride along, got ' + p.feeDrag);
+        assert(p.totalPL === -1, 'fee drag must show with no fake loss, got ' + JSON.stringify(p));
       });
 
       test('validateTrade rejects same-currency fee over total', function () {
@@ -1490,8 +1498,8 @@
           var execCell = det2.querySelector('[data-label="Exec. price"]');
           var realCell = det2.querySelector('[data-label="Real price"]');
           assert(execCell !== null && realCell !== null, 'both price rows should render when a fee is present');
-          assert(Math.abs(Number(execCell.getAttribute('data-value')) - 100 / 49.5) < 1e-9, 'exec price must quote the full total, got ' + execCell.getAttribute('data-value'));
-          assert(Math.abs(Number(realCell.getAttribute('data-value')) - 2) < 1e-9, 'real price must be net of fee, got ' + realCell.getAttribute('data-value'));
+          assert(Math.abs(Number(execCell.getAttribute('data-value')) - 2) < 1e-9, 'exec price must be the net unit cost, got ' + execCell.getAttribute('data-value'));
+          assert(Math.abs(Number(realCell.getAttribute('data-value')) - 100 / 49.5) < 1e-9, 'real price must be the all-in per coin, got ' + realCell.getAttribute('data-value'));
           navHome();
         });
       } finally {

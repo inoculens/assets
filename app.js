@@ -863,8 +863,8 @@ function normalizeTrade(t) {
   var out = { totalMain: totalMain, feeMain: fee * feeRate };
   // Fee economics: when the fee shares the trade currency it comes OUT OF
   // the stated total (exchange model: 100 in, 1 fee, 99 invested), so cost
-  // counts total-minus-fee while the fee books separately as a realized
-  // loss (visible drag, honest break-even). A differently-denominated fee
+  // counts total-minus-fee while the carved fee rides separately as feeDrag
+  // (subtracted once in totals, never inside Realized). A differently-denominated fee
   // is separate money and stays additive. fee:0 behaves exactly as before.
   var sameCcy = !ccy || !feeCcy || feeCcy === ccy;
   if (sameCcy) {
@@ -923,7 +923,8 @@ function computeAverage(trades) {
       var ebi = bySym.get(sym);
       ebi.qty += qbi;
       ebi.cost += n.netMain;
-      ebi.realized -= n.feeLossMain; // fee carved from total: visible loss, honest break-even
+      ebi.fees = (ebi.fees || 0) + n.feeMain;
+      ebi.feeDrag = (ebi.feeDrag || 0) + n.feeLossMain;
     } else if (t.type === 'sell') {
       var qs = Number(t.qty);
       if (!isFinite(qs) || qs <= 0) continue;
@@ -932,8 +933,8 @@ function computeAverage(trades) {
       if (e.qty <= LEDGER_EPS) continue; // no inventory: ignore, never negative
       var sellQty = Math.min(qs, e.qty);
       var avg = e.qty > 0 ? e.cost / e.qty : 0;
-      var proceeds = n.totalMain - n.feeMain;
-      if (proceeds < 0) proceeds = 0;
+      var proceeds = n.totalMain;
+      e.fees = (e.fees || 0) + n.feeMain;
       if (qs > e.qty && qs > 0) proceeds = proceeds * (sellQty / qs);
       e.realized += proceeds - avg * sellQty;
       e.cost -= avg * sellQty;
@@ -958,7 +959,9 @@ function computeAverage(trades) {
         }
       }
       if (hasT || (n.feeMain > 0)) {
-        ee.realized -= (n.netMain + n.feeLossMain); // cash lost (fee inside total when same currency)
+        ee.realized -= n.netMain; // cash lost; carved fee rides feeDrag below
+        ee.fees = (ee.fees || 0) + n.feeMain;
+        ee.feeDrag = (ee.feeDrag || 0) + n.feeLossMain;
       }
     } else if (t.type === 'transfer') {
       var qt = Number(t.qty);
@@ -967,7 +970,9 @@ function computeAverage(trades) {
       if (!isFinite(nft) || nft < 0 || nft >= qt) continue;
       if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
       var et = bySym.get(sym);
-      var fiatT = n.netMain + n.feeLossMain;
+      var fiatT = n.netMain;
+      et.fees = (et.fees || 0) + n.feeMain;
+      et.feeDrag = (et.feeDrag || 0) + n.feeLossMain;
       if (et.qty <= LEDGER_EPS) {
         // no inventory: cannot move, but fiat fee still lost
         if (fiatT > 0) et.realized -= fiatT;
@@ -996,7 +1001,7 @@ function computeFifo(trades) {
   var acc = new Map(); // sym -> {realized, lots}
   var list = ledgerSortByDate(trades);
   function state(sym) {
-    if (!acc.has(sym)) acc.set(sym, { realized: 0, lots: [] });
+    if (!acc.has(sym)) acc.set(sym, { realized: 0, lots: [], fees: 0, feeDrag: 0 });
     if (!queues.has(sym)) queues.set(sym, []);
     return acc.get(sym);
   }
@@ -1011,14 +1016,15 @@ function computeFifo(trades) {
       var qb = Number(t.qty);
       if (!isFinite(qb) || qb <= 0) continue;
       q.push({ qty: qb, unitCost: qb > 0 ? n.netMain / qb : 0, date: t.date });
-      st.realized -= n.feeLossMain;
+      st.fees = (st.fees || 0) + n.feeMain;
+      st.feeDrag = (st.feeDrag || 0) + n.feeLossMain;
     } else if (t.type === 'sell') {
       var qty = Number(t.qty);
       if (!isFinite(qty) || qty <= 0) continue;
       var heldFifo = q.reduce(function (s, l) { return s + l.qty; }, 0);
       if (heldFifo <= LEDGER_EPS) continue; // no inventory: ignore, never negative
-      var proceedsTotal = n.totalMain - n.feeMain;
-      if (proceedsTotal < 0) proceedsTotal = 0;
+      var proceedsTotal = n.totalMain;
+      st.fees = (st.fees || 0) + n.feeMain;
       var unitProceeds = qty > 0 ? proceedsTotal / qty : 0;
       var sellQty = Math.min(qty, heldFifo);
       // Scale proceeds when the sell is clamped (oversell ignored, no negative).
@@ -1074,14 +1080,18 @@ function computeFifo(trades) {
         }
       }
       if (hasT || n.feeMain > 0) {
-        st.realized -= (n.netMain + n.feeLossMain);
+        st.realized -= n.netMain;
+        st.fees = (st.fees || 0) + n.feeMain;
+        st.feeDrag = (st.feeDrag || 0) + n.feeLossMain;
       }
     } else if (t.type === 'transfer') {
       var qt = Number(t.qty);
       if (!isFinite(qt) || qt <= 0) continue;
       var nft = (t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee);
       if (!isFinite(nft) || nft < 0 || nft >= qt) continue;
-      var fiatT = n.netMain + n.feeLossMain;
+      var fiatT = n.netMain;
+      st.fees = (st.fees || 0) + n.feeMain;
+      st.feeDrag = (st.feeDrag || 0) + n.feeLossMain;
       var heldT = q.reduce(function (s, l) { return s + l.qty; }, 0);
       if (heldT <= LEDGER_EPS) {
         if (fiatT > 0) st.realized -= fiatT;
@@ -1148,7 +1158,9 @@ function computeFifo(trades) {
       qty: qty,
       avgEntry: qty > 0 ? cost / qty : 0,
       realized: st.realized,
-      lots: st.lots
+      lots: st.lots,
+      fees: st.fees || 0,
+      feeDrag: st.feeDrag || 0
     });
   });
   // Symbols with buys only are in queues but maybe not acc; ensure presence.
@@ -1157,7 +1169,7 @@ function computeFifo(trades) {
     var qty = 0;
     var cost = 0;
     for (var k = 0; k < q.length; k++) { qty += q[k].qty; cost += q[k].qty * q[k].unitCost; }
-    out.set(sym, { qty: qty, avgEntry: qty > 0 ? cost / qty : 0, realized: 0, lots: [] });
+    out.set(sym, { qty: qty, avgEntry: qty > 0 ? cost / qty : 0, realized: 0, lots: [], fees: 0, feeDrag: 0 });
   });
   return out;
 }
@@ -1173,7 +1185,7 @@ function computePositions(trades, live, method) {
     var qty = Number(t.qty);
     if (!isFinite(qty) || qty <= 0) return;
     var n = normalizeTrade(t);
-    buyCost[sym] = (buyCost[sym] || 0) + n.totalMain + n.feeMain;
+    buyCost[sym] = (buyCost[sym] || 0) + n.netMain + n.feeLossMain;
     hasBuy[sym] = true;
   });
   var rows = [];
@@ -1192,7 +1204,8 @@ function computePositions(trades, live, method) {
     var marketValue = known ? qtyHeld * num : (qtyHeld === 0 ? 0 : null);
     var unrealized = marketValue === null ? null : marketValue - avgEntry * qtyHeld;
     var realized = v.realized || 0;
-    var totalPL = unrealized === null ? realized : unrealized + realized;
+    var feeDragRow = v.feeDrag || 0;
+    var totalPL = unrealized === null ? realized - feeDragRow : unrealized + realized - feeDragRow;
     var denom = buyCost[sym] || 0;
     var returnPct = denom > LEDGER_EPS
       ? (unrealized === null ? (qtyHeld === 0 ? (realized / denom) * 100 : null) : (totalPL / denom) * 100)
@@ -1205,6 +1218,8 @@ function computePositions(trades, live, method) {
       marketValue: marketValue,
       unrealized: unrealized,
       realized: realized,
+      fees: v.fees || 0,
+      feeDrag: feeDragRow,
       totalPL: totalPL,
       returnPct: returnPct
     });
@@ -1228,12 +1243,12 @@ function computePortfolio(allTrades, live, method) {
     if (!a) { a = {}; acctState[accId] = a; }
     var s = a[sym];
     if (!s) {
-      s = { qty: 0, cost: 0, realized: 0, income: 0, fees: 0, lots: [], queue: [], touched: false };
+      s = { qty: 0, cost: 0, realized: 0, income: 0, fees: 0, feeDrag: 0, lots: [], queue: [], touched: false };
       a[sym] = s;
     }
     return s;
   }
-  var totals = { invested: 0, withdrawn: 0, income: 0, incomeQty: 0, feesFiat: 0, feesCryptoQty: 0, feesCryptoMain: 0, expensesFiat: 0, realized: 0 };
+  var totals = { invested: 0, withdrawn: 0, income: 0, incomeQty: 0, feesFiat: 0, feesCryptoQty: 0, feesCryptoMain: 0, expensesFiat: 0, realized: 0, feeDrag: 0 };
   function avgOf(s) { return s.qty > LEDGER_EPS ? s.cost / s.qty : 0; }
   sorted.forEach(function (t) {
     if (!t) return;
@@ -1248,10 +1263,10 @@ function computePortfolio(allTrades, live, method) {
       sb.qty += qb;
       var cb = n.netMain;
       sb.cost += cb;
-      sb.realized -= n.feeLossMain;
-      totals.realized -= n.feeLossMain;
+      sb.feeDrag = (sb.feeDrag || 0) + n.feeLossMain;
+      totals.feeDrag += n.feeLossMain;
       sb.fees += n.feeMain;
-      totals.invested += cb;
+      totals.invested += n.netMain + n.feeLossMain;
       totals.feesFiat += n.feeMain;
       if (isFifo) sb.queue.push({ qty: qb, unitCost: qb > 0 ? cb / qb : 0, date: t.date });
     } else if (t.type === 'income') {
@@ -1262,8 +1277,8 @@ function computePortfolio(allTrades, live, method) {
       si.qty += qi;
       var ci = n.netMain;
       si.cost += ci;
-      si.realized -= n.feeLossMain;
-      totals.realized -= n.feeLossMain;
+      si.feeDrag = (si.feeDrag || 0) + n.feeLossMain;
+      totals.feeDrag += n.feeLossMain;
       si.income += n.totalMain;
       si.fees += n.feeMain;
       totals.income += n.totalMain;
@@ -1276,8 +1291,7 @@ function computePortfolio(allTrades, live, method) {
       var ss = stFor(t.accountId, sym);
       if (ss.qty <= LEDGER_EPS && (!isFifo || ss.queue.reduce(function (s, l) { return s + l.qty; }, 0) <= LEDGER_EPS)) return;
       ss.touched = true;
-      var proceeds = n.totalMain - n.feeMain;
-      if (proceeds < 0) proceeds = 0;
+      var proceeds = n.totalMain;
       if (isFifo) {
         var heldF = ss.queue.reduce(function (s, l) { return s + l.qty; }, 0);
         var sQty = Math.min(qs, heldF);
@@ -1365,8 +1379,10 @@ function computePortfolio(allTrades, live, method) {
       }
       if (hasT || n.feeMain > 0) {
         var fl = n.netMain + n.feeLossMain;
-        se.realized -= fl;
-        totals.realized -= fl;
+        se.realized -= n.netMain;
+        se.feeDrag = (se.feeDrag || 0) + n.feeLossMain;
+        totals.feeDrag += n.feeLossMain;
+        totals.realized -= n.netMain;
         totals.expensesFiat += fl;
         totals.feesFiat += n.feeMain;
         se.fees += n.feeMain;
@@ -1384,7 +1400,9 @@ function computePortfolio(allTrades, live, method) {
         : from;
       from.touched = true;
       to.touched = true;
-      var fiatT = n.netMain + n.feeLossMain;
+      var fiatT = n.netMain;
+      from.feeDrag = (from.feeDrag || 0) + n.feeLossMain;
+      totals.feeDrag += n.feeLossMain;
       if (isFifo) {
         var heldT = from.queue.reduce(function (s, l) { return s + l.qty; }, 0);
         if (heldT <= LEDGER_EPS) {
@@ -1482,7 +1500,7 @@ function computePortfolio(allTrades, live, method) {
       m.set(sym, {
         symbol: sym, qtyHeld: qtyHeld, avgEntry: avgEntry,
         livePrice: known ? num : null, marketValue: mv, unrealized: un,
-        realized: s.realized, totalPL: un === null ? s.realized : un + s.realized,
+        realized: s.realized, totalPL: un === null ? s.realized - (s.feeDrag || 0) : un + s.realized - (s.feeDrag || 0),
         income: s.income, fees: s.fees, lots: s.lots
       });
     });
@@ -1502,11 +1520,14 @@ function computeAnalytics(allTrades, live, method) {
     });
   });
   var feesTotal = (pf.totals.feesFiat || 0) + (pf.totals.feesCryptoMain || 0) + (pf.totals.expensesFiat || 0);
+  var feeDragT = pf.totals.feeDrag || 0;
+  var baseTpl = (unKnown || Math.abs(rz) > LEDGER_EPS) ? (unKnown ? un + rz : rz) : rz;
   return {
     marketValue: mvKnown ? mv : null,
     unrealized: unKnown ? un : null,
     realized: rz,
-    totalPL: (unKnown || Math.abs(rz) > LEDGER_EPS) ? (unKnown ? un + rz : rz) : rz,
+    totalPL: baseTpl - feeDragT,
+    feeDrag: feeDragT,
     invested: pf.totals.invested,
     withdrawn: pf.totals.withdrawn,
     income: pf.totals.income,
@@ -2586,7 +2607,7 @@ function renderSummaryCards(st, rows, dtradesOpt, nAcctsOpt) {
       var q = Number(t.qty);
       if (!isFinite(q) || q <= 0) return;
       var nn = normalizeTrade(t);
-      buyBySym[s] = (buyBySym[s] || 0) + nn.totalMain + nn.feeMain;
+      buyBySym[s] = (buyBySym[s] || 0) + nn.netMain + nn.feeLossMain;
     });
     var knownSyms = {};
     rows.forEach(function (p) {
@@ -3525,13 +3546,14 @@ function tradeBlock(t, main, accountNameById) {
   } else {
     box.appendChild(statRow('Paid', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
     box.appendChild(statRow('Converted', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
-    // Two prices when a fee splits them: execution (quoted, reference only)
-    // vs real (net of fee — the one the ledger accounts with).
+    // Two prices when a same-currency fee splits them: Exec is the net unit
+    // cost the books run on (== Average entry); Real is the all-in price per
+    // coin in hand (higher after the fee — your true break-even reference).
     var pq = Number(t.qty);
-    if (n.feeMain > 0 && isFinite(pq) && pq > 0 && n.totalMain > 0) {
+    if (n.feeLossMain > 0 && isFinite(pq) && pq > 0 && n.totalMain > 0) {
       var symU = String(t.symbol || '').toUpperCase();
-      var execP = n.totalMain / pq;
-      var realP = (t.type === 'sell' ? Math.max(0, n.totalMain - n.feeMain) : n.netMain) / pq;
+      var execP = n.netMain / pq;
+      var realP = (n.netMain + n.feeLossMain) / pq;
       box.appendChild(statRow('Exec. price', fmtMoney(execP, main) + ' / ' + symU, execP, false));
       box.appendChild(statRow('Real price', fmtMoney(realP, main) + ' / ' + symU, realP, false));
     }
@@ -3719,7 +3741,7 @@ function renderAccountDetail(st, id) {
       var cn = normalizeTrade(t);
       // For transfers-in, cost is already in dest's buy-like inflow? No: transfers carry basis via joint engine, but lifetime here should count original buys+income only (transfers move, not new money).
       // atrades includes transfer-in with no total (total 0) so it adds 0 — safe.
-      lifetimeForRet += cn.totalMain + cn.feeMain;
+      lifetimeForRet += cn.netMain + cn.feeLossMain;
     });
   } catch (e) { lifetimeForRet = 0; }
   if (lifetimeForRet <= 0) lifetimeForRet = cost; // fallback to remaining (closed edge handled below)
@@ -3737,7 +3759,7 @@ function renderAccountDetail(st, id) {
     atrades.forEach(function (t) {
       if (!t || (t.type !== 'buy' && t.type !== 'income')) return;
       var cn = normalizeTrade(t);
-      lifetimeCost += cn.totalMain + cn.feeMain;
+      lifetimeCost += cn.netMain + cn.feeLossMain;
     });
     if (closed) {
       var closedFlag = document.createElement('p');
