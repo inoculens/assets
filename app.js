@@ -6077,7 +6077,7 @@ if (typeof window !== 'undefined') {
 // encrypted in this browser with WebCrypto (PBKDF2-SHA256 -> AES-GCM-256),
 // and only the ciphertext envelope below ever leaves the device:
 //
-//   {"app":"inoculens-plutus-sync","v":1,"iter":N,"salt":b64,"iv":b64,
+//   {"app":"plutus.inoculens.com","v":1,"iter":N,"salt":b64,"iv":b64,
 //    "ciphertext":b64}
 //
 // The passphrase is never stored anywhere. To sync from another computer
@@ -6088,7 +6088,10 @@ if (typeof window !== 'undefined') {
 // (OAuth one-click or PKCE with the user's own app), MEGA S4 (S3-compatible
 // SigV4 with the user's own access keys).
 
-var SYNC_APP = 'inoculens-plutus-sync';
+var SYNC_APP = 'plutus.inoculens.com';
+// Files written by the first release carry the old id; still accepted on
+// read so early backups keep working. New files always use SYNC_APP.
+var SYNC_APP_LEGACY = 'inoculens-plutus-sync';
 var SYNC_VERSION = 1;
 var SYNC_STORAGE_KEY = 'inoculens.sync.v1';
 var SYNC_OAUTH_KEY = 'inoculens.oauth.v1';
@@ -6251,7 +6254,7 @@ function syncEnvelopeParse(text) {
     throw new Error('sync failed: file is not valid JSON.');
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('sync failed: bad envelope.');
-  if (data.app !== SYNC_APP) throw new Error('sync failed: not a Plutus sync file.');
+  if (data.app !== SYNC_APP && data.app !== SYNC_APP_LEGACY) throw new Error('sync failed: not a Plutus sync file.');
   if (data.v !== SYNC_VERSION) throw new Error('sync failed: unsupported sync version.');
   var iter = Number(data.iter);
   if (!isFinite(iter) || Math.floor(iter) !== iter || iter < 1000 || iter > 5000000) {
@@ -7271,7 +7274,7 @@ function syncDownloadEncrypted() {
   syncSetBusy(true, 'Encrypting…');
   syncEncryptEnvelope(exportState(loadState()), pass).then(function (env) {
     syncSetBusy(false);
-    downloadTextFile('plutus-' + backupStamp() + '.enc.json', env, 'application/json');
+    downloadTextFile('plutus.inoculens.com-' + backupStamp() + '.enc.json', env, 'application/json');
     clearBanner();
     syncSetStatus('Encrypted file downloaded. Keep it or upload it anywhere.');
   }, function (err) {

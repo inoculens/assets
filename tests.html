@@ -1611,6 +1611,13 @@
         }
       });
 
+      test('sync legacy envelope id still parses', function () {
+        var ct = S.syncB64encode(new Uint8Array(32));
+        var legacy = JSON.stringify({ app: 'inoculens-plutus-sync', v: 1, iter: 600000, salt: 'AAAAAAAAAAAAAAAAAAAAAA==', iv: 'AAAAAAAAAAAAAAAA', ciphertext: ct });
+        var p = S.syncEnvelopeParse(legacy);
+        assert(p.iter === 600000 && p.salt.length === 16, 'legacy envelope should parse');
+      });
+
       test('sync timestamp compare matrix', function () {
         assert(S.syncCompareTimestamps('2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z') === 'remote-newer', 'remote newer');
         assert(S.syncCompareTimestamps('2026-01-02T00:00:00.000Z', '2026-01-01T00:00:00.000Z') === 'local-newer', 'local newer');
@@ -1662,7 +1669,7 @@
         if (!S.syncCryptoAvailable()) return null;
         var plain = '{"hello":"lume €😀"}';
         return S.syncEncryptEnvelope(plain, 'correct horse').then(function (env) {
-          assert(typeof env === 'string' && env.indexOf('inoculens-plutus-sync') !== -1, 'bad envelope text');
+          assert(typeof env === 'string' && env.indexOf('plutus.inoculens.com') !== -1, 'bad envelope text');
           return S.syncDecryptEnvelope(env, 'correct horse').then(function (back) {
             assert(back === plain, 'round-trip mismatch');
           });
