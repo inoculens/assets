@@ -321,6 +321,17 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible {
   text-underline-offset: 3px;
 }
 .banner-error { color: var(--loss); font-weight: 600; }
+.fld-error-row { display: flex; align-items: center; gap: 0.6rem; }
+.fld-error-row #t-error { flex: 1; margin: 0; }
+#t-error-close {
+  flex-shrink: 0;
+  min-height: 2rem;
+  padding: 0.25rem 0.6rem;
+  background: none;
+  border-color: transparent;
+  font-weight: 700;
+}
+#t-error-close[hidden] { display: none; }
 
 /* ————— Error-details popup: fixed box, scrolling list ————— */
 #error-dialog[open] {
@@ -1186,6 +1197,7 @@ details.opt + details.opt { margin-top: 0.65rem; }
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+#settings-alert-close { text-decoration: none; font-weight: 700; }
 /* ————— Header sync cloud (hidden until sync is configured) ————— */
 #tb-sync.sync-img-btn { padding: 0.45rem 0.55rem; }
 #tb-sync-img { display: block; width: 20px; height: 20px; }

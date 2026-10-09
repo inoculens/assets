@@ -1812,10 +1812,26 @@
         showBanner('Mirror info', 'info', { title: 'T', lines: ['one'] });
         assert(alert.hidden === false, 'alert should stay visible');
         assert(document.getElementById('settings-alert-details') !== null, 'alert should carry More details');
+        assert(document.getElementById('settings-alert-close') !== null, 'alert should carry a dismiss X');
+        document.getElementById('settings-alert-close').click();
+        assert(alert.hidden === true, 'alert X must dismiss the mirror');
+        assert(document.getElementById('banner').hidden === true, 'alert X must dismiss the page banner too');
         clearBanner();
         assert(alert.hidden === true, 'alert should hide with the banner');
         closeDialog('settings-dialog');
         assert(!document.body.classList.contains('modal-open'), 'background must unfreeze after close');
+      });
+
+      test('trade form errors carry a dismiss X', function () {
+        if (typeof init === 'function') init();
+        tradeFormError('boom');
+        var err = document.getElementById('t-error');
+        var x = document.getElementById('t-error-close');
+        assert(err && err.hidden === false, 'form error should show');
+        assert(x && x.hidden === false, 'form error X should show');
+        x.click();
+        assert(err.hidden === true && x.hidden === true, 'form error X must clear the error');
+        tradeFormError(null);
       });
 
       test('sync one-click panel elements exist', function () {

@@ -2284,6 +2284,20 @@ function mirrorBannerToSettings(msg, kind, hasDetails) {
     btn.addEventListener('click', function () { openErrorDialog(); });
     el.appendChild(btn);
   }
+  // Every error gets a way out: dismissing here clears the message
+  // everywhere (mirror and page banner are one message).
+  var x = document.getElementById('settings-alert-close');
+  if (!x) {
+    x = document.createElement('button');
+    x.type = 'button';
+    x.id = 'settings-alert-close';
+    x.textContent = '✕';
+    x.setAttribute('aria-label', 'Dismiss this message');
+    x.addEventListener('click', function () {
+      try { clearBanner(); } catch (e) { /* ignore */ }
+    });
+  }
+  el.appendChild(x); // last: after any details button
   el.hidden = false;
 }
 
@@ -4530,7 +4544,8 @@ function buildTradeForm() {
     '<label for="t-manual-price">Manual live price (override, in fiat)</label>' +
     '<input id="t-manual-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '</details>' +
-    '<p id="t-error" class="banner-error" role="alert" hidden></p>' +
+    '<div class="fld-error-row"><p id="t-error" class="banner-error" role="alert" hidden></p>' +
+    '<button type="button" id="t-error-close" aria-label="Dismiss this message" hidden>✕</button></div>' +
     '<button class="primary" type="submit" id="t-submit">Add record</button>' +
     '</form>';
   host.appendChild(wrap);
@@ -4813,13 +4828,22 @@ function openEditTrade(tradeId) {
 function tradeFormError(msg) {
   var p = document.getElementById('t-error');
   if (!p) return;
+  var x = document.getElementById('t-error-close');
   if (!msg) {
     p.textContent = '';
     p.hidden = true;
+    if (x) x.hidden = true;
     return;
   }
   p.textContent = String(msg);
   p.hidden = false;
+  if (x) {
+    x.hidden = false;
+    if (!x.getAttribute('data-wired')) {
+      x.setAttribute('data-wired', '1');
+      x.addEventListener('click', function () { tradeFormError(null); });
+    }
+  }
 }
 
 function onTradeSubmit(ev) {
