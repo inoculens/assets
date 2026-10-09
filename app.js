@@ -2219,8 +2219,9 @@ function settingsDialogOpen() {
 }
 
 function settingsAlertEl() {
+  var dlg = document.getElementById('settings-dialog');
   var host = document.getElementById('settings-dialog-body');
-  if (!host) return null;
+  if (!dlg || !host) return null;
   var el = document.getElementById('settings-alert');
   if (!el) {
     el = document.createElement('div');
@@ -2230,8 +2231,9 @@ function settingsAlertEl() {
     var sp = document.createElement('span');
     sp.id = 'settings-alert-text';
     el.appendChild(sp);
-    if (host.firstChild) host.insertBefore(el, host.firstChild);
-    else host.appendChild(el);
+    // Child of the dialog itself (above the body), NOT of the grid body:
+    // the body is a single-row grid and a second child would break it.
+    dlg.insertBefore(el, host);
   }
   return el;
 }

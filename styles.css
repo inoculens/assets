@@ -1167,6 +1167,7 @@ details.opt + details.opt { margin-top: 0.65rem; }
   font-size: 0.9rem;
 }
 .dlg-note[hidden] { display: none; }
+#settings-alert { flex-shrink: 0; }
 .dlg-note.error {
   border-color: rgba(248, 113, 113, 0.35);
   background: rgba(248, 113, 113, 0.09);
