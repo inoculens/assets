@@ -1656,7 +1656,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   margin: 0.4rem 0 0.9rem;
 }
 .sync-btns button { flex: 1 1 10rem; }
-.sync-btns button:disabled { opacity: 0.45; cursor: wait; }
+.sync-btns button:disabled { opacity: 0.45; cursor: not-allowed; }
+.sync-btns button:disabled:active { transform: none; }
+.sync-btns button:disabled:hover { background: var(--surface-2); border-color: var(--border); }
 label.sync-check {
   display: flex;
   align-items: center;
