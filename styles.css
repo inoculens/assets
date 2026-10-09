@@ -1029,7 +1029,7 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: 7px; }
 .trade-head { flex: 1 1 100%; }
 .trade-block .stat-row {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   flex-direction: column;
   align-items: stretch;

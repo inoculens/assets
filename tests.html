@@ -2092,6 +2092,7 @@
           var top = rows[0].offsetTop;
           Array.prototype.forEach.call(rows, function (r) {
             assert(r.offsetTop === top, 'fact wrapped to a second line: ' + r.getAttribute('data-label'));
+            assert(window.getComputedStyle(r).flexGrow === '0', 'fact cells must not stretch leftover space: ' + r.getAttribute('data-label'));
           });
           var noteVal = document.querySelector('#account-detail [data-label="Note"] .stat-val');
           assert(noteVal && noteVal.scrollWidth > noteVal.clientWidth + 1, 'long note must trim inside the single line');
@@ -2122,6 +2123,11 @@
           Array.prototype.forEach.call(rows, function (r) {
             assert(r.offsetTop === top, 'fact wrapped to a second line: ' + r.getAttribute('data-label'));
           });
+          if (window.innerWidth > 720) {
+            Array.prototype.forEach.call(rows, function (r) {
+              assert(window.getComputedStyle(r).flexGrow === '0', 'fact cells must not stretch leftover space: ' + r.getAttribute('data-label'));
+            });
+          }
           navHome();
         });
 
