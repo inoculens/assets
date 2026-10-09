@@ -1842,9 +1842,11 @@
           var cfg = S.syncDefaultConfig();
           cfg.url = 'https://dav.test/r';
           cfg.username = 'u';
+          cfg.password = 'p';
+          cfg.rememberPassword = true;
           S.syncSaveConfig(cfg);
           render();
-          assert(btn.hidden === false, 'icon shows once configured');
+          assert(btn.hidden === false, 'icon shows once connected');
           assert(btn.getAttribute('data-sync') === 'stale', 'never-synced reads stale, got ' + btn.getAttribute('data-sync'));
           assert(document.getElementById('tb-sync-img').src.indexOf('/icons/sync-stale.png') !== -1, 'stale icon art');
           cfg = S.syncLoadConfig();

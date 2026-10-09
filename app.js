@@ -7484,16 +7484,16 @@ function syncCurrentHash(st) {
   }
 }
 
-// "Configured" = enough filled in to attempt a sync (secrets may live only
-// in the form for this session). The icon stays hidden until then.
-function syncIsConfigured(cfg) {
+// "Connected" = enough filled in to attempt a sync right now (secrets may
+// live only in the form for this session). The panel status and the header
+// icon share this so they can never disagree.
+function syncIsConnected(cfg) {
   if (!cfg) return false;
-  if (cfg.provider === 'webdav') return !!(cfg.url);
-  if (cfg.provider === 'megas3') return !!(cfg.endpoint && cfg.bucket && cfg.accessKey);
-  if (cfg.provider === 'gdrive' || cfg.provider === 'dropbox') {
-    return !!(cfg.tokens && cfg.tokens.access);
+  if (cfg.provider === 'webdav') return !!(cfg.url && (cfg.password || syncMemSecrets.password));
+  if (cfg.provider === 'megas3') {
+    return !!(cfg.endpoint && cfg.bucket && cfg.accessKey && (cfg.secretKey || syncMemSecrets.secretKey));
   }
-  return false;
+  return !!(cfg.tokens && cfg.tokens.access);
 }
 
 function syncSetSyncIcon(state, label) {
@@ -7521,7 +7521,7 @@ function syncRefreshHeaderIcon(st) {
     return;
   }
   var cfg = syncLoadConfig();
-  if (!syncIsConfigured(cfg)) {
+  if (!syncIsConnected(cfg)) {
     btn.hidden = true;
     return;
   }
@@ -8142,11 +8142,7 @@ function syncRefreshSyncPanel(opts) {
     syncSetVal('sy-filename2', syncDisplayBasename(cfg.filename));
     syncSetVal('sy-folder2', cfg.folder);
   }
-  var connected = false;
-  if (cfg.provider === 'webdav') connected = !!(cfg.url && (cfg.password || syncMemSecrets.password));
-  else if (cfg.provider === 'megas3') {
-    connected = !!(cfg.endpoint && cfg.bucket && cfg.accessKey && (cfg.secretKey || syncMemSecrets.secretKey));
-  } else connected = !!(cfg.tokens && cfg.tokens.access);
+  var connected = syncIsConnected(cfg);
   var autoBox = document.getElementById('sy-auto');
   if (autoBox) autoBox.checked = !!cfg.autoSync;
   if (cfg.passphrase) syncSetVal('sy-pass', cfg.passphrase);
@@ -8646,7 +8642,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncStateHash = syncStateHash;
   window.Inoculens.syncHashOfExport = syncHashOfExport;
   window.Inoculens.syncCurrentHash = syncCurrentHash;
-  window.Inoculens.syncIsConfigured = syncIsConfigured;
+  window.Inoculens.syncIsConnected = syncIsConnected;
   window.Inoculens.syncRefreshHeaderIcon = syncRefreshHeaderIcon;
   window.Inoculens.syncAutoPush = syncAutoPush;
   window.Inoculens.syncAutoDelay = syncAutoDelay;
