@@ -676,11 +676,19 @@
       });
 
       test('normalizeTrade feeCurrency mismatch assumes same rate + flags', function () {
-        var r = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
+        // Fee already in the display main (inferred from fxLock pair USD/EUR ->
+        // main EUR) converts at 1 with no flag, even for legacy trades that
+        // carry no feeFxLock.
+        var rMain = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
+        assert(rMain.feeMain === 10, 'fee already in main must convert at 1, got ' + rMain.feeMain);
+        assert(!rMain.feeFxAssumedSameRate, 'no flag when fee is main');
+        // True mismatch (fee in a third currency) still falls back to the
+        // trade lock rate and flags feeFxAssumedSameRate.
+        var r = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'GBP', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
         assert(r.feeMain === 5, 'fee should fall back to trade lock rate, got ' + r.feeMain);
         assert(r.feeFxAssumedSameRate === true, 'missing feeFxAssumedSameRate flag');
-        var r2 = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' }, feeFxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } });
-        assert(r2.feeMain === 10, 'feeFxLock rate not used, got ' + r2.feeMain);
+        var r2 = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'GBP', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' }, feeFxLock: { pair: 'GBP/EUR', rate: 1.1, source: 'ECB-2026-10-01' } });
+        assert(r2.feeMain === 11, 'feeFxLock rate not used, got ' + r2.feeMain);
         assert(!r2.feeFxAssumedSameRate, 'flag must be absent when feeFxLock present');
       });
 
@@ -786,8 +794,10 @@
         var n = normalizeTrade({ total: 100, fee: 1, currency: 'EUR', feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } });
         assert(n.totalMain === 100 && n.feeMain === 1, 'raw conversion intact');
         assert(n.netMain === 99 && n.feeLossMain === 1, 'net/fee split wrong: ' + JSON.stringify(n));
-        var d = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
+        var d = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'GBP', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
         assert(d.netMain === 55 && d.feeLossMain === 0, 'cross-currency fee stays additive: ' + JSON.stringify(d));
+        var dm = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
+        assert(dm.totalMain === 50 && dm.feeMain === 10 && dm.netMain === 60 && dm.feeLossMain === 0, 'fee already in main converts at 1: ' + JSON.stringify(dm));
         var c = normalizeTrade({ total: 5, fee: 10, currency: 'EUR', feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } });
         assert(c.netMain === 0 && c.feeLossMain === 10, 'net cost never negative: ' + JSON.stringify(c));
       });
@@ -1498,8 +1508,8 @@
           var execCell = det2.querySelector('[data-label="Exec. price"]');
           var realCell = det2.querySelector('[data-label="Real price"]');
           assert(execCell !== null && realCell !== null, 'both price rows should render when a fee is present');
-          assert(Math.abs(Number(execCell.getAttribute('data-value')) - 2) < 1e-9, 'exec price must be the net unit cost, got ' + execCell.getAttribute('data-value'));
-          assert(Math.abs(Number(realCell.getAttribute('data-value')) - 100 / 49.5) < 1e-9, 'real price must be the all-in per coin, got ' + realCell.getAttribute('data-value'));
+          assert(Math.abs(Number(execCell.getAttribute('data-value')) - 100 / 49.5) < 1e-9, 'exec price must be quoted against the full total, got ' + execCell.getAttribute('data-value'));
+          assert(Math.abs(Number(realCell.getAttribute('data-value')) - 2) < 1e-9, 'real price must be the net unit cost the books run on, got ' + realCell.getAttribute('data-value'));
           navHome();
         });
       } finally {

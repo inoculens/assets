@@ -743,20 +743,32 @@ function cacheRate(date, from, to, rate, source) {
 }
 
 // Distinct (date, currency) pairs across trades that still need a rate
-// into `main`. Same-currency needs nothing (rate 1, no network).
+// into `main`. Same-currency needs nothing (rate 1, no network). Covers
+// both the trade currency AND a differently-denominated fee currency, so a
+// fiat switch converts fees at their own historical rate (never at the
+// trade's rate).
 function displayPairs(trades, main) {
   var m = String(main || '').toUpperCase();
   var seen = {};
   var out = [];
+  function need(date, from) {
+    var f = String(from || '').toUpperCase();
+    if (!f || !date || f === m) return;
+    var k = date + '|' + f;
+    if (seen[k] || getCachedRate(date, f, m)) return;
+    seen[k] = true;
+    out.push({ date: date, from: f });
+  }
   (trades || []).forEach(function (t) {
     if (!t) return;
     var c = (typeof t.currency === 'string') ? t.currency.toUpperCase() : '';
     var d = (typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date)) ? t.date.slice(0, 10) : '';
-    if (!c || !d || c === m) return;
-    var k = d + '|' + c;
-    if (seen[k] || getCachedRate(d, c, m)) return;
-    seen[k] = true;
-    out.push({ date: d, from: c });
+    if (!c || !d) return;
+    need(d, c);
+    var feeN = Number(t.fee);
+    var fc = (typeof t.feeCurrency === 'string' && String(t.feeCurrency).trim() !== '')
+      ? String(t.feeCurrency).trim().toUpperCase() : '';
+    if (isFinite(feeN) && feeN > 0 && fc && fc !== c) need(d, fc);
   });
   return out;
 }
@@ -780,30 +792,59 @@ function ensureDisplayRates(trades, main) {
   });
 }
 
-// Copy of a trade with fxLock rewritten into `main` at the historical rate.
-// Native total/currency untouched (fixed in stone). Falls back to the
-// stored lock when no rate is cached yet (first paint before fetch lands,
-// or offline) — see module comment.
+// Copy of a trade with fxLock rewritten into `main` at the historical rate,
+// plus feeFxLock for a differently-denominated fee (same source). Native
+// total/currency/fee/feeCurrency untouched (fixed in stone). Falls back to
+// the stored locks when no rate is cached yet (first paint before fetch
+// lands, or offline) — see module comment.
 function convertTrade(t, main) {
   var m = String(main || '').toUpperCase();
-  var c = (t && typeof t.currency === 'string') ? t.currency.toUpperCase() : '';
-  var d = (t && typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date)) ? t.date.slice(0, 10) : '';
-  if (!t || !c || !d || c === m) {
-    if (t && c && d && c === m) {
-      var same = {};
-      for (var k in t) { if (Object.prototype.hasOwnProperty.call(t, k)) same[k] = t[k]; }
-      same.fxLock = { pair: c + '/' + m, rate: 1, source: '1:1', interpolated: false };
-      return same;
-    }
-    return t;
+  if (!t || typeof t !== 'object') return t;
+  var c = (typeof t.currency === 'string') ? t.currency.toUpperCase() : '';
+  var d = (typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date)) ? t.date.slice(0, 10) : '';
+  if (!c || !d) return t;
+  var out = null;
+  function clone() {
+    if (out) return out;
+    out = {};
+    for (var k in t) { if (Object.prototype.hasOwnProperty.call(t, k)) out[k] = t[k]; }
+    return out;
   }
-  var hit = getCachedRate(d, c, m);
-  if (!hit) return t; // not yet fetched: keep stored lock (corrected on re-render)
-  var fixDay = (/^ECB-(\d{4}-\d{2}-\d{2})$/.exec(hit.source) || [])[1] || d;
-  var out = {};
-  for (var k2 in t) { if (Object.prototype.hasOwnProperty.call(t, k2)) out[k2] = t[k2]; }
-  out.fxLock = { pair: c + '/' + m, rate: hit.rate, source: 'ECB-' + fixDay, interpolated: fixDay !== d };
-  return out;
+  function lockFor(from) {
+    var f = String(from || '').toUpperCase();
+    if (!f) return null;
+    if (f === m) return { pair: f + '/' + m, rate: 1, source: '1:1', interpolated: false };
+    var hit = getCachedRate(d, f, m);
+    if (!hit) return null;
+    var fixDay = (/^ECB-(\d{4}-\d{2}-\d{2})$/.exec(hit.source) || [])[1] || d;
+    return { pair: f + '/' + m, rate: hit.rate, source: 'ECB-' + fixDay, interpolated: fixDay !== d };
+  }
+  // Total leg.
+  if (c === m) {
+    clone().fxLock = { pair: c + '/' + m, rate: 1, source: '1:1', interpolated: false };
+  } else {
+    var tl = lockFor(c);
+    if (tl) clone().fxLock = tl;
+    // No cached rate yet: keep the stored lock (corrected on re-render).
+  }
+  // Fee leg: only when the fee has its own currency. Same-currency fees ride
+  // the trade lock (no separate lock); a fee already in main is 1:1.
+  var feeN = Number(t.fee);
+  var fcRaw = (typeof t.feeCurrency === 'string' && String(t.feeCurrency).trim() !== '')
+    ? String(t.feeCurrency).trim().toUpperCase() : c;
+  if (isFinite(feeN) && feeN > 0 && fcRaw && fcRaw !== c) {
+    var fl = lockFor(fcRaw);
+    if (fl) {
+      clone().feeFxLock = { pair: fl.pair, rate: fl.rate, source: fl.source, interpolated: fl.interpolated };
+    }
+    // Cache miss: keep a stored feeFxLock if the trade already carries one,
+    // otherwise normalizeTrade flags the same-rate fallback (feeFxAssumedSameRate).
+  } else if (out && Object.prototype.hasOwnProperty.call(out, 'feeFxLock')) {
+    // Fee shares the trade currency (or is zero): a stale separate lock
+    // would convert it at the wrong rate, so drop it.
+    try { delete out.feeFxLock; } catch (e) { out.feeFxLock = undefined; }
+  }
+  return out || t;
 }
 
 function convertTrades(trades, main) {
@@ -819,6 +860,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.pickRate = pickRate;
   window.Inoculens.convertTrade = convertTrade;
   window.Inoculens.convertTrades = convertTrades;
+  window.Inoculens.displayPairs = displayPairs;
   window.Inoculens.ensureDisplayRates = ensureDisplayRates;
   window.Inoculens.getCachedRate = getCachedRate;
   window.Inoculens.cacheRate = cacheRate;
@@ -829,13 +871,26 @@ if (typeof window !== 'undefined') {
 // === Ledger ===
 // Pure cost-basis engine: normalizeTrade + average-cost + FIFO + positions +
 // validation. No DOM, no network, no storage. All main-currency conversion
-// uses the trade's frozen fxLock.rate (Task 3). Read by Ui (Task 6) via
+// uses the trade's frozen fxLock.rate (Task 3) plus feeFxLock.rate for a
+// differently-denominated fee. Read by Ui (Task 6) via
 // computePositions / validateTrade.
+//
+// Fee economics (exchange model): when feeCurrency === currency the fee comes
+// OUT OF the stated total (100 in, 1 fee, 99 invested: net = total - fee,
+// carved fee rides as feeDrag subtracted once in totalPL, never inside
+// Realized). A differently-denominated fee is separate money and stays
+// additive for buys (net = total + fee, no drag — higher entry). Sells always
+// net proceeds (total - fee, clamped >= 0) so a sale at cost still leaves the
+// fee as the loss: you must sell higher to break even. fee:0 behaves exactly
+// as before.
 //
 // Fee assumption (documented): when feeCurrency !== currency and the trade
 // carries no feeFxLock, the fee is converted at the trade's own fxLock.rate
-// and the result is flagged feeFxAssumedSameRate:true. When feeFxLock
-// ({rate}) is present it is used instead and no flag is set.
+// and the result is flagged feeFxAssumedSameRate:true — except when the fee
+// is already in the display main (inferred from fxLock.pair), which converts
+// at 1. When feeFxLock ({rate}) is present it is used instead and no flag is
+// set. convertTrade/displayPairs keep feeFxLock in sync on fiat switches, and
+// onTradeSubmit stores both locks at entry time.
 
 function ledgerFxRate(lock) {
   var r = lock ? Number(lock.rate) : NaN;
@@ -853,8 +908,20 @@ function normalizeTrade(t) {
   var feeFxAssumedSameRate = false;
   var ccy = typeof t.currency === 'string' ? t.currency.trim().toUpperCase() : null;
   var feeCcy = typeof t.feeCurrency === 'string' && String(t.feeCurrency).trim() !== '' ? String(t.feeCurrency).trim().toUpperCase() : ccy;
+  // Current display main, inferred from the (already converted) fxLock pair
+  // e.g. "USD/EUR" -> main EUR. Lets a fee already in main convert at 1 even
+  // for legacy trades that carry no feeFxLock.
+  var mainFromLock = null;
+  try {
+    if (t.fxLock && typeof t.fxLock.pair === 'string') {
+      var parts = String(t.fxLock.pair).split('/');
+      if (parts.length === 2 && parts[1]) mainFromLock = String(parts[1]).trim().toUpperCase();
+    }
+  } catch (e) { mainFromLock = null; }
   if (ccy && feeCcy && feeCcy !== ccy) {
-    if (t.feeFxLock && isFinite(Number(t.feeFxLock.rate)) && Number(t.feeFxLock.rate) > 0) {
+    if (mainFromLock && feeCcy === mainFromLock) {
+      feeRate = 1;
+    } else if (t.feeFxLock && isFinite(Number(t.feeFxLock.rate)) && Number(t.feeFxLock.rate) > 0) {
       feeRate = Number(t.feeFxLock.rate);
     } else if (fee !== 0) {
       feeFxAssumedSameRate = true; // same-lock fallback, flagged
@@ -933,7 +1000,10 @@ function computeAverage(trades) {
       if (e.qty <= LEDGER_EPS) continue; // no inventory: ignore, never negative
       var sellQty = Math.min(qs, e.qty);
       var avg = e.qty > 0 ? e.cost / e.qty : 0;
-      var proceeds = n.totalMain;
+      // Net proceeds: the fee always comes off the top (same or cross
+      // currency), so selling at cost still leaves the fee as the loss —
+      // you must sell higher to break even. Clamped, never negative.
+      var proceeds = Math.max(0, n.totalMain - n.feeMain);
       e.fees = (e.fees || 0) + n.feeMain;
       if (qs > e.qty && qs > 0) proceeds = proceeds * (sellQty / qs);
       e.realized += proceeds - avg * sellQty;
@@ -1023,7 +1093,9 @@ function computeFifo(trades) {
       if (!isFinite(qty) || qty <= 0) continue;
       var heldFifo = q.reduce(function (s, l) { return s + l.qty; }, 0);
       if (heldFifo <= LEDGER_EPS) continue; // no inventory: ignore, never negative
-      var proceedsTotal = n.totalMain;
+      // Net proceeds (total minus fee, any currency) — the ledger runs on
+      // what actually lands, fee tracked separately for display.
+      var proceedsTotal = Math.max(0, n.totalMain - n.feeMain);
       st.fees = (st.fees || 0) + n.feeMain;
       var unitProceeds = qty > 0 ? proceedsTotal / qty : 0;
       var sellQty = Math.min(qty, heldFifo);
@@ -1291,7 +1363,9 @@ function computePortfolio(allTrades, live, method) {
       var ss = stFor(t.accountId, sym);
       if (ss.qty <= LEDGER_EPS && (!isFifo || ss.queue.reduce(function (s, l) { return s + l.qty; }, 0) <= LEDGER_EPS)) return;
       ss.touched = true;
-      var proceeds = n.totalMain;
+      // Net proceeds in main (total minus fee, clamped): sells must clear the
+      // fee to break even, in every fiat view.
+      var proceeds = Math.max(0, n.totalMain - n.feeMain);
       if (isFifo) {
         var heldF = ss.queue.reduce(function (s, l) { return s + l.qty; }, 0);
         var sQty = Math.min(qs, heldF);
@@ -3546,14 +3620,15 @@ function tradeBlock(t, main, accountNameById) {
   } else {
     box.appendChild(statRow('Paid', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
     box.appendChild(statRow('Converted', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
-    // Two prices when a same-currency fee splits them: Exec is the net unit
-    // cost the books run on (== Average entry); Real is the all-in price per
-    // coin in hand (higher after the fee — your true break-even reference).
+    // Two prices when a fee is present: Exec is quoted against the FULL total
+    // (fixed in stone, reference only); Real is net of the fee — (invested -
+    // fee) / qty for buys, (proceeds - fee) / qty for sells — and equals the
+    // Average entry the books run on. Your break-even sits at Exec, above Real.
     var pq = Number(t.qty);
-    if (n.feeLossMain > 0 && isFinite(pq) && pq > 0 && n.totalMain > 0) {
+    if (n.feeMain > 0 && isFinite(pq) && pq > 0 && n.totalMain > 0) {
       var symU = String(t.symbol || '').toUpperCase();
-      var execP = n.netMain / pq;
-      var realP = (n.netMain + n.feeLossMain) / pq;
+      var execP = n.totalMain / pq;
+      var realP = (t.type === 'sell' ? Math.max(0, n.totalMain - n.feeMain) : n.netMain) / pq;
       box.appendChild(statRow('Exec. price', fmtMoney(execP, main) + ' / ' + symU, execP, false));
       box.appendChild(statRow('Real price', fmtMoney(realP, main) + ' / ' + symU, realP, false));
     }
@@ -3964,10 +4039,27 @@ function fxBadgeText(t) {
     bits += ' @ ' + rounded;
   }
   if (lock.interpolated) bits += ' (prev close)';
+  var head = bits;
   if (t && stableToUsd(t.currency)) {
-    return String(t.currency).toUpperCase() + '→USD 1.0 · ' + bits;
+    head = String(t.currency).toUpperCase() + '→USD 1.0 · ' + bits;
   }
-  return bits;
+  // A differently-denominated fee converts at its own historical rate (never
+  // at the trade rate): surface it so the fiat math stays auditable.
+  try {
+    var feeN = t ? Number(t.fee) : 0;
+    var ccyU = t && typeof t.currency === 'string' ? String(t.currency).trim().toUpperCase() : '';
+    var feeCcyU = t && typeof t.feeCurrency === 'string' && String(t.feeCurrency).trim() !== ''
+      ? String(t.feeCurrency).trim().toUpperCase() : ccyU;
+    if (isFinite(feeN) && feeN > 0 && feeCcyU && ccyU && feeCcyU !== ccyU) {
+      var fl = t.feeFxLock || null;
+      var fr = fl ? Number(fl.rate) : NaN;
+      var fbits = fl && fl.source ? String(fl.source) : 'trade rate*';
+      if (fl && isFinite(fr)) fbits += ' @ ' + (Math.round(fr * 10000) / 10000);
+      if (fl && fl.interpolated) fbits += ' (prev close)';
+      head += ' · fee ' + feeCcyU + '→' + String((lock.pair || '').split('/')[1] || '').toUpperCase() + ' ' + fbits;
+    }
+  } catch (e) { /* badge never breaks the row */ }
+  return head;
 }
 
 function createAccount(name, ticker, kind, extra) {
@@ -4603,11 +4695,13 @@ function buildTradeForm() {
     '<select id="t-toaccount"></select><p class="fld-hint" id="t-toaccount-hint">Transfer moves cost basis — only the network + fiat fees count as losses.</p></div>' +
     '<div class="fld-locked" hidden><span class="fld-label">Symbol (locked to account)</span> <span id="t-symbol-locked" role="status"></span></div>' +
     '<div id="t-qty-row"><label for="t-qty" id="t-qty-label">Quantity</label>' +
-    '<input id="t-qty" inputmode="decimal" placeholder="e.g. 1"></div>' +
+    '<input id="t-qty" inputmode="decimal" placeholder="e.g. 1">' +
+    '<p class="fld-hint" id="t-qty-hint">Amount you received (net of any fee taken in asset).</p></div>' +
     '<div id="t-toqty-row" hidden><label for="t-toqty">Received quantity</label>' +
     '<input id="t-toqty" inputmode="decimal" placeholder="e.g. 15.2"></div>' +
     '<div id="t-total-row"><label for="t-total" id="t-total-label">Total (native currency)</label>' +
-    '<input id="t-total" inputmode="decimal" placeholder="e.g. 50000"></div>' +
+    '<input id="t-total" inputmode="decimal" placeholder="e.g. 50000">' +
+    '<p class="fld-hint" id="t-total-hint">Full amount paid, including the fee below.</p></div>' +
     '<div id="t-currency-row"><label for="t-currency">Currency</label>' +
     '<select id="t-currency">' + ccyOptions('EUR') + '</select></div>' +
     '<label for="t-custom-ccy" id="t-custom-ccy-label" hidden>Custom currency code</label>' +
@@ -4620,7 +4714,7 @@ function buildTradeForm() {
     '<p class="fld-hint">On-chain gas / miner fee taken from the moved amount. Tracked as a real loss.</p></div>' +
     '<label for="t-fee">Fee (fiat)</label>' +
     '<input id="t-fee" inputmode="decimal" placeholder="e.g. 0">' +
-    '<p class="fld-hint">If it shares the trade currency, it comes out of the total above.</p>' +
+    '<p class="fld-hint">If it shares the trade currency, it comes out of the total above (100 total + 1 fee = 99 invested). A different fee currency is extra on top.</p>' +
     '<label for="t-feeccy">Fee currency</label>' +
     '<select id="t-feeccy">' + ccyOptions('EUR', false) + '</select>' +
     '<label for="t-note">Note</label>' +
@@ -4989,7 +5083,7 @@ function onTradeSubmit(ev) {
     try { heldFrom = heldForAccount(st0.trades, accountId, fromSym); } catch (e) { heldFrom = heldQtyFor(accountTrades(st0, accountId), fromSym); }
     if (fromQty > heldFrom + LEDGER_EPS) { tradeFormError('oversell: max sellable is ' + heldFrom); return; }
     lockSubmit(true, 'Saving…');
-    function proceedSwap(lock) {
+    function proceedSwap(lock, feeLock) {
       var st = loadState();
       if (manualPrice !== null) {
         st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
@@ -4998,6 +5092,9 @@ function onTradeSubmit(ev) {
       }
       var swapId = uid();
       var sellLeg = { id: uid(), type: 'sell', symbol: fromSym, qty: fromQty, total: swapTotal, currency: swapCcy, date: date, fee: feeS, feeCurrency: feeCcyS, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: accountId, swapId: swapId, createdAt: new Date().toISOString() };
+      if (feeLock && isFinite(Number(feeLock.rate)) && Number(feeLock.rate) > 0) {
+        sellLeg.feeFxLock = { pair: feeLock.pair, rate: feeLock.rate, source: feeLock.source, interpolated: !!feeLock.interpolated };
+      }
       var buyLeg = { id: uid(), type: 'buy', symbol: toSym, qty: toQty, total: swapTotal, currency: swapCcy, date: date, fee: 0, feeCurrency: swapCcy, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: toAccSwap.id, swapId: swapId, createdAt: new Date().toISOString() };
       var e1 = validateTrade(sellLeg, heldFrom);
       if (e1) { tradeFormError(e1); lockSubmit(false, 'Add record'); return; }
@@ -5013,30 +5110,72 @@ function onTradeSubmit(ev) {
       render();
       closeDialog('trade-dialog');
     }
-    if (swapCcy === String(main).toUpperCase()) {
-      proceedSwap({ pair: swapCcy + '/' + main, rate: 1, source: '1:1', interpolated: false });
-      return;
-    }
-    if (manualRate !== null) {
-      proceedSwap({ pair: swapCcy + '/' + main, rate: manualRate, source: 'manual', interpolated: false });
-      return;
-    }
-    lockSubmit(true, 'Saving…');
-    fetchEcbRate(date, swapCcy, main).then(function (r) {
-      proceedSwap({ pair: swapCcy + '/' + main, rate: r.rate, source: r.source, interpolated: !!r.interpolated });
-    }, function () {
-      lockSubmit(false, 'Add record');
-      showBanner('FX rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.', 'error', {
-        title: 'FX error',
-        lines: [
-          'Pair: ' + swapCcy + ' → ' + main,
-          'Trade date: ' + date,
-          'Cause: no ECB fixing cached and the rate request failed (weekend gap or network).',
-          'Tip: nothing was saved yet — enter the rate manually to proceed.'
-        ]
+    (function resolveSwapFx() {
+      var mainU = String(main).toUpperCase();
+      var needTotalS = (swapCcy !== mainU);
+      var needFeeS = (feeS > 0 && feeCcyS !== mainU && feeCcyS !== swapCcy);
+      function lock11S(f) { return { pair: f + '/' + mainU, rate: 1, source: '1:1', interpolated: false }; }
+      function failSwap(pairs) {
+        lockSubmit(false, 'Add record');
+        showBanner('FX rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.', 'error', {
+          title: 'FX error',
+          lines: [
+            'Pair: ' + pairs.join(', '),
+            'Trade date: ' + date,
+            'Cause: no ECB fixing cached and the rate request failed (weekend gap or network).',
+            'Tip: nothing was saved yet — enter the rate manually to proceed.'
+          ]
+        });
+        tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
+      }
+      if (!needTotalS && !needFeeS) {
+        proceedSwap(lock11S(swapCcy), null);
+        return;
+      }
+      if (manualRate !== null) {
+        var mLock = needTotalS
+          ? { pair: swapCcy + '/' + mainU, rate: manualRate, source: 'manual', interpolated: false }
+          : lock11S(swapCcy);
+        if (!needFeeS) { proceedSwap(mLock, null); return; }
+        var hitF = getCachedRate(date, feeCcyS, mainU);
+        if (hitF) {
+          var fixF = (/^ECB-(\d{4}-\d{2}-\d{2})$/.exec(hitF.source) || [])[1] || date.slice(0, 10);
+          proceedSwap(mLock, { pair: feeCcyS + '/' + mainU, rate: hitF.rate, source: 'ECB-' + fixF, interpolated: fixF !== date.slice(0, 10) });
+          return;
+        }
+        lockSubmit(true, 'Saving…');
+        fetchEcbRate(date, feeCcyS, mainU).then(function (rf) {
+          try { cacheRate(date, feeCcyS, mainU, rf.rate, rf.source); saveFxCache(); } catch (e) { /* ignore */ }
+          proceedSwap(mLock, { pair: feeCcyS + '/' + mainU, rate: rf.rate, source: rf.source, interpolated: !!rf.interpolated });
+        }, function () { proceedSwap(mLock, null); });
+        return;
+      }
+      lockSubmit(true, 'Saving…');
+      var tRes = null;
+      var fRes = null;
+      var jobs = [];
+      if (needTotalS) jobs.push(fetchEcbRate(date, swapCcy, mainU).then(function (r) { tRes = r; }, function (e) { throw e; }));
+      if (needFeeS) jobs.push(fetchEcbRate(date, feeCcyS, mainU).then(function (r) { fRes = r; }, function (e) { throw e; }));
+      Promise.all(jobs).then(function () {
+        var tl = needTotalS
+          ? { pair: swapCcy + '/' + mainU, rate: tRes.rate, source: tRes.source, interpolated: !!tRes.interpolated }
+          : lock11S(swapCcy);
+        var fl = (needFeeS && fRes)
+          ? { pair: feeCcyS + '/' + mainU, rate: fRes.rate, source: fRes.source, interpolated: !!fRes.interpolated }
+          : null;
+        try {
+          if (tRes) cacheRate(date, swapCcy, mainU, tRes.rate, tRes.source);
+          if (fRes) cacheRate(date, feeCcyS, mainU, fRes.rate, fRes.source);
+          saveFxCache();
+        } catch (e) { /* ignore */ }
+        proceedSwap(tl, fl);
+      }, function () {
+        var pairs = [];
+        if (needTotalS) pairs.push(swapCcy + ' → ' + mainU);
+        if (needFeeS) pairs.push(feeCcyS + ' → ' + mainU);
+        failSwap(pairs.length ? pairs : [swapCcy + ' → ' + mainU]);
       });
-      tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
-    });
+    })();
     return;
   }
   // --- Single-leg types (buy/sell/transfer/income/expense), new or edit ---
@@ -5117,11 +5256,22 @@ function onTradeSubmit(ev) {
     }
   } catch (e) { /* validation continues; engine clamps anyway */ }
   // proceed() re-reads state so a slow ECB fetch cannot clobber newer writes.
-  function proceed(lock) {
+  // feeLock is the optional feeFxLock ({rate,...}) when the fee has its own
+  // currency; null/undefined means the fee rides the trade lock (same
+  // currency) or is zero.
+  function proceed(lock, feeLock) {
     var st = loadState();
     if (manualPrice !== null && (side === 'buy' || side === 'sell')) {
       st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
       st.priceOverrides[symbol] = manualPrice;
+    }
+    function withFeeLock(trade) {
+      if (feeLock && typeof feeLock.rate === 'number' && isFinite(feeLock.rate) && feeLock.rate > 0) {
+        trade.feeFxLock = { pair: feeLock.pair, rate: feeLock.rate, source: feeLock.source, interpolated: !!feeLock.interpolated };
+      } else {
+        try { delete trade.feeFxLock; } catch (e) { /* ignore */ }
+      }
+      return trade;
     }
     var trade;
     if (isEditing) {
@@ -5144,6 +5294,7 @@ function onTradeSubmit(ev) {
         accountId: accountId,
         createdAt: prev.createdAt || new Date().toISOString()
       };
+      withFeeLock(trade);
       if (side === 'transfer') { if (toAccId) trade.toAccountId = toAccId; trade.networkFee = networkFee; }
       else if (side === 'expense' && qty === null) { delete trade.qty; }
       if (prev.swapId) trade.swapId = prev.swapId;
@@ -5185,6 +5336,7 @@ function onTradeSubmit(ev) {
       accountId: accountId,
       createdAt: new Date().toISOString()
     };
+    withFeeLock(trade);
     if (side === 'transfer') { if (toAccId) trade.toAccountId = toAccId; trade.networkFee = networkFee; }
     if (side === 'expense' && qty === null) { delete trade.qty; }
     var heldForCheck = 1e18;
@@ -5215,30 +5367,90 @@ function onTradeSubmit(ev) {
     render(); // route() picks up the URL: the trade's account page shows the new rows
     closeDialog('trade-dialog');
   }
-  var needsFx = !(from === String(main).toUpperCase()) && (total > 0 || fee > 0);
-  if (!needsFx) {
-    proceed({ pair: from + '/' + main, rate: (from === String(main).toUpperCase() ? 1 : 1), source: (from === String(main).toUpperCase() ? '1:1' : '1:1'), interpolated: false });
-    return;
+  // Dual FX locks: total currency->main plus, when the fee has its own
+  // currency, feeCurrency->main at the same trade date. Same-currency fees
+  // ride the trade lock (no second fetch); fees already in main are 1:1.
+  // Native total/fee stay in stone; only the locks convert for display/P&L.
+  var mainU = String(main).toUpperCase();
+  var needTotal = (total > 0 && from !== mainU);
+  var needFee = (fee > 0 && feeCurrency !== mainU && feeCurrency !== from);
+  function lock11(pairFrom) {
+    return { pair: pairFrom + '/' + mainU, rate: 1, source: '1:1', interpolated: false };
   }
-  if (manualRate !== null) {
-    proceed({ pair: from + '/' + main, rate: manualRate, source: 'manual', interpolated: false });
-    return;
-  }
-  lockSubmit(true, 'Saving…');
-  fetchEcbRate(date, from, main).then(function (r) {
-    proceed({ pair: from + '/' + main, rate: r.rate, source: r.source, interpolated: !!r.interpolated });
-  }, function () {
-    lockSubmit(false, side === 'buy' || side === 'sell' ? 'Add record' : 'Add record');
+  function fxError(pairs) {
+    lockSubmit(false, 'Add record');
     showBanner('FX rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.', 'error', {
       title: 'FX error',
       lines: [
-        'Pair: ' + from + ' → ' + main,
+        'Pair: ' + pairs.join(', '),
         'Trade date: ' + date,
         'Cause: no ECB fixing cached and the rate request failed (weekend gap or network).',
         'Tip: nothing was saved yet — enter the rate manually to proceed.'
       ]
     });
     tradeFormError('ECB rate unavailable — open “Manual FX rate” below and enter a rate to save this trade.');
+  }
+  if (!needTotal && !needFee) {
+    proceed(lock11(from), null);
+    return;
+  }
+  if (manualRate !== null) {
+    var manualLock = (from === mainU) ? lock11(from)
+      : { pair: from + '/' + mainU, rate: manualRate, source: 'manual', interpolated: false };
+    if (!needFee) {
+      proceed(manualLock, null);
+      return;
+    }
+    // Manual covers the total leg; the fee leg still wants its own history.
+    var cachedFee = getCachedRate(date, feeCurrency, mainU);
+    if (cachedFee) {
+      var fixF = (/^ECB-(\d{4}-\d{2}-\d{2})$/.exec(cachedFee.source) || [])[1] || date.slice(0, 10);
+      proceed(manualLock, { pair: feeCurrency + '/' + mainU, rate: cachedFee.rate, source: 'ECB-' + fixF, interpolated: fixF !== date.slice(0, 10) });
+      return;
+    }
+    lockSubmit(true, 'Saving…');
+    fetchEcbRate(date, feeCurrency, mainU).then(function (rf) {
+      cacheRate(date, feeCurrency, mainU, rf.rate, rf.source);
+      try { saveFxCache(); } catch (e) { /* ignore */ }
+      proceed(manualLock, { pair: feeCurrency + '/' + mainU, rate: rf.rate, source: rf.source, interpolated: !!rf.interpolated });
+    }, function () {
+      // Fee history unreachable: keep the manual total and flag the fee as
+      // assumed-same-rate (*) rather than blocking the save.
+      proceed(manualLock, null);
+    });
+    return;
+  }
+  lockSubmit(true, 'Saving…');
+  var jobs = [];
+  var totalRes = null;
+  var feeRes = null;
+  if (needTotal) {
+    jobs.push(fetchEcbRate(date, from, mainU).then(function (r) { totalRes = r; }, function (e) { throw { leg: from + ' → ' + mainU, err: e }; }));
+  }
+  if (needFee) {
+    jobs.push(fetchEcbRate(date, feeCurrency, mainU).then(function (r) { feeRes = r; }, function (e) { throw { leg: feeCurrency + ' → ' + mainU, err: e }; }));
+  }
+  Promise.all(jobs).then(function () {
+    var tLock = needTotal
+      ? { pair: from + '/' + mainU, rate: totalRes.rate, source: totalRes.source, interpolated: !!totalRes.interpolated }
+      : lock11(from);
+    var fLock = null;
+    if (needFee && feeRes) {
+      fLock = { pair: feeCurrency + '/' + mainU, rate: feeRes.rate, source: feeRes.source, interpolated: !!feeRes.interpolated };
+      try {
+        if (needTotal && totalRes) cacheRate(date, from, mainU, totalRes.rate, totalRes.source);
+        cacheRate(date, feeCurrency, mainU, feeRes.rate, feeRes.source);
+        saveFxCache();
+      } catch (e) { /* ignore */ }
+    } else if (needTotal && totalRes) {
+      try { cacheRate(date, from, mainU, totalRes.rate, totalRes.source); saveFxCache(); } catch (e) { /* ignore */ }
+    }
+    proceed(tLock, fLock);
+  }, function (fail) {
+    var pairs = [];
+    if (needTotal) pairs.push(from + ' → ' + mainU);
+    if (needFee) pairs.push(feeCurrency + ' → ' + mainU);
+    fxError(pairs.length ? pairs : [(fail && fail.leg) || (from + ' → ' + mainU)]);
   });
 }
 
