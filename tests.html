@@ -39,7 +39,7 @@
         <button type="button" id="tb-fifo" aria-pressed="false">FIFO</button>
         <button type="button" id="tb-add">+ Add trade</button>
         <button type="button" id="tb-account">+ Account</button>
-        <button type="button" id="tb-sync" class="icon-btn" hidden aria-label="Sync status"></button>
+        <button type="button" id="tb-sync" class="icon-btn sync-img-btn" hidden aria-label="Sync status"><img id="tb-sync-img" src="/icons/sync-ok.png" alt="" width="20" height="20"></button>
         <button type="button" id="tb-settings">Settings</button>
       </div>
       <p id="tb-totals" class="hero-sub" aria-live="polite"></p>
@@ -1843,11 +1843,13 @@
           render();
           assert(btn.hidden === false, 'icon shows once configured');
           assert(btn.getAttribute('data-sync') === 'stale', 'never-synced reads stale, got ' + btn.getAttribute('data-sync'));
+          assert(document.getElementById('tb-sync-img').src.indexOf('/icons/sync-stale.png') !== -1, 'stale icon art');
           cfg = S.syncLoadConfig();
           cfg.lastSyncedHash = S.syncCurrentHash();
           S.syncSaveConfig(cfg);
           render();
           assert(btn.getAttribute('data-sync') === 'ok', 'matching hash reads ok, got ' + btn.getAttribute('data-sync'));
+          assert(document.getElementById('tb-sync-img').src.indexOf('/icons/sync-ok.png') !== -1, 'ok icon art');
           btn.click();
           var dlg = document.getElementById('settings-dialog');
           assert(dlg && (dlg.open || dlg.hasAttribute('open')), 'click opens settings');

@@ -7412,6 +7412,14 @@ function syncSetSyncIcon(state, label) {
   try { btn.setAttribute('data-sync', state); } catch (e) { /* ignore */ }
   try { btn.setAttribute('aria-label', label); } catch (e) { /* ignore */ }
   try { btn.title = label; } catch (e) { /* ignore */ }
+  try {
+    var img = document.getElementById('tb-sync-img');
+    if (img) {
+      img.src = state === 'busy' ? '/icons/sync-busy.gif'
+        : state === 'stale' ? '/icons/sync-stale.png'
+        : '/icons/sync-ok.png';
+    }
+  } catch (e) { /* ignore */ }
 }
 
 function syncRefreshHeaderIcon(st) {
