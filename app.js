@@ -2349,12 +2349,9 @@ function freezeExecLock(tradeId, symbol, date, mainU, kind) {
     try { saveStateGuarded(st); } catch (e) { return; }
     try { render(); } catch (e) { /* paint stays, next render picks it up */ }
   }
-  var oe = null;
-  try { oe = priceOverrideEntry(sym); } catch (e) { oe = null; }
-  if (oe !== null && oe.vs) {
-    patch(oe.price, oe.vs, 'manual'); // tagged override: exact fiat, no fetch
-    return;
-  }
+  // A live global override already serves this trade's Exec row: never stamp
+  // a live price as a historical quote.
+  try { if (priceOverrideEntry(sym) !== null) return; } catch (e) { /* fall through */ }
   fetchHistoricalPrice(sym, day, m, kd).then(function (r) {
     var price = (r && typeof r === 'object') ? r.price : r;
     patch(price, m, (r && typeof r === 'object' && r.day) ? ('Stooq-' + r.day) : 'history');
@@ -5184,7 +5181,7 @@ function buildTradeForm() {
     '<input id="t-note" autocomplete="off" placeholder="e.g. monthly savings">' +
     '<label for="t-manual-rate">Manual FX rate (fallback when ECB is unavailable)</label>' +
     '<input id="t-manual-rate" inputmode="decimal" placeholder="e.g. 0.92">' +
-    '<label for="t-manual-price">Manual live price (override, in fiat)</label>' +
+    '<label for="t-manual-price">Manual exec price (this trade only, in fiat)</label>' +
     '<input id="t-manual-price" inputmode="decimal" placeholder="e.g. 67000">' +
     '</details>' +
     '<div class="fld-error-row"><p id="t-error" class="banner-error" role="alert" hidden></p>' +
@@ -5570,11 +5567,6 @@ function onTradeSubmit(ev) {
     lockSubmit(true, 'Saving…');
     function proceedSwap(lock, feeLock) {
       var st = loadState();
-      if (manualPrice !== null) {
-        st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
-        // manual live price applies to the received asset
-        st.priceOverrides[toSym] = { price: manualPrice, vs: String(main).toUpperCase() };
-      }
       var swapId = uid();
       var sellLeg = { id: uid(), type: 'sell', symbol: fromSym, qty: fromQty, total: swapTotal, currency: swapCcy, date: date, fee: feeS, feeCurrency: feeCcyS, note: (note ? note + ' ' : '') + '[swap]', fxLock: lock, accountId: accountId, swapId: swapId, createdAt: new Date().toISOString() };
       if (feeLock && isFinite(Number(feeLock.rate)) && Number(feeLock.rate) > 0) {
@@ -5753,10 +5745,9 @@ function onTradeSubmit(ev) {
   // currency) or is zero.
     function proceed(lock, feeLock) {
     var st = loadState();
-    if (manualPrice !== null && (side === 'buy' || side === 'sell')) {
-      st.priceOverrides = (st.priceOverrides && typeof st.priceOverrides === 'object') ? st.priceOverrides : {};
-      st.priceOverrides[symbol] = { price: manualPrice, vs: String(main).toUpperCase() };
-    }
+    // NOTE: a trade-dialog manual price stays per-trade (trade.execLock,
+    // attached below) and never touches the global live-price overrides —
+    // those belong to Settings only.
     function withFeeLock(trade) {
       if (feeLock && typeof feeLock.rate === 'number' && isFinite(feeLock.rate) && feeLock.rate > 0) {
         trade.feeFxLock = { pair: feeLock.pair, rate: feeLock.rate, source: feeLock.source, interpolated: !!feeLock.interpolated };
@@ -5797,7 +5788,11 @@ function onTradeSubmit(ev) {
         } else {
           var prevFrozen = null;
           try { prevFrozen = frozenExecOf(prev); } catch (e) { prevFrozen = null; }
-          if (prevFrozen && prev.date === date && String(prev.symbol).toUpperCase() === symbol) {
+          // A cleared manual field drops the manual quote (history refreezes);
+          // an untouched history quote is kept as-is, no refetch.
+          var keepIt = prevFrozen && String(prevFrozen.source).toLowerCase() !== 'manual' &&
+            prev.date === date && String(prev.symbol).toUpperCase() === symbol;
+          if (keepIt) {
             trade.execLock = { price: prevFrozen.price, vs: prevFrozen.vs, source: prevFrozen.source };
           } else {
             try { delete trade.execLock; } catch (e) { /* ignore */ }
