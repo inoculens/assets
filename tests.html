@@ -2099,6 +2099,14 @@
           navHome();
         });
 
+        test('content column is wide and stays centered', function () {
+          var max = window.getComputedStyle(document.documentElement).getPropertyValue('--max').trim();
+          assert(max === '1280px', 'content width must fit long-fiat rows with air, got ' + max);
+          var mainEl = document.querySelector('main');
+          assert(mainEl !== null, 'main must render');
+          assert(window.getComputedStyle(mainEl).maxWidth === '1280px', 'main must use the shared width, got ' + window.getComputedStyle(mainEl).maxWidth);
+        });
+
         test('short rate takes content width, no dead gap', function () {
           var L2 = window.Inoculens;
           L2.saveState({
