@@ -6112,7 +6112,7 @@ var SYNC_HINTS = {
 // provider; tokens and ciphertext still flow directly browser<->provider
 // with no Plutus server anywhere). Empty until the app owner registers
 // them; while empty, users fall back to their own OAuth app below.
-var SYNC_SHARED_APPS = { gdrive: '', dropbox: '' };
+var SYNC_SHARED_APPS = { gdrive: '593485863383-tcl6m894iqoqa2cqan3ui80ihau93fq9.apps.googleusercontent.com', dropbox: 'rractvt806na5rn' };
 
 function syncSharedId(providerId) {
   var v = SYNC_SHARED_APPS[providerId];
