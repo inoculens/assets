@@ -6395,11 +6395,14 @@ function syncJoinUrl(base, name) {
 function syncSanitizeFilename(name) {
   // User-editable basename, fixed extension: strip any pasted extension,
   // unsafe characters and dot-segments, then lock '.enc.json' back on.
-  // Idempotent: already-correct names pass through unchanged.
+  // Idempotent: already-correct names pass through unchanged. Non-Latin1
+  // characters become '_' so the name stays valid in HTTP headers too
+  // (Dropbox carries the path in Dropbox-API-Arg, which must be Latin1).
   var s = String(name == null ? '' : name).trim();
   s = s.replace(/^[/\\.\s]+/, '');
   s = s.replace(/(\.enc\.json|\.json|\.enc)$/i, '');
   s = s.replace(/[/\\'"]/g, '');
+  s = s.replace(/[^\x20-\xFF]/g, '_');
   s = s.replace(/[. ]+$/, '').slice(0, 100);
   if (!s) s = SYNC_DEFAULT_BASENAME;
   return s + '.enc.json';
@@ -7217,11 +7220,21 @@ function syncSplitUrl(url) {
   return { host: host, path: path };
 }
 
+// S3/SigV4 path encoding: encodeURIComponent leaves !'()* raw, but the
+// canonical request requires them percent-encoded (uppercase hex), or AWS
+// rejects the signature. Folders and keys share it; bucket names cannot
+// contain those characters by S3 naming rules.
+function syncS3EncodeSeg(seg) {
+  return encodeURIComponent(String(seg)).replace(/[!'()*]/g, function (c) {
+    return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+  });
+}
+
 function syncS3Url(cfg) {
   var ep = String(cfg.endpoint || '').replace(/\/+$/, '');
   var folder = syncNormalizeFolder(cfg.folder);
-  var key = String(cfg.objectKey || '').split('/').map(function (seg) { return encodeURIComponent(seg); }).join('/');
-  var full = (folder ? folder.split('/').map(function (seg) { return encodeURIComponent(seg); }).join('/') + '/' : '') + key;
+  var key = String(cfg.objectKey || '').split('/').map(syncS3EncodeSeg).join('/');
+  var full = (folder ? folder.split('/').map(syncS3EncodeSeg).join('/') + '/' : '') + key;
   return ep + '/' + encodeURIComponent(cfg.bucket) + '/' + full;
 }
 
@@ -8636,6 +8649,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncS3CanonicalRequest = syncS3CanonicalRequest;
   window.Inoculens.syncAmzDate = syncAmzDate;
   window.Inoculens.syncSplitUrl = syncSplitUrl;
+  window.Inoculens.syncS3Url = syncS3Url;
   window.Inoculens.syncRequireHttpsUrl = syncRequireHttpsUrl;
   window.Inoculens.syncS3ErrorBody = syncS3ErrorBody;
   window.Inoculens.syncFetch = syncFetch;

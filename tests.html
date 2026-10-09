@@ -1959,7 +1959,7 @@
         assert(S.syncSanitizeFilename('my profile.enc.json') === 'my profile.enc.json', 'idempotent');
         assert(S.syncSanitizeFilename('a/b\\c"d') === 'abcd.enc.json', 'unsafe stripped');
         assert(S.syncSanitizeFilename('') === 'plutus.inoculens.com.enc.json', 'default basename');
-        assert(S.syncDisplayBasename('plutus.inoculens.com.enc.json') === 'plutus.inoculens.com', 'display strips ext');
+        assert(S.syncSanitizeFilename('portofoliu-șț€.json') === 'portofoliu-___.enc.json', 'non-latin1 folded for header safety');        assert(S.syncDisplayBasename('plutus.inoculens.com.enc.json') === 'plutus.inoculens.com', 'display strips ext');
         assert(S.syncNormalizeFolder(' Work//x/ ') === 'Work/x', 'folder normalize');
         assert(S.syncNormalizeFolder('../..') === '', 'folder traversal dropped');
         var a = S.syncLocationKey({ provider: 'gdrive', folder: 'P', filename: 'a.enc.json' });
