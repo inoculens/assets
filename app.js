@@ -2608,6 +2608,25 @@ function renderSummaryCards(st, rows, dtradesOpt, nAcctsOpt) {
   }
   if (hv) hv.title = hvTarget ? hvTarget.textContent : '';
   fitHeroValue();
+  // Invested amount: cost basis of current holdings (entry × held, already
+  // in the display fiat at each trade's locked official rate). Sits between
+  // value and pill on one small line; truncates, never resizes the box.
+  var hi = document.getElementById('hero-invested');
+  if (hi) {
+    if (!rows.length) {
+      hi.textContent = '';
+      hi.hidden = true;
+    } else {
+      var inv = 0;
+      rows.forEach(function (p) {
+        var q = Number(p.qtyHeld);
+        var e = Number(p.avgEntry);
+        if (isFinite(q) && isFinite(e) && q > 0) inv += q * e;
+      });
+      hi.hidden = false;
+      hi.textContent = 'INVESTED AMOUNT: ' + fmtMoney(inv, main);
+    }
+  }
   var hp = document.getElementById('hero-pl');
   if (hp) {
     if (!rows.length || !plKnown) {

@@ -46,6 +46,7 @@
       <div id="view-home">
         <section id="hero" aria-label="Portfolio total">
           <p class="hero-value" id="hero-value">—</p>
+          <p class="hero-invested" id="hero-invested"></p>
           <p class="hero-pl" id="hero-pl"></p>
         </section>
         <section id="overview" aria-label="Summary"><div class="cards" id="summary-cards"></div></section>
@@ -938,7 +939,18 @@
             'average realized cell should carry data-value 20000, got ' + (cell ? cell.getAttribute('data-value') : 'no cell'));
           navHome();
         });
-        test('home cards stay minimal (no tables)', function () {
+        test('hero shows invested amount between value and pill', function () {
+        seedForUi();
+        init();
+        render();
+        var hi = document.getElementById('hero-invested');
+        assert(hi !== null, 'hero invested line missing');
+        assert(hi.textContent.indexOf('INVESTED AMOUNT') !== -1, 'invested label missing: ' + hi.textContent);
+        assert(hi.textContent.indexOf('60') !== -1, 'spec fixture holds 1 BTC at 60k entry, got: ' + hi.textContent);
+        navHome();
+      });
+
+      test('home cards stay minimal (no tables)', function () {
           seedForUi();
           init();
           navHome();

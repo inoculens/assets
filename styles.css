@@ -433,6 +433,20 @@ section h2, aside h2 {
 
 .hero-pl { margin: 0 0 0.15rem; display: inline-block; min-height: 2.2rem; }
 
+.hero-invested {
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.hero-invested[hidden] { display: none; }
+
 .pill {
   border-radius: 999px;
   padding: 0.32rem 0.9rem;
