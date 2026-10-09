@@ -8164,11 +8164,19 @@ function syncStartOAuth() {
 
 function syncDisconnect() {
   var cfg = syncLoadConfig();
+  // Forget the whole connection: tokens, remembered passwords/keys and
+  // session secrets. Boring config (provider, urls, names) stays.
   cfg.tokens = null;
+  cfg.password = '';
+  cfg.rememberPassword = false;
+  cfg.secretKey = '';
+  cfg.rememberSecret = false;
   syncMemSecrets.password = '';
   syncMemSecrets.secretKey = '';
   syncSaveConfig(cfg);
   syncClearOAuthAttempt();
+  syncSetVal('sy-passwd', '');
+  syncSetVal('sy-skey', '');
   syncRefreshSyncPanel();
   clearBanner();
 }
