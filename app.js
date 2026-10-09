@@ -2251,8 +2251,8 @@ function settingsAlertEl() {
     dlg.insertBefore(el, host);
   }
   // Once per dialog: when Settings closes, a mirrored message moves back to
-  // the page banner so it is not silently lost. Native Esc/backdrop closes
-  // fire 'close' too, so this catches every path (not just closeDialog).
+  // the page banner so it is not silently lost. Native Esc closes fire
+  // 'close' too, so this catches every path (not just closeDialog).
   if (!dlg.getAttribute('data-alert-wired')) {
     dlg.setAttribute('data-alert-wired', '1');
     dlg.addEventListener('close', function () {
@@ -5204,7 +5204,7 @@ function returnFocus() {
 // --- Custom confirm (no browser alerts) ---
 // confirmAction renders the in-app confirm dialog and resolves true/false.
 // Only one pending confirm exists at a time; a newer call settles the older
-// one as cancelled. Esc/backdrop settle as cancelled via close/cancel.
+// one as cancelled. Esc settles as cancelled via close/cancel.
 
 var confirmSettle = null;
 
@@ -5245,7 +5245,7 @@ function settleConfirm(v) {
 
 // Three-way variant for decisions with two real actions (e.g. a taken sync
 // name: download the drive copy OR upload over it). Resolves 'primary',
-// 'secondary', or 'dismiss' (backdrop/Esc/close, preemption). The shared
+// 'secondary', or 'dismiss' (Esc/close, preemption). The shared
 // buttons route to whichever confirm is pending; bool callers are unaffected.
 var confirmSettle3 = null;
 
@@ -5285,12 +5285,13 @@ function wireDialog(id) {
   if (!dlg || dlg.getAttribute('data-wired')) return;
   dlg.setAttribute('data-wired', '1');
   dlg.addEventListener('click', function (e) {
-    if (e.target === dlg) closeDialog(dlg); // backdrop click
+    // No backdrop dismiss: dialogs close only via their X / action buttons
+    // or Esc. (A stray outside click must never silently drop a form.)
     var c = e.target && e.target.closest ? e.target.closest('[data-close]') : null;
     if (c) closeDialog(dlg);
   });
   dlg.addEventListener('close', returnFocus);
-  // Native Esc/backdrop closes bypass closeDialog(): recompute the
+  // Native Esc closes bypass closeDialog(): recompute the
   // background freeze here so it can never stick (or lift early).
   dlg.addEventListener('close', updateModalLock);
 }
