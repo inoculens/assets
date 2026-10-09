@@ -48,6 +48,7 @@
           <p class="hero-value" id="hero-value">—</p>
           <p class="hero-invested" id="hero-invested"></p>
           <p class="hero-pl" id="hero-pl"></p>
+          <div class="hero-alloc" id="hero-alloc" hidden></div>
         </section>
         <section id="overview" aria-label="Summary"><div class="cards" id="summary-cards"></div></section>
         <section id="accounts" aria-label="Accounts"></section>
@@ -948,6 +949,47 @@
         assert(hi.textContent.indexOf('INVESTED AMOUNT') !== -1, 'invested label missing: ' + hi.textContent);
         assert(hi.textContent.indexOf('60') !== -1, 'spec fixture holds 1 BTC at 60k entry, got: ' + hi.textContent);
         navHome();
+      });
+
+      test('donut hole shows the distinct asset count', function () {
+        var L = window.Inoculens;
+        var backup = null;
+        try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+        try {
+          var lp = (L.getLivePrices && L.getLivePrices()) || {};
+          Object.keys(lp).forEach(function (k) { delete lp[k]; });
+          L.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [
+              { id: 'h1', name: 'Cold', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' },
+              { id: 'h2', name: 'Stake', ticker: 'ETH', createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            trades: [
+              { id: 'h-t1', type: 'buy', symbol: 'BTC', qty: 1, total: 50000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'h1', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' },
+              { id: 'h-t2', type: 'buy', symbol: 'ETH', qty: 10, total: 20000, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', note: '', accountId: 'h2', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            priceOverrides: {}
+          });
+          lp.BTC = 60000;
+          lp.ETH = 3000;
+          if (typeof init === 'function') init();
+          render();
+          var texts = document.querySelectorAll('#hero-alloc text');
+          assert(texts.length === 2, 'donut should carry number + label, got ' + texts.length);
+          assert(texts[0].textContent === '2', 'donut number should be 2, got ' + texts[0].textContent);
+          assert(texts[1].textContent === 'ASSETS', 'donut label should read ASSETS, got ' + texts[1].textContent);
+          navHome();
+        } finally {
+          try {
+            if (backup === null) localStorage.removeItem('inoculens.v2');
+            else localStorage.setItem('inoculens.v2', backup);
+          } catch (e) { /* ignore */ }
+          try {
+            var lp2 = (L.getLivePrices && L.getLivePrices()) || {};
+            Object.keys(lp2).forEach(function (k) { delete lp2[k]; });
+          } catch (e) { /* ignore */ }
+          try { render(); } catch (e) { /* ignore */ }
+        }
       });
 
       test('home cards stay minimal (no tables)', function () {

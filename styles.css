@@ -419,7 +419,7 @@ section h2, aside h2 {
 }
 
 .hero-value {
-  margin: 0.35rem 0 0.75rem;
+  margin: 0.35rem 0 0.3rem;
   font-family: var(--font-display);
   font-size: clamp(2.4rem, 6vw, 3.4rem);
   font-weight: 700;
@@ -434,7 +434,7 @@ section h2, aside h2 {
 .hero-pl { margin: 0 0 0.15rem; display: inline-block; min-height: 2.2rem; }
 
 .hero-invested {
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.3rem;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 600;
@@ -1600,6 +1600,21 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   aspect-ratio: 1 / 1;
   flex-shrink: 0;
   filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
+}
+
+.donut-num {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 700;
+  fill: var(--text);
+}
+
+.donut-lab {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  fill: var(--muted);
 }
 
 #hero-value-num {

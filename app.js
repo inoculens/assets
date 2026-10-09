@@ -5941,6 +5941,26 @@ function renderHeroAlloc(st) {
     svg.appendChild(c);
     off += frac;
   });
+  // Total distinct visible assets in the hole (same count as the header).
+  var holeTickers = accountTickers(vIds === null
+    ? (st.accounts || [])
+    : (st.accounts || []).filter(function (a) { return vIds.indexOf(a.id) !== -1; }));
+  var nAssets = holeTickers.length;
+  svg.setAttribute('aria-label', 'Allocation: ' + nAssets + (nAssets === 1 ? ' asset' : ' assets'));
+  var num = document.createElementNS(svgNS, 'text');
+  num.setAttribute('x', cx);
+  num.setAttribute('y', '60');
+  num.setAttribute('text-anchor', 'middle');
+  num.setAttribute('class', 'donut-num');
+  num.textContent = String(nAssets);
+  svg.appendChild(num);
+  var lab = document.createElementNS(svgNS, 'text');
+  lab.setAttribute('x', cx);
+  lab.setAttribute('y', '79');
+  lab.setAttribute('text-anchor', 'middle');
+  lab.setAttribute('class', 'donut-lab');
+  lab.textContent = nAssets === 1 ? 'ASSET' : 'ASSETS';
+  svg.appendChild(lab);
   host.appendChild(svg);
   syncHeroAllocHeight();
 }
