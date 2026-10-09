@@ -1713,6 +1713,9 @@ label.sync-check input {
   border-radius: 9px; padding: 0.5rem 0.9rem; margin-right: 0.75rem;
   cursor: pointer; pointer-events: auto;
 }
+#sy-enc-upload:disabled::file-selector-button,
+#sy-enc-upload:disabled::-webkit-file-upload-button { opacity: 0.45; cursor: not-allowed; }
+#sy-enc-download:disabled { opacity: 0.45; cursor: not-allowed; }
 #s-enc-label {
   display: block;
   margin: 0.9rem 0 0;

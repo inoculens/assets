@@ -2351,6 +2351,23 @@
         }
       });
 
+      test('sync encrypted-file buttons wait for a passphrase', function () {
+        if (typeof init === 'function') init();
+        var passEl = document.getElementById('sy-pass');
+        var up = document.getElementById('sy-enc-upload');
+        var down = document.getElementById('sy-enc-download');
+        assert(passEl && up && down, 'sync passphrase controls missing');
+        passEl.value = '';
+        S.syncRefreshSyncPanel();
+        assert(up.disabled === true && down.disabled === true, 'enc buttons locked without a passphrase');
+        passEl.value = 'pw';
+        passEl.dispatchEvent(new Event('input', { bubbles: true }));
+        assert(up.disabled === false && down.disabled === false, 'enc buttons unlock with a passphrase');
+        passEl.value = '';
+        passEl.dispatchEvent(new Event('input', { bubbles: true }));
+        assert(up.disabled === true && down.disabled === true, 'enc buttons re-lock when cleared');
+      });
+
       test('modal-born errors die with the dialog; page errors return', function () {
         if (typeof init === 'function') init();
         ['trade-dialog', 'account-dialog', 'confirm-dialog', 'note-dialog', 'error-dialog', 'color-dialog'].forEach(function (id) {

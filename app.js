@@ -5619,7 +5619,7 @@ function buildSettings() {
     '<button id="sy-push" type="button">Sync now (upload)</button>' +
     '<button id="sy-pull" type="button">Restore from drive</button>' +
     '</div>' +
-    '<span id="s-enc-label">Encrypted file (no drive needed)</span>' +
+    '<span id="s-enc-label">Encrypted file — needs your passphrase above</span>' +
     '<button id="sy-enc-download" type="button">Download encrypted file</button>' +
     '<input id="sy-enc-upload" type="file" accept="application/json,.json">' +
     '</section>' +
@@ -5668,8 +5668,23 @@ function buildSettings() {
     if (!f) return;
     var reader = new FileReader();
     reader.onload = function () {
+      var text = String(reader.result);
+      // Encrypted backups (*.enc.json) are ours but unreadable here: point
+      // at Cloud Sync instead of the cryptic 'unknown app' rejection.
+      if (syncIsEncryptedBackup(text)) {
+        showBanner('This backup is encrypted — restore it from the Cloud Sync tab.', 'error', {
+          title: 'Encrypted backup',
+          lines: [
+            'This file holds an encrypted copy of your data. The normal restore cannot open it.',
+            'Next step: open the Cloud Sync tab, type your sync passphrase, then upload the file with "Encrypted file" there.'
+          ]
+        });
+        try { showSettingsTab('sync'); } catch (e2) { /* stay where we are */ }
+        input.value = '';
+        return;
+      }
       try {
-        importState(String(reader.result));
+        importState(text);
       } catch (err) {
         showBanner('Import failed — your data was left untouched.', 'error', {
           title: 'Import error',
@@ -6377,6 +6392,18 @@ function syncEnvelopeParse(text) {
   if (iv.length !== 12) throw new Error('sync failed: bad envelope nonce.');
   if (ct.length < 16) throw new Error('sync failed: ciphertext too short.');
   return { iter: iter, salt: salt, iv: iv, ciphertext: ct };
+}
+
+// True when the text is one of our encrypted envelopes (a sync file or an
+// encrypted download) rather than a plain backup. Pure and safe to probe
+// with before importState(), whose 'unknown app' error would only confuse.
+function syncIsEncryptedBackup(text) {
+  try {
+    syncEnvelopeParse(String(text));
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // 'local-newer' | 'remote-newer' | 'equal' | 'unknown' (unparseable dates).
@@ -8224,6 +8251,7 @@ function syncRefreshSyncPanel(opts) {
   } else if (fp) {
     fp.textContent = 'Key fingerprint: —';
   }
+  try { syncToggleEncButtons(); } catch (e) { /* ignore */ }
 }
 
 function syncClearOAuthAttempt() {
@@ -8565,6 +8593,19 @@ function syncTestConnection() {
   });
 }
 
+// The encrypted-file buttons need a passphrase to do anything, so they
+// stay visibly disabled until one is typed (the flows keep their own
+// guards as backstop).
+function syncToggleEncButtons() {
+  if (typeof document === 'undefined') return;
+  var passEl = document.getElementById('sy-pass');
+  var has = !!(passEl && passEl.value);
+  var up = document.getElementById('sy-enc-upload');
+  if (up) up.disabled = !has;
+  var down = document.getElementById('sy-enc-download');
+  if (down) down.disabled = !has;
+}
+
 function buildSyncSettings() {
   if (typeof document === 'undefined') return;
   var prov = document.getElementById('sy-provider');
@@ -8600,15 +8641,16 @@ function buildSyncSettings() {
       var fp = document.getElementById('sy-fp');
       if (!v) {
         if (fp) fp.textContent = 'Key fingerprint: —';
-        return;
+      } else {
+        syncFingerprint(v).then(function (f) {
+          var cur = document.getElementById('sy-pass');
+          if (cur && cur.value === v) {
+            var fel = document.getElementById('sy-fp');
+            if (fel) fel.textContent = 'Key fingerprint: ' + (f || '—') + ' (same on all devices = same passphrase)';
+          }
+        });
       }
-      syncFingerprint(v).then(function (f) {
-        var cur = document.getElementById('sy-pass');
-        if (cur && cur.value === v) {
-          var fel = document.getElementById('sy-fp');
-          if (fel) fel.textContent = 'Key fingerprint: ' + (f || '—') + ' (same on all devices = same passphrase)';
-        }
-      });
+      try { syncToggleEncButtons(); } catch (e) { /* ignore */ }
     });
   }
   function wireBtn(id, fn) {
@@ -8649,6 +8691,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncUtf8Decode = syncUtf8Decode;
   window.Inoculens.syncEnvelopeWrap = syncEnvelopeWrap;
   window.Inoculens.syncEnvelopeParse = syncEnvelopeParse;
+  window.Inoculens.syncIsEncryptedBackup = syncIsEncryptedBackup;
   window.Inoculens.syncCompareTimestamps = syncCompareTimestamps;
   window.Inoculens.syncProviderById = syncProviderById;
   window.Inoculens.syncIsProvider = syncIsProvider;
