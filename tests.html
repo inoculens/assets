@@ -1968,6 +1968,7 @@
             trades: [],
             priceOverrides: {}
           });
+          try { L2.clearHistCache(); } catch (e) { /* ignore */ }
           if (typeof init === 'function') init();
           navHome();
           openPrefillTrade(null);
@@ -1988,6 +1989,66 @@
             assert(st.trades.length === 1, 'trade should save, got ' + st.trades.length);
             var ex = st.trades[0].execLock;
             assert(ex && ex.price === 81000 && ex.vs === 'EUR', 'execLock must freeze the history quote, got ' + JSON.stringify(ex));
+            var det = document.getElementById('account-detail');
+            var execCell = det && det.querySelector('[data-label="Exec. price"]');
+            assert(execCell !== null && Number(execCell.getAttribute('data-value')) === 81000, 'row must show the frozen quote');
+          }, function (e) { restore(); throw e; });
+        });
+
+        testAsync('save plus first repaint issue a single history fetch', function () {
+          var L2 = window.Inoculens;
+          var origFetch = window.fetch;
+          var histCalls = 0;
+          var pendingHist = [];
+          window.fetch = function (url) {
+            var u = String(url);
+            if (u.indexOf('/coins/bitcoin/history') !== -1) {
+              histCalls++;
+              return new Promise(function (resolve) { pendingHist.push(resolve); });
+            }
+            if (u.indexOf('simple/price') !== -1) {
+              return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ bitcoin: { eur: 82000 } }); } });
+            }
+            return Promise.reject(new Error('unexpected ' + u));
+          };
+          function restore() { window.fetch = origFetch; }
+          function flush() { return new Promise(function (res) { setTimeout(res, 0); }); }
+          L2.saveState({
+            settings: { mainCurrency: 'EUR', costMethod: 'average' },
+            accounts: [
+              { id: 'sg-acct', name: 'Sg BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+            ],
+            trades: [],
+            priceOverrides: {}
+          });
+          try { L2.clearHistCache(); } catch (e) { /* ignore */ }
+          if (typeof init === 'function') init();
+          navHome();
+          openPrefillTrade(null);
+          document.getElementById('t-side').value = 'buy';
+          document.getElementById('t-qty').value = '0.001';
+          document.getElementById('t-total').value = '81';
+          document.getElementById('t-currency').value = 'EUR';
+          document.getElementById('t-currency').dispatchEvent(new Event('change', { bubbles: true }));
+          document.getElementById('t-date').value = '2026-03-01';
+          document.getElementById('t-fee').value = '';
+          document.getElementById('t-note').value = '';
+          document.getElementById('t-manual-rate').value = '';
+          document.getElementById('t-manual-price').value = '';
+          onTradeSubmit({ preventDefault: function () {} });
+          return flush().then(flush).then(function () {
+            assert(pendingHist.length === 1, 'save + repaint must share one history fetch, got ' + pendingHist.length);
+            pendingHist.forEach(function (resolve) {
+              resolve({ ok: true, json: function () { return Promise.resolve({ market_data: { current_price: { eur: 81000, usd: 88000 } } }); } });
+            });
+            pendingHist = [];
+            return flush().then(flush).then(flush);
+          }).then(function () {
+            var st = L2.loadState();
+            restore();
+            assert(histCalls === 1, 'exactly one history fetch expected, got ' + histCalls);
+            assert(st.trades.length === 1 && st.trades[0].execLock && st.trades[0].execLock.price === 81000,
+              'frozen quote must land, got ' + JSON.stringify(st.trades.length && st.trades[0].execLock));
             var det = document.getElementById('account-detail');
             var execCell = det && det.querySelector('[data-label="Exec. price"]');
             assert(execCell !== null && Number(execCell.getAttribute('data-value')) === 81000, 'row must show the frozen quote');

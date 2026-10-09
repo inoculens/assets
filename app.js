@@ -2299,9 +2299,17 @@ function saveHistCache() {
 // cache; a fiat switch still retries (different key).
 var histFailKeys = {};
 
+// History fetches currently in flight, by the same key: shared by
+// freezeExecLock + ensureHistoricalExec so a save and its first repaint never
+// fire duplicate CoinGecko calls for the same quote (duplicate bursts are
+// what trip the free-tier rate limit, leaving both with nothing and the row
+// on "—"). Entries are removed on settle; also reset with the cache.
+var histInflight = {};
+
 function clearHistCache() {
   histPriceCache = {};
   histFailKeys = {};
+  histInflight = {};
   try {
     if (typeof localStorage !== 'undefined') localStorage.removeItem(HISTCACHE_KEY);
   } catch (e) { /* ignore */ }
@@ -2352,10 +2360,35 @@ function freezeExecLock(tradeId, symbol, date, mainU, kind) {
   // A live global override already serves this trade's Exec row: never stamp
   // a live price as a historical quote.
   try { if (priceOverrideEntry(sym) !== null) return; } catch (e) { /* fall through */ }
+  var kk = kd === 'stock' ? 'stock' : 'crypto';
+  var ckey = sym + '|' + day + '|' + m + '|' + kk;
+  // Already known (e.g. the first paint filled it while saving): freeze with
+  // zero network.
+  var hit = null;
+  try { hit = getHistCached(sym, day, m, kk); } catch (e) { hit = null; }
+  if (hit) {
+    patch(hit.price, m, hit.source || 'history');
+    return;
+  }
+  // Another fetch for this exact quote is already running (e.g. the repaint
+  // triggered by this very save): share it instead of doubling the burst.
+  if (histInflight[ckey]) return;
+  histInflight[ckey] = true;
   fetchHistoricalPrice(sym, day, m, kd).then(function (r) {
+    delete histInflight[ckey];
     var price = (r && typeof r === 'object') ? r.price : r;
+    // Write through to the history cache too, so the legacy display path and
+    // later fiat switches reuse this quote without refetching.
+    if (isFinite(Number(price)) && Number(price) > 0) {
+      try {
+        setHistCached(sym, day, m, kk, Number(price),
+          (r && typeof r === 'object' && r.day) ? ('Stooq-' + r.day) : 'history',
+          (r && typeof r === 'object') ? !!r.interpolated : false);
+        saveHistCache();
+      } catch (e) { /* memory cache still works */ }
+    }
     patch(price, m, (r && typeof r === 'object' && r.day) ? ('Stooq-' + r.day) : 'history');
-  }, function () { /* legacy async display path covers the row */ });
+  }, function () { delete histInflight[ckey]; /* legacy async display path covers the row */ });
 }
 
 function getHistCached(symbol, date, vs, kind) {
@@ -2540,7 +2573,10 @@ function ensureHistoricalExec(trades, main, kinds) {
     if (frozenExecOf(t)) return; // frozen quote on the trade: no network needed
     if (getHistCached(sym, day, m, kk)) return;
     if (histFailKeys[key]) return; // failed already this session: don't hammer
+    if (histInflight[key]) return; // already fetching (e.g. save just froze it)
+    histInflight[key] = true;
     jobs.push(fetchHistoricalPrice(sym, day, m, kd).then(function (r) {
+      delete histInflight[key];
       var price = (r && typeof r === 'object') ? r.price : r;
       var interp = (r && typeof r === 'object') ? !!r.interpolated : false;
       var src = (r && typeof r === 'object' && r.day) ? ('Stooq-' + r.day) : 'history';
@@ -2550,7 +2586,7 @@ function ensureHistoricalExec(trades, main, kinds) {
       }
       histFailKeys[key] = true;
       return false;
-    }, function () { histFailKeys[key] = true; return false; }));
+    }, function () { delete histInflight[key]; histFailKeys[key] = true; return false; }));
   });
   if (!jobs.length) return Promise.resolve(false);
   return Promise.all(jobs).then(function (flags) {
