@@ -875,14 +875,14 @@ if (typeof window !== 'undefined') {
 // differently-denominated fee. Read by Ui (Task 6) via
 // computePositions / validateTrade.
 //
-// Fee economics (exchange model): when feeCurrency === currency the fee comes
-// OUT OF the stated total (100 in, 1 fee, 99 invested: net = total - fee,
-// carved fee rides as feeDrag subtracted once in totalPL, never inside
-// Realized). A differently-denominated fee is separate money and stays
-// additive for buys (net = total + fee, no drag — higher entry). Sells always
-// net proceeds (total - fee, clamped >= 0) so a sale at cost still leaves the
-// fee as the loss: you must sell higher to break even. fee:0 behaves exactly
-// as before.
+// Fee economics (all-in model): the stated total already includes any same-
+// currency fee, so cost counts the FULL total (50 EUR in, 0.00058193 BTC out
+// => entry 50/qty, e.g. 85920.99 — the fee simply lifts the calculated
+// price, never a separate loss). A differently-denominated fee is extra money
+// on top (cost = total + fee). Fees ride along as display-only info
+// (feesFiat/fees sums + "Total fees paid" line); they never touch Realized,
+// Unrealized or Total P&L. fee:0 behaves exactly as before.
+// Sells book gross proceeds (total, no fee subtraction) for the same reason.
 //
 // Fee assumption (documented): when feeCurrency !== currency and the trade
 // carries no feeFxLock, the fee is converted at the trade's own fxLock.rate
@@ -928,16 +928,14 @@ function normalizeTrade(t) {
     }
   }
   var out = { totalMain: totalMain, feeMain: fee * feeRate };
-  // Fee economics: when the fee shares the trade currency it comes OUT OF
-  // the stated total (exchange model: 100 in, 1 fee, 99 invested), so cost
-  // counts total-minus-fee while the carved fee rides separately as feeDrag
-  // (subtracted once in totals, never inside Realized). A differently-denominated fee
-  // is separate money and stays additive. fee:0 behaves exactly as before.
+  // All-in cost: same-currency total already includes the fee, so cost IS the
+  // full total (the fee lifts the calculated per-unit price instead of
+  // booking a separate loss). Cross-currency fees are extra on top.
+  // feeLossMain stays 0 — kept only so old stored shapes keep working.
   var sameCcy = !ccy || !feeCcy || feeCcy === ccy;
   if (sameCcy) {
-    out.netMain = totalMain - out.feeMain;
-    if (!(out.netMain > 0)) out.netMain = 0;
-    out.feeLossMain = out.feeMain;
+    out.netMain = totalMain;
+    out.feeLossMain = 0;
   } else {
     out.netMain = totalMain + out.feeMain;
     out.feeLossMain = 0;
@@ -989,9 +987,8 @@ function computeAverage(trades) {
       if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
       var ebi = bySym.get(sym);
       ebi.qty += qbi;
-      ebi.cost += n.netMain;
-      ebi.fees = (ebi.fees || 0) + n.feeMain;
-      ebi.feeDrag = (ebi.feeDrag || 0) + n.feeLossMain;
+      ebi.cost += n.netMain; // all-in cost (fee already inside the price)
+      ebi.fees = (ebi.fees || 0) + n.feeMain; // display-only info
     } else if (t.type === 'sell') {
       var qs = Number(t.qty);
       if (!isFinite(qs) || qs <= 0) continue;
@@ -1000,10 +997,9 @@ function computeAverage(trades) {
       if (e.qty <= LEDGER_EPS) continue; // no inventory: ignore, never negative
       var sellQty = Math.min(qs, e.qty);
       var avg = e.qty > 0 ? e.cost / e.qty : 0;
-      // Net proceeds: the fee always comes off the top (same or cross
-      // currency), so selling at cost still leaves the fee as the loss —
-      // you must sell higher to break even. Clamped, never negative.
-      var proceeds = Math.max(0, n.totalMain - n.feeMain);
+      // Gross proceeds: fees are already baked into the buy price, so sells
+      // book the full total (display-only fee line, zero P&L drag).
+      var proceeds = n.totalMain;
       e.fees = (e.fees || 0) + n.feeMain;
       if (qs > e.qty && qs > 0) proceeds = proceeds * (sellQty / qs);
       e.realized += proceeds - avg * sellQty;
@@ -1029,9 +1025,8 @@ function computeAverage(trades) {
         }
       }
       if (hasT || (n.feeMain > 0)) {
-        ee.realized -= n.netMain; // cash lost; carved fee rides feeDrag below
+        ee.realized -= n.netMain; // all-in cash lost (fee already in the price)
         ee.fees = (ee.fees || 0) + n.feeMain;
-        ee.feeDrag = (ee.feeDrag || 0) + n.feeLossMain;
       }
     } else if (t.type === 'transfer') {
       var qt = Number(t.qty);
@@ -1040,9 +1035,8 @@ function computeAverage(trades) {
       if (!isFinite(nft) || nft < 0 || nft >= qt) continue;
       if (!bySym.has(sym)) bySym.set(sym, { qty: 0, cost: 0, realized: 0 });
       var et = bySym.get(sym);
-      var fiatT = n.netMain;
+      var fiatT = n.netMain; // all-in fiat cost (display-only fee, no drag)
       et.fees = (et.fees || 0) + n.feeMain;
-      et.feeDrag = (et.feeDrag || 0) + n.feeLossMain;
       if (et.qty <= LEDGER_EPS) {
         // no inventory: cannot move, but fiat fee still lost
         if (fiatT > 0) et.realized -= fiatT;
@@ -1085,17 +1079,15 @@ function computeFifo(trades) {
     if (t.type === 'buy' || t.type === 'income') {
       var qb = Number(t.qty);
       if (!isFinite(qb) || qb <= 0) continue;
-      q.push({ qty: qb, unitCost: qb > 0 ? n.netMain / qb : 0, date: t.date });
-      st.fees = (st.fees || 0) + n.feeMain;
-      st.feeDrag = (st.feeDrag || 0) + n.feeLossMain;
+      q.push({ qty: qb, unitCost: qb > 0 ? n.netMain / qb : 0, date: t.date }); // all-in unit cost
+      st.fees = (st.fees || 0) + n.feeMain; // display-only
     } else if (t.type === 'sell') {
       var qty = Number(t.qty);
       if (!isFinite(qty) || qty <= 0) continue;
       var heldFifo = q.reduce(function (s, l) { return s + l.qty; }, 0);
       if (heldFifo <= LEDGER_EPS) continue; // no inventory: ignore, never negative
-      // Net proceeds (total minus fee, any currency) — the ledger runs on
-      // what actually lands, fee tracked separately for display.
-      var proceedsTotal = Math.max(0, n.totalMain - n.feeMain);
+      // Gross proceeds — fees live inside the buy price, never as sell drag.
+      var proceedsTotal = n.totalMain;
       st.fees = (st.fees || 0) + n.feeMain;
       var unitProceeds = qty > 0 ? proceedsTotal / qty : 0;
       var sellQty = Math.min(qty, heldFifo);
@@ -1152,18 +1144,16 @@ function computeFifo(trades) {
         }
       }
       if (hasT || n.feeMain > 0) {
-        st.realized -= n.netMain;
+        st.realized -= n.netMain; // all-in cash lost
         st.fees = (st.fees || 0) + n.feeMain;
-        st.feeDrag = (st.feeDrag || 0) + n.feeLossMain;
       }
     } else if (t.type === 'transfer') {
       var qt = Number(t.qty);
       if (!isFinite(qt) || qt <= 0) continue;
       var nft = (t.networkFee === undefined || t.networkFee === null || String(t.networkFee).trim() === '') ? 0 : Number(t.networkFee);
       if (!isFinite(nft) || nft < 0 || nft >= qt) continue;
-      var fiatT = n.netMain;
+      var fiatT = n.netMain; // all-in fiat cost
       st.fees = (st.fees || 0) + n.feeMain;
-      st.feeDrag = (st.feeDrag || 0) + n.feeLossMain;
       var heldT = q.reduce(function (s, l) { return s + l.qty; }, 0);
       if (heldT <= LEDGER_EPS) {
         if (fiatT > 0) st.realized -= fiatT;
@@ -1228,11 +1218,11 @@ function computeFifo(trades) {
     for (var k = 0; k < q.length; k++) { qty += q[k].qty; cost += q[k].qty * q[k].unitCost; }
     out.set(sym, {
       qty: qty,
-      avgEntry: qty > 0 ? cost / qty : 0,
+      avgEntry: qty > 0 ? cost / qty : 0, // all-in Real price
       realized: st.realized,
       lots: st.lots,
-      fees: st.fees || 0,
-      feeDrag: st.feeDrag || 0
+      fees: st.fees || 0, // display-only info
+      feeDrag: 0
     });
   });
   // Symbols with buys only are in queues but maybe not acc; ensure presence.
@@ -1248,7 +1238,7 @@ function computeFifo(trades) {
 
 function computePositions(trades, live, method) {
   var engine = method === 'fifo' ? computeFifo(trades) : computeAverage(trades);
-  var buyCost = {}; // sym -> lifetime buy+income cost (denominator for returnPct)
+  var buyCost = {}; // sym -> lifetime all-in buy+income cost (denominator for returnPct)
   var hasBuy = {};
   (trades || []).forEach(function (t) {
     if (!t || (t.type !== 'buy' && t.type !== 'income')) return;
@@ -1257,7 +1247,7 @@ function computePositions(trades, live, method) {
     var qty = Number(t.qty);
     if (!isFinite(qty) || qty <= 0) return;
     var n = normalizeTrade(t);
-    buyCost[sym] = (buyCost[sym] || 0) + n.netMain + n.feeLossMain;
+    buyCost[sym] = (buyCost[sym] || 0) + n.netMain; // all-in (fee already inside)
     hasBuy[sym] = true;
   });
   var rows = [];
@@ -1276,8 +1266,7 @@ function computePositions(trades, live, method) {
     var marketValue = known ? qtyHeld * num : (qtyHeld === 0 ? 0 : null);
     var unrealized = marketValue === null ? null : marketValue - avgEntry * qtyHeld;
     var realized = v.realized || 0;
-    var feeDragRow = v.feeDrag || 0;
-    var totalPL = unrealized === null ? realized - feeDragRow : unrealized + realized - feeDragRow;
+    var totalPL = unrealized === null ? realized : unrealized + realized; // fees display-only, zero drag
     var denom = buyCost[sym] || 0;
     var returnPct = denom > LEDGER_EPS
       ? (unrealized === null ? (qtyHeld === 0 ? (realized / denom) * 100 : null) : (totalPL / denom) * 100)
@@ -1290,8 +1279,8 @@ function computePositions(trades, live, method) {
       marketValue: marketValue,
       unrealized: unrealized,
       realized: realized,
-      fees: v.fees || 0,
-      feeDrag: feeDragRow,
+      fees: v.fees || 0, // display-only info ("Total fees paid" line)
+      feeDrag: 0,
       totalPL: totalPL,
       returnPct: returnPct
     });
@@ -1333,12 +1322,10 @@ function computePortfolio(allTrades, live, method) {
       var sb = stFor(t.accountId, sym);
       sb.touched = true;
       sb.qty += qb;
-      var cb = n.netMain;
+      var cb = n.netMain; // all-in (fee already inside the price)
       sb.cost += cb;
-      sb.feeDrag = (sb.feeDrag || 0) + n.feeLossMain;
-      totals.feeDrag += n.feeLossMain;
-      sb.fees += n.feeMain;
-      totals.invested += n.netMain + n.feeLossMain;
+      sb.fees += n.feeMain; // display-only
+      totals.invested += n.netMain;
       totals.feesFiat += n.feeMain;
       if (isFifo) sb.queue.push({ qty: qb, unitCost: qb > 0 ? cb / qb : 0, date: t.date });
     } else if (t.type === 'income') {
@@ -1347,12 +1334,10 @@ function computePortfolio(allTrades, live, method) {
       var si = stFor(t.accountId, sym);
       si.touched = true;
       si.qty += qi;
-      var ci = n.netMain;
+      var ci = n.netMain; // all-in
       si.cost += ci;
-      si.feeDrag = (si.feeDrag || 0) + n.feeLossMain;
-      totals.feeDrag += n.feeLossMain;
       si.income += n.totalMain;
-      si.fees += n.feeMain;
+      si.fees += n.feeMain; // display-only
       totals.income += n.totalMain;
       totals.incomeQty += qi;
       totals.feesFiat += n.feeMain;
@@ -1363,9 +1348,8 @@ function computePortfolio(allTrades, live, method) {
       var ss = stFor(t.accountId, sym);
       if (ss.qty <= LEDGER_EPS && (!isFifo || ss.queue.reduce(function (s, l) { return s + l.qty; }, 0) <= LEDGER_EPS)) return;
       ss.touched = true;
-      // Net proceeds in main (total minus fee, clamped): sells must clear the
-      // fee to break even, in every fiat view.
-      var proceeds = Math.max(0, n.totalMain - n.feeMain);
+      // Gross proceeds (fees live inside the buy price, never as sell drag).
+      var proceeds = n.totalMain;
       if (isFifo) {
         var heldF = ss.queue.reduce(function (s, l) { return s + l.qty; }, 0);
         var sQty = Math.min(qs, heldF);
@@ -1452,10 +1436,8 @@ function computePortfolio(allTrades, live, method) {
         }
       }
       if (hasT || n.feeMain > 0) {
-        var fl = n.netMain + n.feeLossMain;
+        var fl = n.netMain; // all-in cash lost
         se.realized -= n.netMain;
-        se.feeDrag = (se.feeDrag || 0) + n.feeLossMain;
-        totals.feeDrag += n.feeLossMain;
         totals.realized -= n.netMain;
         totals.expensesFiat += fl;
         totals.feesFiat += n.feeMain;
@@ -1474,9 +1456,7 @@ function computePortfolio(allTrades, live, method) {
         : from;
       from.touched = true;
       to.touched = true;
-      var fiatT = n.netMain;
-      from.feeDrag = (from.feeDrag || 0) + n.feeLossMain;
-      totals.feeDrag += n.feeLossMain;
+      var fiatT = n.netMain; // all-in fiat cost (fee display-only)
       if (isFifo) {
         var heldT = from.queue.reduce(function (s, l) { return s + l.qty; }, 0);
         if (heldT <= LEDGER_EPS) {
@@ -1574,7 +1554,7 @@ function computePortfolio(allTrades, live, method) {
       m.set(sym, {
         symbol: sym, qtyHeld: qtyHeld, avgEntry: avgEntry,
         livePrice: known ? num : null, marketValue: mv, unrealized: un,
-        realized: s.realized, totalPL: un === null ? s.realized - (s.feeDrag || 0) : un + s.realized - (s.feeDrag || 0),
+        realized: s.realized, totalPL: un === null ? s.realized : un + s.realized, // fees display-only
         income: s.income, fees: s.fees, lots: s.lots
       });
     });
@@ -1594,14 +1574,13 @@ function computeAnalytics(allTrades, live, method) {
     });
   });
   var feesTotal = (pf.totals.feesFiat || 0) + (pf.totals.feesCryptoMain || 0) + (pf.totals.expensesFiat || 0);
-  var feeDragT = pf.totals.feeDrag || 0;
   var baseTpl = (unKnown || Math.abs(rz) > LEDGER_EPS) ? (unKnown ? un + rz : rz) : rz;
   return {
     marketValue: mvKnown ? mv : null,
     unrealized: unKnown ? un : null,
     realized: rz,
-    totalPL: baseTpl - feeDragT,
-    feeDrag: feeDragT,
+    totalPL: baseTpl, // fees display-only ("Total fees paid" line), zero drag
+    feeDrag: 0,
     invested: pf.totals.invested,
     withdrawn: pf.totals.withdrawn,
     income: pf.totals.income,
@@ -1672,9 +1651,9 @@ function validateTrade(t, heldQty) {
     var fee = Number(t.fee);
     if (!isFinite(fee) || fee < 0) return 'fee must be >= 0';
   }
-  // Fee comes out of the total when they share a currency: it cannot exceed
-  // an explicitly stated positive total (standalone fees with no total, and
-  // cross-currency fees, stay allowed).
+  // The stated total already includes a same-currency fee, so the fee cannot
+  // exceed an explicitly stated positive total (standalone fees with no
+  // total, and cross-currency fees, stay allowed).
   if (t.fee !== undefined && t.fee !== null && String(t.fee).trim() !== '' &&
       t.total !== undefined && t.total !== null && String(t.total).trim() !== '') {
     var vFee = Number(t.fee);
@@ -2181,6 +2160,250 @@ function refreshAllPrices(symbols, vs, kinds) {
   return Promise.all(jobs).then(function () { lastPriceErrors = errors; return out; });
 }
 
+// --- Historical execution prices (per-trade market reference) ---
+// Exec. price resolution order per trade: (1) manual override from
+// loadState().priceOverrides (wins, no network), (2) cached historical price
+// for (symbol, trade date, main), (3) network history — CoinGecko /history
+// (DD-MM-YYYY) for mapped crypto, Stooq daily closes for stock accounts with
+// up to 5-day walk-back for weekends/holidays — converted into the display
+// main at the HISTORICAL ECB rate of the fixing date (never today's rate),
+// (4) null when unknown (row shows "—", never 0). Never throws to the UI.
+// Real price stays purely calculated (all-in converted total / qty); Exec is
+// the reference-only market quote it is compared against.
+
+var HISTCACHE_KEY = 'inoculens.histcache.v1';
+var HISTCACHE_MAX = 1000;
+var histPriceCache = null; // key "SYM|DATE|VS|kind" -> {price, source, interpolated, at}; lazy-loaded
+
+function histCacheKey(symbol, date, vs, kind) {
+  return String(symbol).toUpperCase() + '|' + String(date).slice(0, 10) + '|' +
+    String(vs).toUpperCase() + '|' + String(kind || '').toLowerCase();
+}
+
+function loadHistCache(reload) {
+  if (histPriceCache !== null && !reload) return histPriceCache;
+  histPriceCache = {};
+  try {
+    var raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(HISTCACHE_KEY) : null;
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') histPriceCache = parsed;
+    }
+  } catch (e) { histPriceCache = {}; }
+  return histPriceCache;
+}
+
+function saveHistCache() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    var keys = Object.keys(histPriceCache || {});
+    var store = histPriceCache;
+    if (keys.length > HISTCACHE_MAX) {
+      store = {};
+      keys.slice(keys.length - 800).forEach(function (k) { store[k] = histPriceCache[k]; });
+      histPriceCache = store;
+    }
+    localStorage.setItem(HISTCACHE_KEY, JSON.stringify(store));
+  } catch (e) { /* private mode / quota: memory cache still works */ }
+}
+
+function clearHistCache() {
+  histPriceCache = {};
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(HISTCACHE_KEY);
+  } catch (e) { /* ignore */ }
+}
+
+function getHistCached(symbol, date, vs, kind) {
+  var c = loadHistCache()[histCacheKey(symbol, date, vs, kind)];
+  if (c && isFinite(Number(c.price)) && Number(c.price) > 0) {
+    return { price: Number(c.price), source: String(c.source || ''), interpolated: !!c.interpolated };
+  }
+  return null;
+}
+
+function setHistCached(symbol, date, vs, kind, price, source, interpolated) {
+  if (!isFinite(Number(price)) || Number(price) <= 0) return;
+  loadHistCache()[histCacheKey(symbol, date, vs, kind)] = {
+    price: Number(price), source: String(source || ''), interpolated: !!interpolated, at: Date.now()
+  };
+}
+
+function toCoingeckoDate(dateStr) {
+  if (!isValidDateStr(dateStr)) return null;
+  var p = String(dateStr).slice(0, 10).split('-');
+  return p[2] + '-' + p[1] + '-' + p[0]; // DD-MM-YYYY
+}
+
+function toStooqDay(dateStr) {
+  if (!isValidDateStr(dateStr)) return null;
+  return String(dateStr).slice(0, 10).replace(/-/g, '');
+}
+
+// Parse a Stooq daily CSV (Date,Open,High,Low,Close,Volume) and return the
+// Close for `wantDay` (YYYYMMDD), or null when the market was shut.
+function parseStooqDaily(csv, wantDay) {
+  try {
+    var lines = String(csv || '').trim().split(/\r?\n/);
+    if (lines.length < 2) return null;
+    for (var i = 1; i < lines.length; i++) {
+      var row = lines[i].split(',');
+      if (!row.length) continue;
+      var day = String(row[0] || '').replace(/-/g, '');
+      if (day !== wantDay) continue;
+      var v = Number(row[4]);
+      if (isFinite(v) && v > 0) return v;
+      return null;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+function fetchHistoricalCryptoPrice(symbol, dateStr, vs) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  var cur = String(priceDefaultVs(vs)).trim().toUpperCase();
+  var curLow = cur.toLowerCase();
+  var id = SYMBOL_MAP[sym];
+  if (!id || !isValidDateStr(dateStr)) return Promise.resolve(null);
+  var gd = toCoingeckoDate(dateStr);
+  var url = 'https://api.coingecko.com/api/v3/coins/' + encodeURIComponent(id) +
+    '/history?date=' + encodeURIComponent(gd);
+  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : null;
+  if (!capturedFetch) return Promise.resolve(null);
+  return capturedFetch(url).then(function (res) {
+    if (!res.ok) throw new Error('price-http-' + res.status);
+    return res.json();
+  }).then(function (data) {
+    var cp = data && data.market_data && data.market_data.current_price;
+    var p = cp ? Number(cp[curLow]) : NaN;
+    if (isFinite(p) && p > 0) return p;
+    // Bridge unsupported vs via the USD pivot + HISTORICAL ECB USD->main.
+    if (curLow !== 'usd') {
+      var pu = cp ? Number(cp.usd) : NaN;
+      if (!isFinite(pu) || pu <= 0) return null;
+      return fetchEcbRate(dateStr.slice(0, 10), 'USD', cur).then(function (r) {
+        var v = pu * Number(r.rate);
+        return (isFinite(v) && v > 0) ? v : null;
+      }, function () { return null; });
+    }
+    return null;
+  }).then(null, function () { return null; });
+}
+
+function fetchHistoricalStockPrice(symbol, dateStr, vs) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  var cur = String(priceDefaultVs(vs)).trim().toUpperCase();
+  var sq = stooqSymbol(sym);
+  if (!sq || !isValidDateStr(dateStr)) return Promise.resolve(null);
+  var capturedFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : null;
+  if (!capturedFetch) return Promise.resolve(null);
+  // Walk back up to 5 days for weekends/holidays (same window as FX).
+  function attempt(day, back) {
+    var compact = toStooqDay(day);
+    var url = 'https://stooq.com/q/d/l/?s=' + encodeURIComponent(sq) +
+      '&d1=' + encodeURIComponent(compact) + '&d2=' + encodeURIComponent(compact) + '&i=d';
+    return capturedFetch(url).then(function (res) {
+      if (!res.ok) throw new Error('price-http-' + res.status);
+      return res.text();
+    }).then(function (csv) {
+      var usd = parseStooqDaily(csv, compact);
+      if (isFinite(usd) && usd > 0) {
+        if (cur === 'USD') return { price: usd, interpolated: back > 0, day: day };
+        return fetchEcbRate(day, 'USD', cur).then(function (r) {
+          var v = usd * Number(r.rate);
+          if (!isFinite(v) || v <= 0) throw new Error('fx-bridge');
+          return { price: v, interpolated: back > 0 || !!r.interpolated, day: day };
+        });
+      }
+      if (back >= 5) throw new Error('no-fixing');
+      var prev = fxShiftDate(day, -1);
+      if (!prev) throw new Error('no-fixing');
+      return attempt(prev, back + 1);
+    });
+  }
+  return attempt(dateStr.slice(0, 10), 0).then(function (r) { return r; }, function () { return null; });
+}
+
+function fetchHistoricalPrice(symbol, dateStr, vs, kind) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  var day = (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateStr)) ? dateStr.slice(0, 10) : '';
+  var cur = String(priceDefaultVs(vs)).trim().toUpperCase();
+  if (!sym || !isValidDateStr(day) || isFutureDateStr(day)) return Promise.resolve(null);
+  // (1) Manual override wins — no network.
+  if (priceOverrideFor(sym) !== null) return Promise.resolve(priceOverrideFor(sym));
+  var kd = (typeof kind === 'string') ? kind.trim().toLowerCase() : '';
+  if (kd === 'custom' || kd === 'cash') return Promise.resolve(null);
+  if (kd === 'stock') return fetchHistoricalStockPrice(sym, day, cur);
+  if (!SYMBOL_MAP[sym]) return Promise.resolve(null);
+  return fetchHistoricalCryptoPrice(sym, day, cur);
+}
+
+// Sync read for paint: override, else cache, else null (async fill follows).
+function getHistoricalExec(symbol, dateStr, vs, kind) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  var day = (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateStr)) ? dateStr.slice(0, 10) : '';
+  var cur = String(priceDefaultVs(vs)).trim().toUpperCase();
+  if (!sym || !isValidDateStr(day)) return null;
+  var ov = null;
+  try { ov = priceOverrideFor(sym); } catch (e) { ov = null; }
+  if (ov !== null) return { price: ov, source: 'manual', interpolated: false };
+  var kd = (typeof kind === 'string') ? kind.trim().toLowerCase() : '';
+  var hit = getHistCached(sym, day, cur, kd === 'stock' ? 'stock' : 'crypto');
+  if (hit) return hit;
+  return null;
+}
+
+// Fill the cache for every (symbol, date) the current paint needs. Never
+// rejects: unknown tickers resolve to null and keep the "—" placeholder.
+function ensureHistoricalExec(trades, main, kinds) {
+  var m = String(main || priceDefaultVs()).toUpperCase();
+  function kindFor(sym) {
+    if (!kinds) return undefined;
+    if (typeof kinds === 'function') { try { return kinds(sym); } catch (e) { return undefined; } }
+    if (typeof kinds === 'object') {
+      if (Object.prototype.hasOwnProperty.call(kinds, sym)) return kinds[sym];
+      var up = String(sym).toUpperCase();
+      var ks = Object.keys(kinds);
+      for (var i = 0; i < ks.length; i++) if (String(ks[i]).toUpperCase() === up) return kinds[ks[i]];
+    }
+    return undefined;
+  }
+  var seen = {};
+  var jobs = [];
+  (trades || []).forEach(function (t) {
+    if (!t || (t.type !== 'buy' && t.type !== 'sell')) return;
+    var sym = String((t && t.symbol) || '').toUpperCase();
+    var day = (t && typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.date)) ? t.date.slice(0, 10) : '';
+    if (!sym || !isValidDateStr(day) || isFutureDateStr(day)) return;
+    var kd = (typeof kindFor(sym) === 'string') ? kindFor(sym).trim().toLowerCase() : '';
+    if (kd === 'custom' || kd === 'cash') return;
+    if (kd !== 'stock' && !SYMBOL_MAP[sym]) return;
+    var kk = (kd === 'stock' ? 'stock' : 'crypto');
+    var key = sym + '|' + day + '|' + m + '|' + kk;
+    if (seen[key]) return;
+    seen[key] = true;
+    try { if (priceOverrideFor(sym) !== null) return; } catch (e) { /* fall through */ }
+    if (getHistCached(sym, day, m, kk)) return;
+    jobs.push(fetchHistoricalPrice(sym, day, m, kd).then(function (r) {
+      var price = (r && typeof r === 'object') ? r.price : r;
+      var interp = (r && typeof r === 'object') ? !!r.interpolated : false;
+      var src = (r && typeof r === 'object' && r.day) ? ('Stooq-' + r.day) : 'history';
+      if (isFinite(Number(price)) && Number(price) > 0) {
+        setHistCached(sym, day, m, kk, Number(price), src, interp);
+        return true;
+      }
+      return false;
+    }, function () { return false; }));
+  });
+  if (!jobs.length) return Promise.resolve(false);
+  return Promise.all(jobs).then(function (flags) {
+    var changed = false;
+    flags.forEach(function (f) { if (f) changed = true; });
+    if (changed) { try { saveHistCache(); } catch (e) { /* ignore */ } }
+    return changed;
+  });
+}
+
 // Expose Prices on window.Inoculens for tests.html and Ui (Task 6).
 if (typeof window !== 'undefined') {
   window.Inoculens = window.Inoculens || {};
@@ -2189,6 +2412,16 @@ if (typeof window !== 'undefined') {
   window.Inoculens.priceCache = priceCache;
   window.Inoculens.fetchLivePrice = fetchLivePrice;
   window.Inoculens.refreshAllPrices = refreshAllPrices;
+  window.Inoculens.fetchHistoricalPrice = fetchHistoricalPrice;
+  window.Inoculens.getHistoricalExec = getHistoricalExec;
+  window.Inoculens.ensureHistoricalExec = ensureHistoricalExec;
+  window.Inoculens.getHistCached = getHistCached;
+  window.Inoculens.setHistCached = setHistCached;
+  window.Inoculens.clearHistCache = clearHistCache;
+  window.Inoculens.reloadHistCache = function () { loadHistCache(true); };
+  window.Inoculens.parseStooqDaily = parseStooqDaily;
+  window.Inoculens.toCoingeckoDate = toCoingeckoDate;
+  window.Inoculens.roundHalfUp2 = roundHalfUp2;
 }
 
 // === Ui ===
@@ -2265,6 +2498,15 @@ function fmtMoney(n, currency) {
   } catch (e) {
     return String(Math.round(v * 100) / 100);
   }
+}
+
+// Round half-up to 2 decimals (3rd decimal >= 5 rounds up, <= 4 rounds down),
+// e.g. 85920.98706029935 -> 85920.99. Display helper: ledger math always
+// keeps full precision; only the shown price is rounded.
+function roundHalfUp2(n) {
+  var v = Number(n);
+  if (!isFinite(v)) return NaN;
+  return Math.round((v + Number.EPSILON) * 100) / 100;
 }
 
 function fmtQty(n) {
@@ -3545,7 +3787,7 @@ function openNoteDialog(text, title) {
   openDialog('note-dialog');
 }
 
-function tradeBlock(t, main, accountNameById) {
+function tradeBlock(t, main, accountNameById, kind) {
   var n = normalizeTrade(t);
   var box = document.createElement('article');
   box.className = 'trade-block';
@@ -3599,13 +3841,13 @@ function tradeBlock(t, main, accountNameById) {
     if (Number(t.networkFee) > 0) box.appendChild(statRow('Network fee', fmtQty(t.networkFee) + ' ' + String(t.symbol || '').toUpperCase(), t.networkFee, false));
     box.appendChild(statRow('Received', fmtQty(netQ) + ' ' + String(t.symbol || '').toUpperCase(), netQ, false));
     if ((Number(t.total) > 0 || Number(t.fee) > 0)) {
-      box.appendChild(statRow('Fiat cost', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
+      box.appendChild(statRow('Fiat cost', fmtMoney(n.netMain, main), n.netMain, false));
     }
   } else if (t.type === 'income') {
     box.appendChild(statRow('Received', fmtQty(t.qty) + ' ' + String(t.symbol || '').toUpperCase(), t.qty, false));
     if (Number(t.total) > 0) {
       box.appendChild(statRow('Value', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
-      box.appendChild(statRow('Converted', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
+      box.appendChild(statRow('Converted', fmtMoney(n.netMain, main), n.netMain, false));
     } else {
       box.appendChild(statRow('Value', '— (free)', null, false));
     }
@@ -3615,21 +3857,30 @@ function tradeBlock(t, main, accountNameById) {
     }
     if (t.total !== undefined && t.total !== null && String(t.total).trim() !== '' && Number(t.total) > 0) {
       box.appendChild(statRow('Fiat lost', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
-      box.appendChild(statRow('Converted', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
+      box.appendChild(statRow('Converted', fmtMoney(n.netMain, main), n.netMain, false));
     }
   } else {
     box.appendChild(statRow('Paid', fmtMoney(t.total, String(t.currency || '').toUpperCase()), t.total, false));
-    box.appendChild(statRow('Converted', fmtMoney(n.netMain + n.feeLossMain, main), n.netMain + n.feeLossMain, false));
-    // Two prices when a fee is present: Exec is quoted against the FULL total
-    // (fixed in stone, reference only); Real is net of the fee — (invested -
-    // fee) / qty for buys, (proceeds - fee) / qty for sells — and equals the
-    // Average entry the books run on. Your break-even sits at Exec, above Real.
+    box.appendChild(statRow('Converted', fmtMoney(n.netMain, main), n.netMain, false));
+    // Real price is calculated, never quoted: the FULL all-in total converted
+    // at the historical FX rate (or manual rate), divided by qty received —
+    // e.g. 50 EUR / 0.00058193 BTC = 85920.99. Shown rounded half-up to 2
+    // decimals; the books run on this exact value (== Average entry). Exec is
+    // the reference-only historical market quote on the trade date (manual
+    // override wins); it never touches P&L.
     var pq = Number(t.qty);
-    if (n.feeMain > 0 && isFinite(pq) && pq > 0 && n.totalMain > 0) {
+    if (isFinite(pq) && pq > 0 && n.netMain > 0) {
       var symU = String(t.symbol || '').toUpperCase();
-      var execP = n.totalMain / pq;
-      var realP = (t.type === 'sell' ? Math.max(0, n.totalMain - n.feeMain) : n.netMain) / pq;
-      box.appendChild(statRow('Exec. price', fmtMoney(execP, main) + ' / ' + symU, execP, false));
+      var realP = n.netMain / pq;
+      var execInfo = null;
+      try { execInfo = getHistoricalExec(t.symbol, t.date, main, kind); } catch (e) { execInfo = null; }
+      var execP = (execInfo && isFinite(Number(execInfo.price)) && Number(execInfo.price) > 0)
+        ? Number(execInfo.price) : null;
+      if (execP !== null) {
+        box.appendChild(statRow('Exec. price', fmtMoney(execP, main) + ' / ' + symU, execP, false));
+      } else {
+        box.appendChild(statRow('Exec. price', '—', null, false));
+      }
       box.appendChild(statRow('Real price', fmtMoney(realP, main) + ' / ' + symU, realP, false));
     }
   }
@@ -3865,16 +4116,20 @@ function renderAccountDetail(st, id) {
   var rsc = plClass(ret);
   if (rsc) retCard.querySelector('.card-value').classList.add(rsc);
   stats.appendChild(retCard);
-  // Fee + income tracking lives here (detail view only): shown when non-zero.
+  // Fee info lives below the 8-card grid as one line (display-only: the fee
+  // is already baked into the calculated Real price, zero P&L drag).
   var feesSum = 0, incomeSum = 0;
   rows.forEach(function (r) { feesSum += Number(r.fees) || 0; incomeSum += Number(r.income) || 0; });
   if (Math.abs(incomeSum) > 1e-9) stats.appendChild(statCard('Income', fmtMoney(incomeSum, main), incomeSum));
-  if (Math.abs(feesSum) > 1e-9) {
-    var feeCard = statCard('Fees paid', fmtMoney(feesSum, main), -Math.abs(feesSum));
-    feeCard.querySelector('.card-value').classList.add('loss');
-    stats.appendChild(feeCard);
-  }
   host.appendChild(stats);
+  if (Math.abs(feesSum) > 1e-9) {
+    var feesLine = document.createElement('p');
+    feesLine.className = 'muted fees-line';
+    feesLine.setAttribute('data-label', 'Total fees paid');
+    feesLine.setAttribute('data-value', String(feesSum));
+    feesLine.textContent = 'Total fees paid: ' + fmtMoney(feesSum, main);
+    host.appendChild(feesLine);
+  }
   var tHead = document.createElement('div');
   tHead.className = 'section-head';
   var tTitle = document.createElement('h2');
@@ -3891,8 +4146,9 @@ function renderAccountDetail(st, id) {
     tHead.appendChild(tAdd);
     host.appendChild(tHead);
     var nameById = function (aid) { var a = accountById(st, aid); return a ? a.name : ''; };
+    var accKind = (acc && typeof acc.kind === 'string') ? acc.kind : undefined;
     ledgerSortByDate(atrades).reverse().forEach(function (t) {
-      host.appendChild(tradeBlock(t, main, nameById));
+      host.appendChild(tradeBlock(t, main, nameById, accKind));
     });
   } else {
     host.appendChild(tHead);
@@ -4714,7 +4970,7 @@ function buildTradeForm() {
     '<p class="fld-hint">On-chain gas / miner fee taken from the moved amount. Tracked as a real loss.</p></div>' +
     '<label for="t-fee">Fee (fiat)</label>' +
     '<input id="t-fee" inputmode="decimal" placeholder="e.g. 0">' +
-    '<p class="fld-hint">If it shares the trade currency, it comes out of the total above (100 total + 1 fee = 99 invested). A different fee currency is extra on top.</p>' +
+    '<p class="fld-hint">The total above already includes this fee — the Real price is simply total ÷ qty (e.g. 50 EUR ÷ 0.00058193 BTC). Info only, zero P&L drag.</p>' +
     '<label for="t-feeccy">Fee currency</label>' +
     '<select id="t-feeccy">' + ccyOptions('EUR', false) + '</select>' +
     '<label for="t-note">Note</label>' +
@@ -6373,15 +6629,32 @@ function render() {
   refreshDisplayRates(st); // fill missing historical pairs, then repaint once
 }
 
-// Fire-and-forget: fetch historical pairs the current paint still lacks,
-// then repaint a single time. Never rejects; offline keeps legacy display.
+// Fire-and-forget: fetch historical FX pairs AND historical execution prices
+// the current paint still lacks, then repaint a single time. Never rejects;
+// offline keeps the current paint (Exec rows show "—" until history lands).
 function refreshDisplayRates(st) {
   if (!st || !st.settings) return;
   var main = st.settings.mainCurrency;
   var trades = st.trades;
+  var kinds = {};
   try {
-    ensureDisplayRates(trades, main).then(function (changed) {
-      if (!changed) return;
+    (st.accounts || []).forEach(function (a) {
+      if (a && a.ticker) kinds[String(a.ticker).toUpperCase()] = a.kind;
+    });
+    (trades || []).forEach(function (tr) {
+      if (!tr || !tr.symbol || !tr.accountId) return;
+      var s = String(tr.symbol).toUpperCase();
+      if (kinds[s]) return;
+      var a = accountById(st, tr.accountId);
+      if (a && a.kind) kinds[s] = a.kind;
+    });
+  } catch (e) { kinds = {}; }
+  try {
+    Promise.all([
+      ensureDisplayRates(trades, main).catch(function () { return false; }),
+      ensureHistoricalExec(trades, main, kinds).catch(function () { return false; })
+    ]).then(function (flags) {
+      if (!flags[0] && !flags[1]) return;
       var s2;
       try {
         s2 = loadState();

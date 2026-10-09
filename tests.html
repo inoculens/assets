@@ -782,62 +782,85 @@
         assert(Math.abs(closed.totalPL - 5) < 1e-9, 'closed totalPL should be realized ~5, got ' + closed.totalPL);
       });
 
-      // Fee model: same-currency fee comes out of the total (100 in, 1 fee,
-      // 49.5 held => cost 99, entry 2.0, fee booked as a -1 realized loss).
+      // Fee model (all-in): the stated total already includes any same-currency
+      // fee, so cost IS the full total (100 in, 49.5 held => cost 100, entry
+      // 100/49.5). Fees are display-only info with zero P&L drag.
       function feeBuy(over) {
         var t = { id: 'f-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } };
         for (var k in over) { if (Object.prototype.hasOwnProperty.call(over, k)) t[k] = over[k]; }
         return t;
       }
 
-      test('normalizeTrade splits net cost and fee loss', function () {
+      test('normalizeTrade all-in cost, fee display-only', function () {
         var n = normalizeTrade({ total: 100, fee: 1, currency: 'EUR', feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } });
         assert(n.totalMain === 100 && n.feeMain === 1, 'raw conversion intact');
-        assert(n.netMain === 99 && n.feeLossMain === 1, 'net/fee split wrong: ' + JSON.stringify(n));
+        assert(n.netMain === 100 && n.feeLossMain === 0, 'same-ccy cost is the full total, no drag: ' + JSON.stringify(n));
         var d = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'GBP', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
         assert(d.netMain === 55 && d.feeLossMain === 0, 'cross-currency fee stays additive: ' + JSON.stringify(d));
         var dm = normalizeTrade({ total: 100, fee: 10, currency: 'USD', feeCurrency: 'EUR', fxLock: { pair: 'USD/EUR', rate: 0.5, source: 'ECB-2026-10-01' } });
         assert(dm.totalMain === 50 && dm.feeMain === 10 && dm.netMain === 60 && dm.feeLossMain === 0, 'fee already in main converts at 1: ' + JSON.stringify(dm));
         var c = normalizeTrade({ total: 5, fee: 10, currency: 'EUR', feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } });
-        assert(c.netMain === 0 && c.feeLossMain === 10, 'net cost never negative: ' + JSON.stringify(c));
+        assert(c.netMain === 5 && c.feeLossMain === 0, 'cost never reduced by fee: ' + JSON.stringify(c));
       });
 
-      test('fee carved from cost, tracked apart from realized, in both methods', function () {
+      test('all-in cost in both methods, fees display-only', function () {
+        var allIn = 100 / 49.5;
         var avg = computeAverage([feeBuy({})]).get('BTC');
         assert(avg.qty === 49.5, 'avg qty held wrong');
-        assert(Math.abs(avg.avgEntry - 2) < 1e-9, 'avg entry must be the real price 2.0, got ' + avg.avgEntry);
+        assert(Math.abs(avg.avgEntry - allIn) < 1e-9, 'avg entry must be the all-in real price, got ' + avg.avgEntry);
         assert(avg.realized === 0, 'avg realized must stay pure trading gains, got ' + avg.realized);
-        assert(avg.feeDrag === 1, 'avg fee drag tracked separately, got ' + avg.feeDrag);
+        assert((avg.feeDrag || 0) === 0, 'no fee drag, got ' + avg.feeDrag);
+        assert(avg.fees === 1, 'fee tracked for display, got ' + avg.fees);
         var fifo = computeFifo([feeBuy({})]).get('BTC');
         assert(fifo.qty === 49.5, 'fifo qty held wrong');
-        assert(Math.abs(fifo.avgEntry - 2) < 1e-9, 'fifo entry must be the real price 2.0, got ' + fifo.avgEntry);
+        assert(Math.abs(fifo.avgEntry - allIn) < 1e-9, 'fifo entry must be the all-in real price, got ' + fifo.avgEntry);
         assert(fifo.realized === 0, 'fifo realized must stay pure, got ' + fifo.realized);
-        assert(fifo.feeDrag === 1, 'fifo fee drag tracked separately, got ' + fifo.feeDrag);
+        assert((fifo.feeDrag || 0) === 0, 'no fee drag, got ' + fifo.feeDrag);
+        assert(fifo.fees === 1, 'fee tracked for display, got ' + fifo.fees);
       });
 
-      test('selling back at execution price breaks even except the fee', function () {
-        var sell = { id: 'f-b', type: 'sell', symbol: 'BTC', qty: 49.5, total: 99, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } };
-        var avg = computeAverage([feeBuy({}), sell]).get('BTC');
+      test('selling back the full total closes flat (fee already in price)', function () {
+        var sellFull = { id: 'f-b', type: 'sell', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } };
+        var avg = computeAverage([feeBuy({}), sellFull]).get('BTC');
         assert(avg.qty === 0, 'avg should be closed');
-        assert(avg.realized === 0, 'avg realized must show no fee label, got ' + avg.realized);
-        var ap = L.computePositions([feeBuy({}), sell], {}, 'average')[0];
-        assert(ap.totalPL === -1, 'avg lifetime drag is exactly the fee, got ' + ap.totalPL);
-        var fifo = computeFifo([feeBuy({}), sell]).get('BTC');
+        assert(avg.realized === 0, 'same-total round trip is flat, got ' + avg.realized);
+        var ap = L.computePositions([feeBuy({}), sellFull], {}, 'average')[0];
+        assert(ap.totalPL === 0, 'flat round trip totalPL 0, got ' + ap.totalPL);
+        assert(Math.abs(ap.avgEntry - 0) < 1e-9 || ap.qtyHeld === 0, 'closed position holds nothing');
+        var fifo = computeFifo([feeBuy({}), sellFull]).get('BTC');
         assert(fifo.qty === 0, 'fifo should be closed');
-        assert(fifo.realized === 0, 'fifo realized must show no fee label, got ' + fifo.realized);
+        assert(fifo.realized === 0, 'fifo flat, got ' + fifo.realized);
         assert(fifo.lots.length === 1 && fifo.lots[0].gain === 0, 'closing lot must break even, got ' + JSON.stringify(fifo.lots));
-        var fp = L.computePositions([feeBuy({}), sell], {}, 'fifo')[0];
-        assert(fp.totalPL === -1, 'fifo lifetime drag is exactly the fee, got ' + fp.totalPL);
+        // Selling below the all-in total books the shortfall as the loss.
+        var sellLow = { id: 'f-c', type: 'sell', symbol: 'BTC', qty: 49.5, total: 99, currency: 'EUR', date: '2026-02-01', fee: 0, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } };
+        var avg2 = computeAverage([feeBuy({}), sellLow]).get('BTC');
+        assert(avg2.realized === -1, 'shortfall books as realized loss, got ' + avg2.realized);
       });
 
-      test('positions show real entry plus fee drag with unknown price', function () {
+      test('positions show all-in entry, zero drag, unknown price stays null', function () {
+        var allIn = 100 / 49.5;
         var p = computePositions([feeBuy({})], {}, 'average')[0];
         assert(p.qtyHeld === 49.5, 'qty changed');
-        assert(Math.abs(p.avgEntry - 2) < 1e-9, 'entry must be the real price, got ' + p.avgEntry);
+        assert(Math.abs(p.avgEntry - allIn) < 1e-9, 'entry must be the all-in real price, got ' + p.avgEntry);
         assert(p.livePrice === null && p.marketValue === null && p.unrealized === null, 'unknowns must stay null');
         assert(p.realized === 0, 'realized must stay pure, got ' + p.realized);
-        assert(p.feeDrag === 1, 'fee drag must ride along, got ' + p.feeDrag);
-        assert(p.totalPL === -1, 'fee drag must show with no fake loss, got ' + JSON.stringify(p));
+        assert((p.feeDrag || 0) === 0, 'zero drag, got ' + p.feeDrag);
+        assert(p.fees === 1, 'fee rides along for display, got ' + p.fees);
+        assert(p.totalPL === 0, 'no fake loss without a sale, got ' + JSON.stringify(p));
+      });
+
+      test('owner example: 50 EUR / 0.00058193 BTC rounds half-up to 85920.99', function () {
+        var qty = 0.00058193;
+        var raw = 50 / qty;
+        assert(Math.abs(raw - 85920.98706029935) < 1e-6, 'raw real price changed: ' + raw);
+        assert(L.roundHalfUp2(raw) === 85920.99, 'half-up rounding wrong: ' + L.roundHalfUp2(raw));
+        assert(L.roundHalfUp2(1.004) === 1, 'down case wrong');
+        assert(L.roundHalfUp2(1.005) === 1.01, 'up case wrong');
+        var t = { id: 'own', type: 'buy', symbol: 'BTC', qty: qty, total: 50, currency: 'EUR', date: '2026-01-01', fee: 0, feeCurrency: 'EUR', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1' } };
+        var nn = L.normalizeTrade(t);
+        assert(Math.abs(nn.netMain / qty - raw) < 1e-9, 'ledger real must equal total/qty');
+        var pp = L.computePositions([t], {}, 'average')[0];
+        assert(Math.abs(pp.avgEntry - raw) < 1e-9, 'avg entry must equal calculated real price');
       });
 
       test('validateTrade rejects same-currency fee over total', function () {
@@ -958,6 +981,136 @@
           var keys = Object.keys(out).sort();
           assert(keys.length === 2 && keys[0] === 'BTC' && keys[1] === 'ETH', 'should dedupe + uppercase, got ' + JSON.stringify(out));
           assert(out.BTC === 67000 && out.ETH === 3500, 'bad values: ' + JSON.stringify(out));
+        }, function (e) { restore(); throw e; });
+      });
+    })();
+
+    // === Historical execution-price tests (Exec reference API) ===
+    (function historicalTests() {
+      var H = window.Inoculens || {};
+      var backup = null;
+      try { backup = localStorage.getItem('inoculens.v2'); } catch (e) { backup = null; }
+      var backupHist = null;
+      try { backupHist = localStorage.getItem('inoculens.histcache.v1'); } catch (e) { backupHist = null; }
+      function setState(s) { try { localStorage.setItem('inoculens.v2', JSON.stringify(s)); } catch (e) { /* ignore */ } }
+      function restoreState() {
+        try {
+          if (backup === null) localStorage.removeItem('inoculens.v2');
+          else localStorage.setItem('inoculens.v2', backup);
+        } catch (e) { /* ignore */ }
+        try {
+          if (backupHist === null) localStorage.removeItem('inoculens.histcache.v1');
+          else localStorage.setItem('inoculens.histcache.v1', backupHist);
+        } catch (e) { /* ignore */ }
+        try { H.reloadHistCache(); } catch (e) { /* ignore */ }
+      }
+
+      test('toCoingeckoDate + parseStooqDaily basics', function () {
+        assert(H.toCoingeckoDate('2026-01-15') === '15-01-2026', 'coingecko date wrong');
+        assert(H.toCoingeckoDate('nope') === null, 'bad date must be null');
+        var csv = 'Date,Open,High,Low,Close,Volume\n20260102,100,101,99,100.5,1000\n20260105,101,102,100,102.25,900\n';
+        assert(H.parseStooqDaily(csv, '20260105') === 102.25, 'daily close wrong');
+        assert(H.parseStooqDaily(csv, '20260103') === null, 'shut market must be null');
+      });
+
+      testAsync('historical override short-circuits network', function () {
+        var origFetch = window.fetch;
+        var called = 0;
+        window.fetch = function () { called++; return Promise.reject(new Error('must not fetch')); };
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: { BTC: 42000 } });
+        function restore() { window.fetch = origFetch; restoreState(); }
+        return H.fetchHistoricalPrice('BTC', '2026-01-01', 'EUR').then(function (p) {
+          restore();
+          assert(p === 42000, 'override should win, got ' + p);
+          assert(called === 0, 'override must not hit network');
+          var sync = H.getHistoricalExec('BTC', '2026-01-01', 'EUR');
+          assert(sync && sync.price === 42000 && sync.source === 'manual', 'sync exec must surface override');
+        }, function (e) { restore(); throw e; });
+      });
+
+      testAsync('historical unknown symbol returns null, no network', function () {
+        var origFetch = window.fetch;
+        var called = 0;
+        window.fetch = function () { called++; return Promise.reject(new Error('must not fetch')); };
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        function restore() { window.fetch = origFetch; restoreState(); }
+        return H.fetchHistoricalPrice('XYZ123', '2026-01-01', 'EUR').then(function (p) {
+          restore();
+          assert(p === null, 'unknown symbol should be null, got ' + p);
+          assert(called === 0, 'unknown symbol must not hit network');
+        }, function (e) { restore(); throw e; });
+      });
+
+      testAsync('historical crypto parses CoinGecko history + caches', function () {
+        var origFetch = window.fetch;
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        try { H.clearHistCache(); } catch (e) { /* ignore */ }
+        window.fetch = function (url) {
+          assert(String(url).indexOf('/coins/bitcoin/history') !== -1, 'must hit history endpoint: ' + url);
+          assert(String(url).indexOf('date=15-01-2026') !== -1, 'must send DD-MM-YYYY: ' + url);
+          return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ market_data: { current_price: { eur: 38123, usd: 41200 } } }); } });
+        };
+        function restore() { window.fetch = origFetch; restoreState(); }
+        return H.fetchHistoricalPrice('BTC', '2026-01-15', 'EUR').then(function (p) {
+          assert(p === 38123, 'history eur wrong: ' + p);
+          // Same history stub stays installed: ensureHistoricalExec fills the
+          // cache from it (override state untouched, still no overrides).
+          return H.ensureHistoricalExec(
+            [{ id: 'h1', type: 'buy', symbol: 'BTC', qty: 1, total: 38123, currency: 'EUR', date: '2026-01-15', fee: 0, feeCurrency: 'EUR' }],
+            'EUR'
+          );
+        }).then(function (changed) {
+          restore();
+          assert(changed === true, 'first fill must report changed');
+          var hit = H.getHistCached('BTC', '2026-01-15', 'EUR', 'crypto');
+          assert(hit && hit.price === 38123, 'history must persist in cache: ' + JSON.stringify(hit));
+        }, function (e) { restore(); throw e; });
+      });
+
+      testAsync('historical crypto bridges unsupported vs via USD + historical ECB', function () {
+        var origFetch = window.fetch;
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        try { H.clearHistCache(); } catch (e) { /* ignore */ }
+        window.fetch = function (url) {
+          var u = String(url);
+          if (u.indexOf('coingecko') !== -1) {
+            return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ market_data: { current_price: { usd: 50000 } } }); } });
+          }
+          if (u.indexOf('frankfurter') !== -1) {
+            return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ date: '2026-01-15', rates: { RON: 5 } }); } });
+          }
+          return Promise.reject(new Error('unexpected ' + u));
+        };
+        function restore() { window.fetch = origFetch; restoreState(); }
+        return H.fetchHistoricalPrice('BTC', '2026-01-15', 'RON').then(function (p) {
+          restore();
+          assert(p === 250000, 'bridged history wrong: ' + p);
+        }, function (e) { restore(); throw e; });
+      });
+
+      testAsync('historical stock walks back over shut days + historical FX', function () {
+        var origFetch = window.fetch;
+        setState({ settings: { mainCurrency: 'EUR', costMethod: 'average' }, trades: [], priceOverrides: {} });
+        try { H.clearHistCache(); } catch (e) { /* ignore */ }
+        window.fetch = function (url) {
+          var u = String(url);
+          if (u.indexOf('stooq.com') !== -1) {
+            if (u.indexOf('d1=20260106') !== -1) {
+              return Promise.resolve({ ok: true, text: function () { return Promise.resolve('Date,Open,High,Low,Close,Volume\n'); } });
+            }
+            return Promise.resolve({ ok: true, text: function () { return Promise.resolve('Date,Open,High,Low,Close,Volume\n2026-01-03,200,201,199,200.5,500\n'); } });
+          }
+          if (u.indexOf('frankfurter') !== -1) {
+            return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ date: '2026-01-03', rates: { EUR: 0.9 } }); } });
+          }
+          return Promise.reject(new Error('unexpected ' + u));
+        };
+        function restore() { window.fetch = origFetch; restoreState(); }
+        return H.fetchHistoricalPrice('AAPL', '2026-01-06', 'EUR', 'stock').then(function (r) {
+          restore();
+          var price = (r && typeof r === 'object') ? r.price : r;
+          assert(Math.abs(price - 180.45) < 1e-9, 'walked-back stock history wrong: ' + JSON.stringify(r));
+          assert(r && r.interpolated === true, 'walk-back must flag interpolated');
         }, function (e) { restore(); throw e; });
       });
     })();
@@ -1489,28 +1642,51 @@
           assert(det.querySelector('.trade-block') !== null, 'new trade rows should render in the account');
         });
 
-        test('trade blocks show exec and real prices when a fee splits them', function () {
-          L.saveState({
-            settings: { mainCurrency: 'EUR', costMethod: 'average' },
-            accounts: [
-              { id: 'px-acct', name: 'Px BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
-            ],
-            trades: [
-              { id: 'px-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', note: '', accountId: 'px-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
-            ],
-            priceOverrides: {}
-          });
-          if (typeof init === 'function') init();
-          navTo('px-acct');
-          route();
-          render();
-          var det2 = document.getElementById('account-detail');
-          var execCell = det2.querySelector('[data-label="Exec. price"]');
-          var realCell = det2.querySelector('[data-label="Real price"]');
-          assert(execCell !== null && realCell !== null, 'both price rows should render when a fee is present');
-          assert(Math.abs(Number(execCell.getAttribute('data-value')) - 100 / 49.5) < 1e-9, 'exec price must be quoted against the full total, got ' + execCell.getAttribute('data-value'));
-          assert(Math.abs(Number(realCell.getAttribute('data-value')) - 2) < 1e-9, 'real price must be the net unit cost the books run on, got ' + realCell.getAttribute('data-value'));
-          navHome();
+        test('trade blocks show historical exec and calculated all-in real', function () {
+          var L2 = window.Inoculens;
+          var backupFx = null;
+          try { backupFx = localStorage.getItem('inoculens.fxcache.v1'); } catch (e) { backupFx = null; }
+          var backupHist = null;
+          try { backupHist = localStorage.getItem('inoculens.histcache.v1'); } catch (e) { backupHist = null; }
+          try {
+            L2.saveState({
+              settings: { mainCurrency: 'EUR', costMethod: 'average' },
+              accounts: [
+                { id: 'px-acct', name: 'Px BTC', ticker: 'BTC', createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              trades: [
+                { id: 'px-a', type: 'buy', symbol: 'BTC', qty: 49.5, total: 100, currency: 'EUR', date: '2026-01-01', fee: 1, feeCurrency: 'EUR', note: '', accountId: 'px-acct', fxLock: { pair: 'EUR/EUR', rate: 1, source: '1:1', interpolated: false }, createdAt: '2026-01-01T00:00:00.000Z' }
+              ],
+              priceOverrides: { BTC: 1.5 }
+            });
+            try { L2.clearHistCache(); } catch (e) { /* ignore */ }
+            if (typeof init === 'function') init();
+            navTo('px-acct');
+            route();
+            render();
+            var det2 = document.getElementById('account-detail');
+            var execCell = det2.querySelector('[data-label="Exec. price"]');
+            var realCell = det2.querySelector('[data-label="Real price"]');
+            assert(execCell !== null && realCell !== null, 'both price rows should render');
+            assert(Number(execCell.getAttribute('data-value')) === 1.5, 'exec must be the manual override (historical wins only without one), got ' + execCell.getAttribute('data-value'));
+            assert(Math.abs(Number(realCell.getAttribute('data-value')) - 100 / 49.5) < 1e-9, 'real must be the all-in total/qty, got ' + realCell.getAttribute('data-value'));
+            var feesLine = det2.querySelector('[data-label="Total fees paid"]');
+            assert(feesLine !== null, 'fees must render as a line below the 8-card grid');
+            assert(feesLine.getAttribute('data-value') === '1', 'fees line value wrong: ' + feesLine.getAttribute('data-value'));
+            assert(det2.querySelector('.card[data-label="Fees paid"]') === null, 'fees must not be a 9th grid card');
+            navHome();
+          } finally {
+            try {
+              if (backupFx === null) localStorage.removeItem('inoculens.fxcache.v1');
+              else localStorage.setItem('inoculens.fxcache.v1', backupFx);
+            } catch (e) { /* ignore */ }
+            try {
+              if (backupHist === null) localStorage.removeItem('inoculens.histcache.v1');
+              else localStorage.setItem('inoculens.histcache.v1', backupHist);
+            } catch (e) { /* ignore */ }
+            try { L2.reloadFxCache(); } catch (e) { /* ignore */ }
+            try { L2.reloadHistCache(); } catch (e) { /* ignore */ }
+          }
         });
       } finally {
         restoreState();

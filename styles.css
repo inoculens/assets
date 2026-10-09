@@ -974,6 +974,7 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: 7px; }
 }
 .detail-stats { margin: 1rem 0 0.25rem; }
 .closed-flag { margin: 0.9rem 0 0; }
+.fees-line { margin: 0.35rem 0 0; }
 
 /* ————— Facts + trades ————— */
 .stat-row {
