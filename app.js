@@ -3015,13 +3015,6 @@ function renderAccounts(st) {
   h2.textContent = 'Accounts';
   h2.className = 'section-title';
   headRow.appendChild(h2);
-  // Distinct assets across the visible accounts (two BTC accounts = 1 asset),
-  // with correct singular/plural. Follows the same visible set as the totals.
-  var assetTickers = accountTickers(visibleAccounts);
-  var assetCount = document.createElement('span');
-  assetCount.className = 'muted asset-count';
-  assetCount.textContent = assetTickers.length === 1 ? '1 asset' : assetTickers.length + ' assets';
-  headRow.appendChild(assetCount);
   var actions = document.createElement('div');
   actions.className = 'section-actions';
   var tickers = accountTickers(accounts);

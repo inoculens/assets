@@ -1221,27 +1221,6 @@
           assert(document.querySelector('#accounts [data-account-nav]') !== null, 'cards should navigate to detail');
         });
 
-        test('accounts header counts distinct assets with correct grammar', function () {
-          seedTwoAccounts(); init(); render();
-          var head = document.querySelector('#accounts .section-head');
-          assert(head !== null, 'section head missing');
-          assert(head.textContent.indexOf('1 asset') !== -1, 'two BTC accounts should read as one asset: ' + head.textContent);
-          assert(head.textContent.indexOf('1 assets') === -1, 'singular must not read "1 assets"');
-          L.saveState({
-            settings: { mainCurrency: 'EUR', costMethod: 'average' },
-            accounts: [
-              { id: 'a1', name: 'Cold', ticker: 'BTC', createdAt: '2026-10-06T00:00:00.000Z' },
-              { id: 'a2', name: 'Hot', ticker: 'BTC', createdAt: '2026-10-06T00:00:01.000Z' },
-              { id: 'a3', name: 'Stake', ticker: 'ETH', createdAt: '2026-10-06T00:00:02.000Z' }
-            ],
-            trades: [],
-            priceOverrides: {}
-          });
-          init(); render();
-          head = document.querySelector('#accounts .section-head');
-          assert(head && head.textContent.indexOf('2 assets') !== -1, 'BTC + ETH should read "2 assets": ' + (head && head.textContent));
-        });
-
         test('accounts per-card Trade button renders account binding (Task 3 wires it)', function () {
           seedTwoAccounts(); init(); render();
           var btns = document.querySelectorAll('#accounts [data-account-trade]');
