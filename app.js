@@ -5210,10 +5210,12 @@ var confirmSettle = null;
 
 function confirmAction(title, message, okText, danger) {
   if (confirmSettle) settleConfirm(false);
+  if (confirmSettle3) settleConfirm3('dismiss');
   var dlg = document.getElementById('confirm-dialog');
   var t = document.getElementById('confirm-title');
   var m = document.getElementById('confirm-message');
   var ok = document.getElementById('confirm-ok');
+  var cancel = document.getElementById('confirm-cancel');
   if (!dlg || !t || !m || !ok) {
     return Promise.resolve(typeof window.confirm === 'function' ? window.confirm(message) : true);
   }
@@ -5221,6 +5223,12 @@ function confirmAction(title, message, okText, danger) {
   m.textContent = message || '';
   ok.textContent = okText || 'Confirm';
   ok.className = danger === false ? 'primary' : 'primary danger-btn';
+  // A three-way confirm may have relabeled/restyled the shared buttons:
+  // always restore the plain Cancel look here.
+  if (cancel) {
+    cancel.textContent = 'Cancel';
+    cancel.className = '';
+  }
   openDialog('confirm-dialog');
   return new Promise(function (resolve) { confirmSettle = resolve; });
 }
@@ -5233,6 +5241,43 @@ function settleConfirm(v) {
     confirmSettle = null;
     s(v);
   }
+}
+
+// Three-way variant for decisions with two real actions (e.g. a taken sync
+// name: download the drive copy OR upload over it). Resolves 'primary',
+// 'secondary', or 'dismiss' (backdrop/Esc/close, preemption). The shared
+// buttons route to whichever confirm is pending; bool callers are unaffected.
+var confirmSettle3 = null;
+
+function settleConfirm3(v) {
+  var dlg = document.getElementById('confirm-dialog');
+  if (dlg) closeDialog(dlg);
+  if (confirmSettle3) {
+    var s = confirmSettle3;
+    confirmSettle3 = null;
+    s(v);
+  }
+}
+
+function confirmAction3(title, message, primaryText, secondaryText) {
+  if (confirmSettle) settleConfirm(false);
+  if (confirmSettle3) settleConfirm3('dismiss');
+  var dlg = document.getElementById('confirm-dialog');
+  var t = document.getElementById('confirm-title');
+  var m = document.getElementById('confirm-message');
+  var ok = document.getElementById('confirm-ok');
+  var cancel = document.getElementById('confirm-cancel');
+  if (!dlg || !t || !m || !ok || !cancel) {
+    return Promise.resolve(typeof window.confirm === 'function' ? (window.confirm(message) ? 'primary' : 'dismiss') : 'dismiss');
+  }
+  t.textContent = title || 'Are you sure?';
+  m.textContent = message || '';
+  ok.textContent = primaryText || 'Confirm';
+  ok.className = 'primary';
+  cancel.textContent = secondaryText || 'Cancel';
+  cancel.className = 'primary danger-btn';
+  openDialog('confirm-dialog');
+  return new Promise(function (resolve) { confirmSettle3 = resolve; });
 }
 
 function wireDialog(id) {
@@ -5340,18 +5385,24 @@ function buildTopbar() {
   var cok = document.getElementById('confirm-ok');
   if (cok && !cok.getAttribute('data-wired')) {
     cok.setAttribute('data-wired', '1');
-    cok.addEventListener('click', function () { settleConfirm(true); });
+    cok.addEventListener('click', function () {
+      if (confirmSettle3) settleConfirm3('primary');
+      else settleConfirm(true);
+    });
   }
   var ccan = document.getElementById('confirm-cancel');
   if (ccan && !ccan.getAttribute('data-wired')) {
     ccan.setAttribute('data-wired', '1');
-    ccan.addEventListener('click', function () { settleConfirm(false); });
+    ccan.addEventListener('click', function () {
+      if (confirmSettle3) settleConfirm3('secondary');
+      else settleConfirm(false);
+    });
   }
   var cdlg = document.getElementById('confirm-dialog');
   if (cdlg && !cdlg.getAttribute('data-ev-wired')) {
     cdlg.setAttribute('data-ev-wired', '1');
-    cdlg.addEventListener('cancel', function () { settleConfirm(false); });
-    cdlg.addEventListener('close', function () { settleConfirm(false); });
+    cdlg.addEventListener('cancel', function () { settleConfirm(false); settleConfirm3('dismiss'); });
+    cdlg.addEventListener('close', function () { settleConfirm(false); settleConfirm3('dismiss'); });
   }
   var main = document.getElementById('tb-main');
   if (main && !main.getAttribute('data-wired')) {
@@ -6158,14 +6209,6 @@ function syncEffectiveClientId(cfg) {
 
 var syncBusy = false;
 var syncMemSecrets = { password: '', secretKey: '' };
-// Session-only overwrite consent: pressing Sync now again after declining
-// the taken-name prompt means "yes, overwrite it". Keyed by destination,
-// cleared on any success or disconnect, gone on reload.
-var syncOverwriteArmed = {};
-
-function syncArmOverwrite(locKey) {
-  try { syncOverwriteArmed[locKey] = true; } catch (e) { /* ignore */ }
-}
 
 // --- Small pure codecs (no atob/TextEncoder dependency) ---
 
@@ -7544,8 +7587,7 @@ function syncAdoptRemote(cfg, remotePlain) {
   cfg.lastSyncedHash = syncHashOfExport(remotePlain);
   cfg.lastLocation = syncLocationKey(cfg);
   cfg.locV = SYNC_LOC_V;
-  syncOverwriteArmed = {};
-  syncSaveConfig(cfg);
+    syncSaveConfig(cfg);
   syncRefreshSyncPanel();
   try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
   clearBanner();
@@ -7601,14 +7643,6 @@ function syncPushFlow(opts) {  if (syncBusy) return;
     // clobber a stranger's file (e.g. another profile's backup sharing the
     // same drive). Same destination as last time uploads freely.
     if (!cfg.lastLocation || cfg.lastLocation !== locKey) {
-      if (syncOverwriteArmed[locKey]) {
-        // User saw the taken-name prompt and pressed Sync again: explicit
-        // overwrite intent, upload straight through.
-        syncOverwriteArmed = {};
-        return syncRemoteEnsureFolder(cfg).then(function () {
-          return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
-        });
-      }
       return syncRemoteExists(cfg).then(function (taken) {
         if (!taken) {
           return syncRemoteEnsureFolder(cfg).then(function () {
@@ -7631,7 +7665,7 @@ function syncPushFlow(opts) {  if (syncBusy) return;
               syncSetStatus('Already up to date.');
               return 'adopted';
             }
-            // Different content under our name: offer download, never ambush.
+            // Different content under our name: both directions, explicit.
             // (Auto-sync never prompts either: it stands down for the user.)
             syncSetBusy(false);
             if (auto) {
@@ -7640,15 +7674,20 @@ function syncPushFlow(opts) {  if (syncBusy) return;
               syncSetStatus('Drive holds a different copy — open Sync to resolve.');
               return 'conflict-remote';
             }
-            return confirmAction(
+            return confirmAction3(
               'Name already taken',
-              'A different backup named "' + cfg.filename + '" already exists in this folder. Download it instead of overwriting?',
+              'A different backup named "' + cfg.filename + '" already exists in this folder. Download it (replaces this device) or upload yours (overwrites the drive file)?',
               'Download instead',
-              false
-            ).then(function (pullIt) {
-              if (pullIt) return syncAdoptRemote(cfg, remotePlain);
-              syncSetStatus('Kept the drive file. Change the name or folder — or press Sync now again to overwrite it.');
-              syncArmOverwrite(locKey);
+              'Upload mine'
+            ).then(function (choice) {
+              if (choice === 'primary') return syncAdoptRemote(cfg, remotePlain);
+              if (choice === 'secondary') {
+                syncSetBusy(true, 'Uploading to ' + syncProviderLabel(cfg.provider) + '…');
+                return syncRemoteEnsureFolder(cfg).then(function () {
+                  return syncRemoteUpload(cfg, env).then(function () { return 'pushed'; });
+                });
+              }
+              syncSetStatus('Kept the drive file. Change the name or folder to sync here.');
               return 'cancelled';
             });
           }, function () {
@@ -7708,8 +7747,7 @@ function syncPushFlow(opts) {  if (syncBusy) return;
     cfg.lastSyncedHash = curHash;
     cfg.lastLocation = syncLocationKey(cfg);
     cfg.locV = SYNC_LOC_V;
-    syncOverwriteArmed = {};
-    syncSaveConfig(cfg);
+        syncSaveConfig(cfg);
     syncRefreshSyncPanel();
     try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
     clearBanner();
@@ -7794,8 +7832,7 @@ function syncPullFlow() {
       cfg.lastSyncedHash = syncHashOfExport(plain);
       cfg.lastLocation = syncLocationKey(cfg); // adopt: future pushes update this file
       cfg.locV = SYNC_LOC_V;
-      syncOverwriteArmed = {};
-      syncSaveConfig(cfg);
+            syncSaveConfig(cfg);
       syncRefreshSyncPanel();
       try { syncRefreshHeaderIcon(); } catch (e) { /* ignore */ }
       clearBanner();
@@ -8301,8 +8338,7 @@ function syncDisconnect() {
   cfg.lastSyncedHash = null;
   cfg.lastRemoteAt = null;
   cfg.lastSyncAt = null;
-  syncOverwriteArmed = {};
-  syncMemSecrets.password = '';
+    syncMemSecrets.password = '';
   syncMemSecrets.secretKey = '';
   syncSaveConfig(cfg);
   syncClearOAuthAttempt();
@@ -8558,6 +8594,7 @@ if (typeof window !== 'undefined') {
   window.Inoculens.syncReadForm = syncReadForm;
   window.Inoculens.syncPushFlow = syncPushFlow;
   window.Inoculens.syncPullFlow = syncPullFlow;
+  window.Inoculens.confirmAction3 = confirmAction3;
   window.Inoculens.syncDisconnect = syncDisconnect;
   window.Inoculens.showBanner = showBanner;
   window.Inoculens.clearBanner = clearBanner;

@@ -1966,7 +1966,7 @@
         assert(a !== S.syncLocationKey({ provider: 'gdrive', folder: 'Q', filename: 'a.enc.json' }), 'location differs by folder');
       });
 
-      testAsync('sync taken name offers download, cancel arms overwrite, same adopts', function () {
+      testAsync('sync taken name offers download, upload, or dismiss', function () {
         var L = window.Inoculens;
         var v2 = null, sy = null;
         var origFetch = window.fetch;
@@ -2035,22 +2035,34 @@
           remoteText = env;
           S.syncPushFlow();
           return waitFor(function () {
-            return document.getElementById('confirm-message').textContent.indexOf('already exists') !== -1 ? true : null;
-          }, 25000, 'taken-name prompt');
+            var t = document.getElementById('confirm-message').textContent;
+            return (t.indexOf('already taken') !== -1 &&
+              document.getElementById('confirm-ok').textContent === 'Download instead' &&
+              document.getElementById('confirm-cancel').textContent === 'Upload mine') ? true : null;
+          }, 25000, 'taken-name choice');
         }).then(function () {
+          // Choose Upload mine: explicit overwrite, straight through.
           document.getElementById('confirm-cancel').click();
           return waitFor(function () {
-            return document.getElementById('sy-status').textContent.indexOf('Kept the drive file') !== -1 ? true : null;
-          }, 5000, 'cancel keeps the file');
+            return document.getElementById('sy-status').textContent.indexOf('Synced') !== -1 ? true : null;
+          }, 25000, 'explicit overwrite');
         }).then(function () {
-          assert(puts === 0, 'declined overwrite must never upload, PUTs=' + puts);
-          // Press again: armed overwrite goes straight through.
+          assert(puts === 1, 'explicit overwrite must upload once, PUTs=' + puts);
+          // Dismiss the dialog (Esc/backdrop equivalent): nothing happens.
+          var c2 = S.syncLoadConfig();
+          c2.lastLocation = null;
+          S.syncSaveConfig(c2);
           S.syncPushFlow();
           return waitFor(function () {
-            return document.getElementById('sy-status').textContent.indexOf('Synced') !== -1 ? true : null;
-          }, 25000, 'armed overwrite');
+            return document.getElementById('confirm-message').textContent.indexOf('already taken') !== -1 ? true : null;
+          }, 25000, 'taken-name choice again');
         }).then(function () {
-          assert(puts === 1, 'armed overwrite must upload once, PUTs=' + puts);
+          document.getElementById('confirm-dialog').close();
+          return waitFor(function () {
+            return document.getElementById('sy-status').textContent.indexOf('Kept the drive file') !== -1 ? true : null;
+          }, 5000, 'dismiss keeps the file');
+        }).then(function () {
+          assert(puts === 1, 'dismissed choice must never upload, PUTs=' + puts);
           // Same content on the drive: adopt silently, no prompt, no upload.
           var c = S.syncLoadConfig();
           c.lastLocation = null;
