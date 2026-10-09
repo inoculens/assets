@@ -5586,8 +5586,8 @@ function buildSettings() {
     '<input id="sy-pass" type="password" autocomplete="new-password" placeholder="Required — only you know it">' +
     '<label class="sync-check" for="sy-remember-pass"><input id="sy-remember-pass" type="checkbox"> Remember passphrase in this browser</label>' +
     '<p class="muted set-blurb" id="sy-fp">Key fingerprint: —</p>' +
-    '<p class="muted set-blurb" id="sy-status">Not connected.</p>' +
     '<label class="sync-check" for="sy-auto"><input id="sy-auto" type="checkbox"> Sync automatically on every change</label>' +
+    '<p class="muted set-blurb" id="sy-status">Not connected.</p>' +
     '<div class="sync-btns">' +
     '<button id="sy-connect" type="button">Connect</button>' +
     '<button id="sy-disconnect" type="button">Disconnect</button>' +
@@ -7587,16 +7587,18 @@ function syncAutoPush() {
     return;
   }
   if (!cfg.autoSync) return;
+  // Same source as manual pushes: the typed value, falling back to the
+  // remembered passphrase so auto-sync also works when Settings was never
+  // opened this session. Without either, stay silent — the hourglass icon
+  // already shows pending work, and Connect/Sync enforce the passphrase
+  // when pressed.
   var pass = '';
   try {
-    var el = (typeof document !== 'undefined') ? document.getElementById('sy-pass') : null;
-    pass = el ? el.value : '';
-  } catch (e) { pass = ''; }
-  if (!pass) {
-    try { syncSetStatus('Auto-sync paused — enter the passphrase in the Sync tab.'); } catch (e2) { /* ignore */ }
-    try { syncRefreshHeaderIcon(); } catch (e3) { /* ignore */ }
-    return;
+    pass = syncReadForm().passphrase;
+  } catch (e) {
+    pass = '';
   }
+  if (!pass) return;
   try {
     syncPushFlow({ auto: true });
   } catch (e) { /* ignore */ }
@@ -8010,9 +8012,10 @@ function syncReadForm() {
     var el = (typeof document !== 'undefined') ? document.getElementById(id) : null;
     return el ? el.value : fb;
   }
-  function checked(id) {
+  function checked(id, fb) {
     var el = (typeof document !== 'undefined') ? document.getElementById(id) : null;
-    return !!(el && el.checked);
+    if (!el) return !!fb;
+    return !!el.checked;
   }
   var prov = val('sy-provider', cfg.provider);
   if (syncIsProvider(prov)) cfg.provider = prov;
@@ -8021,7 +8024,7 @@ function syncReadForm() {
     cfg.username = val('sy-user', cfg.username);
     cfg.filename = syncSanitizeFilename(val('sy-filename', cfg.filename));
     var pwField = val('sy-passwd', '');
-    cfg.rememberPassword = checked('sy-remember');
+    cfg.rememberPassword = checked('sy-remember', cfg.rememberPassword);
     if (cfg.rememberPassword) {
       if (pwField !== '') cfg.password = pwField;
     } else {
@@ -8036,7 +8039,7 @@ function syncReadForm() {
     cfg.objectKey = syncSanitizeFilename(val('sy-object', cfg.objectKey));
     cfg.folder = val('sy-folder3', cfg.folder);
     var skField = val('sy-skey', '');
-    var rememberSk = checked('sy-remember2');
+    var rememberSk = checked('sy-remember2', cfg.rememberSecret);
     cfg.rememberSecret = rememberSk;
     if (rememberSk) {
       if (skField !== '') cfg.secretKey = skField;
@@ -8052,9 +8055,9 @@ function syncReadForm() {
     cfg.folder = val('sy-folder2', cfg.folder);
   }
   var out = syncSanitizeConfig(cfg);
-  out.autoSync = !!checked('sy-auto');
+  out.autoSync = !!checked('sy-auto', cfg.autoSync);
   var formPass = val('sy-pass', '');
-  var rememberPass = checked('sy-remember-pass');
+  var rememberPass = checked('sy-remember-pass', cfg.rememberPassphrase);
   out.rememberPassphrase = rememberPass;
   if (rememberPass) {
     if (formPass !== '') out.passphrase = formPass;
