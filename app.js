@@ -8373,7 +8373,7 @@ function syncSetSyncIcon(state, label) {
   try {
     var img = document.getElementById('tb-sync-img');
     if (img) {
-      img.src = state === 'busy' ? '/icons/sync-busy.gif'
+      img.src = state === 'busy' ? '/icons/sync-busy.png'
         : state === 'stale' ? '/icons/sync-stale.png'
         : '/icons/sync-ok.png';
     }
